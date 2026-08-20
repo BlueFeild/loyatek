@@ -1,0 +1,954 @@
+// ============================================================
+// ERP KERNEL - Phase 1 Schema
+// Core: Tenants (companies) -> Branches -> Users (roles)
+// Every business table carries tenantId for multi-tenant isolation.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Industry {
+  RETAIL
+  SERVICES
+  HOSPITALITY
+  REAL_ESTATE
+  SALONS
+}
+
+enum Role {
+  OWNER      // صاحب الحساب - صلاحيات كاملة
+  ADMIN      // مدير عام
+  MANAGER    // مدير فرع
+  STAFF      // موظف تشغيلي
+}
+
+enum Currency {
+  USD
+  QAR
+  SAR
+}
+
+// شركة/عميل مشترك في النظام - كل بياناته معزولة عن باقي الشركات
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  industry  Industry
+  currency  Currency @default(USD)
+  vatNumber String? // الرقم الضريبي - مطلوب لتوليد QR الفواتير
+  // رابط عام فريد بيتولّد من اسم الشركة - بيُستخدم في رابط الكتالوج
+  // العام اللي العميل بيشوفه (loyatek.com/menu/<slug>)، من غير تسجيل دخول
+  slug      String?  @unique
+  // المنتجات المفعّلة فعليًا للشركة - تبدأ فاضية، وبتتفعّل بس بعد ما
+  // السوبر أدمن يراجع طلب الاشتراك (SubscriptionOrder) ويأكد الدفع
+  subscribedModules String[] @default([])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branches       Branch[]
+  users          User[]
+  inventoryItems InventoryItem[]
+  suppliers      Supplier[]
+  purchaseOrders PurchaseOrder[]
+  accounts       Account[]
+  journalEntries JournalEntry[]
+  employees      Employee[]
+  sales          Sale[]
+  customers      Customer[]
+  shifts         Shift[]
+  attendance     Attendance[]
+  deals          Deal[]
+  activities     Activity[]
+  rfqRequests    RfqRequest[]
+  invoices       Invoice[]
+  bookingSettings BookingSettings?
+  resources      Resource[]
+  bookings       Booking[]
+  walletSettings WalletSettings?
+  walletCustomers WalletCustomer[]
+  catalogSettings CatalogSettings?
+  menuCategories  MenuCategory[]
+  menuItems       MenuItem[]
+  catalogOrders   CatalogOrder[]
+  subscriptionOrders SubscriptionOrder[]
+  whatsappSettings WhatsappSettings?
+  botFlowNodes    BotFlowNode[]
+  whatsappContactNotes WhatsappContactNote[]
+  whatsappCampaigns WhatsappCampaign[]
+
+  @@map("tenants")
+}
+
+model Branch {
+  id       String  @id @default(uuid())
+  tenantId String
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  location String?
+
+  users          User[]
+  inventoryItems InventoryItem[]
+  purchaseOrders PurchaseOrder[]
+  employees      Employee[]
+  sales          Sale[]
+  rfqRequests    RfqRequest[]
+  invoices       Invoice[]
+  resources      Resource[]
+  bookings       Booking[]
+  catalogOrders  CatalogOrder[]
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@map("branches")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId     String?
+  branch       Branch?  @relation(fields: [branchId], references: [id])
+  name         String
+  email        String
+  passwordHash String
+  role         Role     @default(STAFF)
+  isActive     Boolean  @default(true)
+  // صاحب المنصة نفسها - مش تاجر عادي، بيشوف كل الشركات المسجّلة
+  isSuperAdmin Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  refreshTokens RefreshToken[]
+  employee      Employee?
+
+  // نفس الإيميل ممكن يتكرر بين شركات مختلفة، لكن مش جوه نفس الشركة
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ------------------------------------------------------------
+// أول موديول تشغيلي حقيقي (Inventory) - مثال يوضح إزاي باقي
+// الموديولات (Accounting, HR, CRM...) هتتبني بنفس النمط:
+// كل جدول مربوط بـ tenantId + branchId، وأي عملية بتتسجل بدل
+// ما تكون رقم عشوائي زي الديمو.
+// ------------------------------------------------------------
+model InventoryItem {
+  id         String   @id @default(uuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId   String
+  branch     Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name       String
+  sku        String
+  quantity   Int      @default(0)
+  reorderAt  Int      @default(0)
+  costPrice  Decimal  @db.Decimal(12, 2)
+  sellPrice  Decimal  @db.Decimal(12, 2)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  movements          InventoryMovement[]
+  purchaseOrderItems PurchaseOrderItem[]
+  sales              Sale[]
+  rfqRequests        RfqRequest[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId, branchId])
+  @@map("inventory_items")
+}
+
+enum MovementType {
+  IN
+  OUT
+  ADJUSTMENT
+}
+
+// كل حركة مخزون بتتسجل فعليًا (مش بس رقم يتغير)، عشان يبقى فيه history حقيقي
+model InventoryMovement {
+  id        String       @id @default(uuid())
+  itemId    String
+  item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  type      MovementType
+  quantity  Int
+  reason    String?
+  createdAt DateTime     @default(now())
+
+  @@index([itemId])
+  @@map("inventory_movements")
+}
+
+// ------------------------------------------------------------
+// Procurement (المشتريات) - نفس نمط الـ Inventory بالظبط:
+// جدول Supplier + جدول PurchaseOrder + بنود الأمر PurchaseOrderItem.
+// لما أمر الشراء "يتسلّم"، بيتحدث المخزون فعليًا عن طريق نفس
+// InventoryMovement اللي بنيناه، مش رقم منفصل.
+// ------------------------------------------------------------
+model Supplier {
+  id           String   @id @default(uuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  phone        String?
+  email        String?
+  leadTimeDays Int      @default(7)
+  createdAt    DateTime @default(now())
+
+  purchaseOrders PurchaseOrder[]
+  rfqQuotes      RfqQuote[]
+
+  @@index([tenantId])
+  @@map("suppliers")
+}
+
+enum PurchaseOrderStatus {
+  DRAFT      // اتعمل بس لسه ما اتبعتش للمورد
+  ORDERED    // اتبعت للمورد وبننتظر التوريد
+  RECEIVED   // اتسلّم فعليًا وحدّث المخزون
+  CANCELLED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+}
+
+model PurchaseOrder {
+  id            String              @id @default(uuid())
+  tenantId      String
+  tenant        Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId      String
+  branch        Branch              @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  supplierId    String
+  supplier      Supplier            @relation(fields: [supplierId], references: [id])
+  status        PurchaseOrderStatus @default(DRAFT)
+  // جدولة السداد - بتتفعل فعليًا لما الأمر يتسلّم (RECEIVED)، لأنه وقتها بيبقى فيه مبلغ مستحق فعلي
+  dueDate       DateTime?
+  paymentStatus PaymentStatus       @default(UNPAID)
+  createdAt     DateTime            @default(now())
+  receivedAt    DateTime?
+
+  items PurchaseOrderItem[]
+
+  @@index([tenantId, branchId])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(uuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  itemId          String
+  item            InventoryItem @relation(fields: [itemId], references: [id])
+  quantity        Int
+  unitCost        Decimal       @db.Decimal(12, 2)
+
+  @@index([purchaseOrderId])
+  @@map("purchase_order_items")
+}
+
+// ------------------------------------------------------------
+// RFQ (Request for Quote) - طلب عروض أسعار لصنف معيّن من كذا
+// مورد مختلف، عشان تقدري تقارني وتختاري أفضل عرض بناءً على
+// السعر ومهلة التوريد والتقييم - مش أرقام وهمية جنب بعض.
+// ------------------------------------------------------------
+model RfqRequest {
+  id        String     @id @default(uuid())
+  tenantId  String
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId  String
+  branch    Branch     @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  itemId    String
+  item      InventoryItem @relation(fields: [itemId], references: [id])
+  createdAt DateTime   @default(now())
+
+  quotes RfqQuote[]
+
+  @@index([tenantId, branchId])
+  @@map("rfq_requests")
+}
+
+model RfqQuote {
+  id           String     @id @default(uuid())
+  rfqRequestId String
+  rfqRequest   RfqRequest @relation(fields: [rfqRequestId], references: [id], onDelete: Cascade)
+  supplierId   String
+  supplier     Supplier   @relation(fields: [supplierId], references: [id])
+  price        Decimal    @db.Decimal(12, 2)
+  leadTimeDays Int
+  rating       Decimal    @db.Decimal(2, 1) // 0.0 - 5.0
+  selected     Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+
+  @@index([rfqRequestId])
+  @@map("rfq_quotes")
+}
+
+// ------------------------------------------------------------
+// Accounting (المحاسبة) - قيود مزدوجة حقيقية (Debit/Credit):
+// دليل حسابات (Account) + قيد يومية (JournalEntry) + بنود القيد
+// (JournalEntryLine). كل قيد لازم يكون مجموع المدين = مجموع
+// الدائن، وده بيتفحص في الـ service قبل ما يتسجل، مش مجرد رقم.
+// ------------------------------------------------------------
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+model Account {
+  id        String      @id @default(uuid())
+  tenantId  String
+  tenant    Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code      String
+  name      String
+  type      AccountType
+  createdAt DateTime    @default(now())
+
+  lines JournalEntryLine[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("accounts")
+}
+
+model JournalEntry {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  date        DateTime @default(now())
+  description String
+  createdAt   DateTime @default(now())
+
+  lines JournalEntryLine[]
+
+  @@index([tenantId])
+  @@map("journal_entries")
+}
+
+// كل سطر في القيد بيبقى إما مدين أو دائن (واحد بس، مش الاتنين)،
+// وده بيتفحص وقت الإنشاء في الـ service
+model JournalEntryLine {
+  id             String       @id @default(uuid())
+  journalEntryId String
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  accountId      String
+  account        Account      @relation(fields: [accountId], references: [id])
+  debit          Decimal      @default(0) @db.Decimal(12, 2)
+  credit         Decimal      @default(0) @db.Decimal(12, 2)
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@map("journal_entry_lines")
+}
+
+// ------------------------------------------------------------
+// Invoicing - فاتورة عميل حقيقية بضريبة (VAT 5%) وQR كود متوافق
+// مع معيار ZATCA Phase 1 (Base64 TLV). إصدار الفاتورة بيعمل قيد
+// محاسبي تلقائي في نفس دفتر الأستاذ اللي فوق - مش نظام منفصل.
+// ------------------------------------------------------------
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+}
+
+model Invoice {
+  id             String        @id @default(uuid())
+  tenantId       String
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId       String
+  branch         Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  customerId     String
+  customer       Customer      @relation(fields: [customerId], references: [id])
+  invoiceNumber  String
+  status         InvoiceStatus @default(DRAFT)
+  subtotal       Decimal       @default(0) @db.Decimal(12, 2)
+  vatAmount      Decimal       @default(0) @db.Decimal(12, 2)
+  total          Decimal       @default(0) @db.Decimal(12, 2)
+  // Base64 TLV payload - نفس تنسيق QR كود الفواتير الضريبية في السعودية
+  qrPayload      String?
+  journalEntryId String? // القيد المحاسبي اللي اتعمل تلقائي وقت الإصدار
+  issuedAt       DateTime?
+  createdAt      DateTime      @default(now())
+
+  items InvoiceItem[]
+
+  @@unique([tenantId, invoiceNumber])
+  @@index([tenantId, branchId])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description String
+  quantity    Int
+  unitPrice   Decimal  @db.Decimal(12, 2)
+
+  @@index([invoiceId])
+  @@map("invoice_items")
+}
+
+// ------------------------------------------------------------
+// HR & Commission - العمولة بتتحسب تلقائيًا من عمليات بيع حقيقية
+// (Sale)، مش رقم بيتكتب يدوي. كل عملية بيع مرتبطة بموظف معيّن،
+// وبتحدّث المخزون فعليًا (نفس منطق InventoryMovement) وتسجّل
+// قيمة العمولة المستحقة له في نفس اللحظة.
+// ------------------------------------------------------------
+model Employee {
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId       String
+  branch         Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  userId         String?  @unique
+  user           User?    @relation(fields: [userId], references: [id])
+  name           String
+  position       String
+  // نسبة العمولة كرقم عشري: 0.05 = 5%
+  commissionRate Decimal  @default(0) @db.Decimal(5, 4)
+  baseSalary     Decimal  @default(0) @db.Decimal(12, 2)
+  // هدف المبيعات الشهري - بيتقارن بالمبيعات الفعلية (Actual) في تقرير HR
+  monthlyTarget  Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt      DateTime @default(now())
+
+  sales      Sale[]
+  shifts     Shift[]
+  attendance Attendance[]
+
+  @@index([tenantId, branchId])
+  @@map("employees")
+}
+
+enum ShiftType {
+  AM
+  PM
+  FULL
+  OFF
+}
+
+// جدول المناوبات الأسبوعي - يوم واحد لكل موظف بيتحدد نوعه (صباحي/مسائي/يوم كامل/إجازة)
+model Shift {
+  id         String    @id @default(uuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date       DateTime  @db.Date
+  type       ShiftType
+  createdAt  DateTime  @default(now())
+
+  // يوم واحد بس لكل موظف - لو اتسجل تاني لنفس اليوم بيتحدث بدل ما يتكرر
+  @@unique([employeeId, date])
+  @@index([tenantId, employeeId])
+  @@map("shifts")
+}
+
+enum AttendanceStatus {
+  ON_SHIFT
+  BREAK
+  OFF
+  ABSENT
+}
+
+// حالة الحضور الفعلية ليوم معيّن - دي اللي بيتحسب منها نسبة الحضور الحقيقية
+// (مش رقم عشوائي)، بمقارنة أيام الحضور الفعلي بأيام المناوبات المجدولة
+model Attendance {
+  id         String           @id @default(uuid())
+  tenantId   String
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date       DateTime         @db.Date
+  status     AttendanceStatus @default(ON_SHIFT)
+  createdAt  DateTime         @default(now())
+
+  @@unique([employeeId, date])
+  @@index([tenantId, employeeId])
+  @@map("attendance")
+}
+
+// كل عملية بيع فعلية - بتتسجل مرة واحدة وبتحدّث المخزون والعمولة
+// سوا جوه transaction واحدة
+model Sale {
+  id               String        @id @default(uuid())
+  tenantId         String
+  tenant           Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId         String
+  branch           Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  employeeId       String
+  employee         Employee      @relation(fields: [employeeId], references: [id])
+  customerId       String?
+  customer         Customer?     @relation(fields: [customerId], references: [id])
+  itemId           String
+  item             InventoryItem @relation(fields: [itemId], references: [id])
+  quantity         Int
+  unitPrice        Decimal       @db.Decimal(12, 2)
+  totalAmount      Decimal       @db.Decimal(12, 2)
+  commissionAmount Decimal       @db.Decimal(12, 2)
+  createdAt        DateTime      @default(now())
+
+  @@index([tenantId, branchId])
+  @@index([employeeId])
+  @@map("sales")
+}
+
+// ------------------------------------------------------------
+// CRM - عميل حقيقي مرتبط بمبيعاته الفعلية (Sale)، مش قائمة
+// أسماء منفصلة عن العمليات. سجل شراء العميل بيتبني تلقائيًا من
+// الـ Sale records اللي ليها customerId، مش رقم مجمّع يدويًا.
+// ------------------------------------------------------------
+model Customer {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  phone     String?
+  email     String?
+  notes     String?
+  createdAt DateTime @default(now())
+
+  sales      Sale[]
+  deals      Deal[]
+  activities Activity[]
+  invoices   Invoice[]
+
+  @@index([tenantId])
+  @@map("customers")
+}
+
+enum DealStage {
+  LEAD
+  QUALIFIED
+  PROPOSAL
+  WON
+  LOST
+}
+
+// صفقة B2B حقيقية بتتحرك في مراحل - كل تحرك بيتسجل تلقائيًا في الـ Timeline
+model Deal {
+  id         String    @id @default(uuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name       String
+  value      Decimal   @db.Decimal(12, 2)
+  stage      DealStage @default(LEAD)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([tenantId, stage])
+  @@map("deals")
+}
+
+enum ActivityType {
+  NOTE
+  CALL
+  EMAIL
+  STAGE_CHANGE
+  SALE
+}
+
+// سجل نشاط موحّد لكل عميل - بيتغذى تلقائيًا من تحركات الصفقات والمبيعات،
+// وممكن كمان تضيفي ملاحظة/مكالمة/إيميل يدوي
+model Activity {
+  id         String       @id @default(uuid())
+  tenantId   String
+  tenant     Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type       ActivityType
+  text       String
+  createdAt  DateTime     @default(now())
+
+  @@index([tenantId, customerId])
+  @@map("activities")
+}
+
+// ------------------------------------------------------------
+// Booking (الحجوزات) - إعدادات حقيقية لكل شركة، موارد قابلة
+// للحجز (موظف أو موقع)، وحجوزات فعلية بتمنع التعارض في نفس
+// الميعاد تلقائيًا (constraint حقيقي في قاعدة البيانات مش شرط
+// في الكود بس).
+// ------------------------------------------------------------
+model BookingSettings {
+  id              String   @id @default(uuid())
+  tenantId        String   @unique
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  industry        String   @default("salon")
+  brandName       String   @default("My Business")
+  // شعار التاجر - متخزّن كـ base64 data URL، كافي لصورة صغيرة زي اللوجو
+  logoDataUrl     String?  @db.Text
+  services        String[] @default([])
+  openHour        Int      @default(9)
+  closeHour       Int      @default(21)
+  disabledHours   Int[]    @default([])
+  slotDurationMin Int      @default(60)
+  bufferMin       Int      @default(15)
+  peakFlag        Boolean  @default(true)
+  waAutomation    Boolean  @default(true)
+  waTemplate      String   @default("Hi! Your slot is confirmed for today. Show this ticket at check-in — no payment needed in advance.")
+  allocationMode  String   @default("staff") // staff | asset
+  themeColor      String   @default("#082f49")
+  updatedAt       DateTime @updatedAt
+
+  @@map("booking_settings")
+}
+
+enum ResourceType {
+  STAFF
+  LOCATION
+}
+
+// مورد قابل للحجز - موظف (Specialist/Consultant/Technician...) أو
+// موقع (Chair/Room/Bay...) حسب نوع الصناعة
+model Resource {
+  id        String       @id @default(uuid())
+  tenantId  String
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId  String
+  branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String
+  type      ResourceType
+  createdAt DateTime     @default(now())
+
+  bookings Booking[]
+
+  @@index([tenantId, branchId])
+  @@map("resources")
+}
+
+enum BookingStatus {
+  CONFIRMED
+  PENDING
+  CANCELLED
+  COMPLETED
+}
+
+model Booking {
+  id            String        @id @default(uuid())
+  tenantId      String
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId      String
+  branch        Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  resourceId    String
+  resource      Resource      @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  customerName  String
+  customerPhone String
+  date          DateTime      @db.Date
+  hour          Int // ساعة الميعاد (0-23) - بديل بسيط وحقيقي عن توقيت كامل
+  status        BookingStatus @default(CONFIRMED)
+  note          String?
+  createdAt     DateTime      @default(now())
+
+  // يمنع فعليًا حجز نفس المورد في نفس اليوم ونفس الساعة مرتين -
+  // على مستوى قاعدة البيانات، مش مجرد فحص في الكود
+  @@unique([resourceId, date, hour])
+  @@index([tenantId, branchId])
+  @@map("bookings")
+}
+
+// ------------------------------------------------------------
+// Wallet Loyalty Pass (بطاقة الولاء) - إعدادات حقيقية لكل شركة
+// وعملاء حقيقيين برصيد نقاط بيتغيّر فعليًا، مش شكل تجريبي.
+// ------------------------------------------------------------
+model WalletSettings {
+  id                     String   @id @default(uuid())
+  tenantId               String   @unique
+  tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  engine                 String   @default("stamp") // stamp | points | tier | cashback
+  stampCount             Int      @default(9)
+  pointsRate             Int      @default(10)
+  cashbackPct            Int      @default(5)
+  expirationDays         Int      @default(90)
+  allowOverrides         Boolean  @default(true)
+  cardLayout             String   @default("classic") // classic | minimal | badge | split
+  themeColor             String   @default("#0F172A")
+  logoDataUrl            String?  @db.Text
+  centerLabel            String   @default("Brand Icon")
+  centerIconDataUrl      String?  @db.Text
+  centerBorderThickness  Int      @default(2)
+  centerRingColor        String   @default("#38BDF8")
+  centerInnerGlow        Boolean  @default(true)
+  showDecorCircles       Boolean  @default(false)
+  decorCircles           Json     @default("[]")
+  termsText              String   @default("By joining this loyalty program, you agree to receive points, offers, and updates via WhatsApp and SMS. Points expire per the schedule shown on your pass. Loyatek and the merchant may update these terms at any time.") @db.Text
+  updatedAt              DateTime @updatedAt
+
+  @@map("wallet_settings")
+}
+
+enum WalletTier {
+  SILVER
+  GOLD_VIP
+  PLATINUM
+}
+
+model WalletCustomer {
+  id          String     @id @default(uuid())
+  tenantId    String
+  tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  phone       String
+  balance     Int        @default(0)
+  tier        WalletTier @default(SILVER)
+  createdAt   DateTime   @default(now())
+  lastVisitAt DateTime?
+
+  // نفس رقم الهاتف مينفعش يتكرر مرتين لنفس الشركة
+  @@unique([tenantId, phone])
+  @@index([tenantId])
+  @@map("wallet_customers")
+}
+
+// ------------------------------------------------------------
+// Active Catalog & Order Engine (الكتالوج والطلبات) - قوائم
+// حقيقية وطلبات حقيقية بتتسجل فعليًا، مش شكل تجريبي.
+// ------------------------------------------------------------
+model CatalogSettings {
+  id              String   @id @default(uuid())
+  tenantId        String   @unique
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandName       String   @default("My Restaurant")
+  brandLogoDataUrl String? @db.Text
+  menuLayout      String   @default("list") // list | grid | gallery | story
+  dineInEnabled   Boolean  @default(true)
+  pickupEnabled   Boolean  @default(true)
+  tableCount      Int      @default(8)
+  merchantEmail   String   @default("")
+  kitchenWhatsapp String   @default("")
+  prepTime        Int      @default(30)
+  themeColor      String   @default("#082F49")
+  updatedAt       DateTime @updatedAt
+
+  @@map("catalog_settings")
+}
+
+model MenuCategory {
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  coverImageDataUrl String? @db.Text
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  items MenuItem[]
+
+  @@index([tenantId])
+  @@map("menu_categories")
+}
+
+model MenuItem {
+  id            String       @id @default(uuid())
+  tenantId      String
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categoryId    String
+  category      MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  name          String
+  description   String       @default("")
+  price         Decimal      @db.Decimal(10, 2)
+  photoDataUrl  String?      @db.Text
+  sortOrder     Int          @default(0)
+  createdAt     DateTime     @default(now())
+
+  orderItems OrderItem[]
+
+  @@index([tenantId, categoryId])
+  @@map("menu_items")
+}
+
+enum OrderMode {
+  DINE_IN
+  PICKUP
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+model CatalogOrder {
+  id            String      @id @default(uuid())
+  tenantId      String
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId      String
+  branch        Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  mode          OrderMode
+  tableNumber   Int?
+  readyTime     Int? // بالدقايق - لطلبات الـ pickup بس
+  customerName  String
+  customerPhone String
+  totalAmount   Decimal     @db.Decimal(10, 2)
+  status        OrderStatus @default(PENDING)
+  createdAt     DateTime    @default(now())
+
+  items OrderItem[]
+
+  @@index([tenantId, branchId])
+  @@map("catalog_orders")
+}
+
+model OrderItem {
+  id         String       @id @default(uuid())
+  orderId    String
+  order      CatalogOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId String
+  menuItem   MenuItem     @relation(fields: [menuItemId], references: [id])
+  name       String // نسخة من اسم الصنف وقت الطلب - عشان لو الاسم اتغيّر بعدين
+  price      Decimal      @db.Decimal(10, 2)
+  quantity   Int
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+// ------------------------------------------------------------
+// WhatsApp Automation (الأساس الحقيقي) - تصميم الفلو، جهات
+// الاتصال الموحّدة، والحملات بيتحفظوا فعليًا. الإرسال الفعلي
+// محتاج تكامل حقيقي مع Meta WhatsApp Business API (مش موجود
+// لسه)، فمفيش أي endpoint هنا بيدّعي إنه بيبعت رسالة حقيقية.
+// ------------------------------------------------------------
+model WhatsappSettings {
+  id              String   @id @default(uuid())
+  tenantId        String   @unique
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // فاضيين لحد ما تتوصل بحساب Meta Business حقيقي - القيم دي
+  // بس أماكن محجوزة، مفيش أي كود بيستخدمها للإرسال الفعلي دلوقتي
+  metaAccessToken String?  @db.Text
+  metaPhoneNumberId String?
+  isConnected     Boolean  @default(false)
+  updatedAt       DateTime @updatedAt
+
+  @@map("whatsapp_settings")
+}
+
+model BotFlowNode {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  type      String // trigger | message | delay | webhook | menu | condition
+  badge     String
+  title     String
+  desc      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@map("bot_flow_nodes")
+}
+
+model WhatsappContactNote {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone     String // بيربط الملاحظة بجهة الاتصال عن طريق رقمها - مفيش موديل عميل منفصل
+  authorName String
+  text      String
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, phone])
+  @@map("whatsapp_contact_notes")
+}
+
+enum CampaignStatus {
+  DRAFT
+  READY
+}
+
+model WhatsappCampaign {
+  id          String         @id @default(uuid())
+  tenantId    String
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  segmentDesc String // وصف الفئة المستهدفة (نص حر، زي "عملاء الولاء Gold")
+  templateText String        @db.Text
+  status      CampaignStatus @default(DRAFT)
+  createdAt   DateTime       @default(now())
+
+  @@index([tenantId])
+  @@map("whatsapp_campaigns")
+}
+
+// ------------------------------------------------------------
+// Sales Contact Form (صفحة Contact العامة) - رسائل حقيقية بتتحفظ
+// من فورم "Let's Talk Business"، مش مرتبطة بأي شركة (Tenant)،
+// دي رسائل عملاء محتملين قبل ما يبقوا عندهم حساب أصلاً.
+// ------------------------------------------------------------
+model ContactMessage {
+  id           String   @id @default(uuid())
+  fullName     String
+  businessEmail String
+  companyName  String
+  message      String   @db.Text
+  createdAt    DateTime @default(now())
+
+  @@map("contact_messages")
+}
+
+// ------------------------------------------------------------
+// Platform Payment Settings - إعدادات بوابة الدفع (MyFatoorah) -
+// صف واحد بس للمنصة كلها، مش لكل شركة، بيعدّله السوبر أدمن بس
+// ------------------------------------------------------------
+model PlatformSettings {
+  id                  String  @id @default("singleton")
+  myFatoorahApiKey    String? @db.Text
+  myFatoorahIsTest    Boolean @default(true)
+  updatedAt           DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
+enum SubscriptionOrderStatus {
+  PENDING   // العميل اختار الخدمات، لسه ما دفعش أو الدفع لسه مش متأكد
+  PAID      // MyFatoorah أكّد إن الدفع اتم فعليًا
+  ACTIVATED // السوبر أدمن راجع الطلب وفعّل الخدمات على حساب العميل
+  CANCELLED
+}
+
+// طلب اشتراك حقيقي - العميل بيختار الخدمات، يدفع (أو الدفع بيتأكد يدوي)،
+// وبيفضل PENDING لحد ما السوبر أدمن يراجعه ويفعّل الخدمات فعليًا على
+// حساب الشركة - مفيش تفعيل تلقائي حتى لو الدفع نجح
+model SubscriptionOrder {
+  id               String                   @id @default(uuid())
+  tenantId         String
+  tenant           Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  selectedModules  String[]
+  billingCycle     String                   @default("monthly") // monthly | yearly
+  amount           Decimal                  @db.Decimal(10, 2)
+  currency         String                   @default("USD")
+  status           SubscriptionOrderStatus  @default(PENDING)
+  myFatoorahInvoiceId String?
+  myFatoorahPaymentId String?
+  myFatoorahPaymentUrl String?              @db.Text
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  @@index([tenantId])
+  @@map("subscription_orders")
+}
