@@ -8,3 +8,8 @@ npm-debug.log*
 .DS_Store
 .vscode/
 .idea/
+# حماية: ملفات مفاتيح Google / service account ماتترفعش أبداً
+*service-account*.json
+*-key.json
+*.pem
+*.p12

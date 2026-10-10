@@ -811,6 +811,10 @@ model WalletSettings {
   logoDataUrl            String?  @db.Text
   centerLabel            String   @default("Brand Icon")
   centerIconDataUrl      String?  @db.Text
+  // أيقونة الأختام (الدواير الصغيرة على الكارت): رمز جاهز أو صورة بيرفعها
+  // التاجر. فاضية = بتتبع أيقونة الدايرة الكبيرة
+  stampGlyph             String   @default("")
+  stampIconDataUrl       String?  @db.Text
   centerBorderThickness  Int      @default(2)
   centerRingColor        String   @default("#38BDF8")
   centerInnerGlow        Boolean  @default(true)
