@@ -2,7 +2,8 @@ import { prisma } from "../../config/db";
 import { getOrCreateWhatsappSettings, sendWhatsappTextMessage } from "../whatsapp/whatsapp.service";
 import { renderMessageTemplate } from "../../utils/messageTemplate";
 import { createNotification } from "../notifications/notifications.service";
-import { initiateTenantPayment, checkTenantMyFatoorahPaymentStatus } from "../checkout/myfatoorah";
+import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus } from "../checkout/myfatoorah";
+import { pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
 
 export async function getOrCreateCatalogSettings(tenantId: string) {
   const existing = await prisma.catalogSettings.findUnique({ where: { tenantId } });
@@ -47,6 +48,7 @@ interface CreateOrderInput {
   customerPhone: string;
   items: OrderItemInput[];
   redirectionUrlBase?: string;
+  paymentMethodId?: string;
 }
 
 // إشعار داخلي حقيقي للمطعم إن أوردر جديد وصل - بيظهر فورًا لو الدفع مش
@@ -106,6 +108,16 @@ export async function createOrder(input: CreateOrderInput) {
   });
 
   const totalAmount = lines.reduce((sum, l) => sum + Number(l.price) * l.quantity, 0);
+  const paymentOn = settings.paymentRequired && totalAmount > 0;
+
+  // بنختار طريقة الدفع قبل ما الأوردر يتحفظ - اختيار غلط = رسالة واضحة
+  let method: PaymentMethod | null = null;
+  if (paymentOn) {
+    const methods = await getTenantPaymentMethods(input.tenantId);
+    if (methods.length === 0) throw new Error("This store hasn't set up a payment method yet.");
+    method = pickPaymentMethod(methods, input.paymentMethodId);
+    if (!method) throw new Error("Please choose one of the available payment methods.");
+  }
 
   const order = await prisma.catalogOrder.create({
     data: {
@@ -117,28 +129,44 @@ export async function createOrder(input: CreateOrderInput) {
       customerName: input.customerName,
       customerPhone: input.customerPhone,
       totalAmount,
-      paymentStatus: settings.paymentRequired ? "AWAITING_PAYMENT" : "NOT_REQUIRED",
+      paymentStatus: paymentOn ? "AWAITING_PAYMENT" : "NOT_REQUIRED",
+      paymentMethodType: method?.type ?? null,
+      paymentMethodLabel: method?.label ?? null,
       items: { create: lines },
     },
     include: { items: true },
   });
 
   // من غير دفع - نفس السلوك القديم بالظبط، إشعار فوري للمطبخ
-  if (!settings.paymentRequired) {
+  if (!paymentOn || !method) {
     await notifyNewOrder(order, input.tenantId);
-    return { ...order, paymentUrl: null, paymentError: null };
+    return { ...order, paymentUrl: null, paymentError: null, paymentInstructions: null };
   }
 
-  // الدفع مفعّل - الأوردر محفوظ فعليًا بحالة AWAITING_PAYMENT، وميوصلش
-  // إشعار للمطبخ إلا بعد ما الدفع الحقيقي ينجح
-  const payment = await initiateTenantPayment(input.tenantId, {
+  const paymentInstructions = { type: method.type, label: method.label, details: method.details ?? null, amount: totalAmount, reference: shortReference(order.id) };
+
+  // كاش عند الاستلام: الأوردر بيروح للمطبخ فورًا، والتاجر يدوس
+  // "Mark paid" لما يستلم الفلوس
+  if (method.type === "CASH") {
+    await notifyNewOrder(order, input.tenantId);
+    return { ...order, paymentUrl: null, paymentError: null, paymentInstructions };
+  }
+
+  // تحويل بنكي: الأوردر مستني لحد ما التاجر يأكد إن التحويل وصل
+  if (method.type === "BANK_TRANSFER") {
+    return { ...order, paymentUrl: null, paymentError: null, paymentInstructions };
+  }
+
+  // MyFatoorah أو لينك دفع - الأوردر محفوظ فعليًا بحالة AWAITING_PAYMENT،
+  // وميوصلش إشعار للمطبخ إلا بعد ما الدفع يتأكد
+  const payment = await startTenantPayment(input.tenantId, method, {
     amount: totalAmount,
     redirectionUrl: `${input.redirectionUrlBase ?? ""}?orderId=${order.id}`,
     reference: order.id,
   });
 
   if (!payment.ok) {
-    return { ...order, paymentUrl: null, paymentError: payment.error };
+    return { ...order, paymentUrl: null, paymentError: payment.error, paymentInstructions: null };
   }
 
   const updated = await prisma.catalogOrder.update({
@@ -147,7 +175,7 @@ export async function createOrder(input: CreateOrderInput) {
     include: { items: true },
   });
 
-  return { ...updated, paymentUrl: payment.paymentUrl, paymentError: null };
+  return { ...updated, paymentUrl: payment.paymentUrl, paymentError: null, paymentInstructions: null };
 }
 
 // بيتأكد من حالة دفع أوردر حقيقي بالسؤال المباشر لـ MyFatoorah (بمفتاح
@@ -178,6 +206,7 @@ export async function markOrderPaidManually(tenantId: string, orderId: string) {
   if (order.paymentStatus === "PAID") return order;
   if (order.paymentStatus !== "AWAITING_PAYMENT") throw new Error("This order isn't waiting for payment");
   const updated = await prisma.catalogOrder.update({ where: { id: order.id }, data: { paymentStatus: "PAID" }, include: { items: true } });
-  await notifyNewOrder(updated, updated.tenantId);
+  // أوردر الكاش راح للمطبخ خلاص وقت الطلب - مانبعتش إشعار تاني
+  if (order.paymentMethodType !== "CASH") await notifyNewOrder(updated, updated.tenantId);
   return updated;
 }

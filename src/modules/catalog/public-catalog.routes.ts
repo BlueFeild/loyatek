@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { getOrCreateCatalogSettings, createOrder, confirmOrderPaymentIfPaid } from "./catalog.service";
 import { isModuleActive } from "../../utils/modules";
+import { getTenantPaymentMethods } from "../checkout/myfatoorah";
+import { publicPaymentMethods } from "../payment-settings/payment-methods";
 
 // راوتر عام بالكامل - مفيهوش requireAuth خالص، لأن العميل اللي بيسكان
 // الـ QR على الترابيزة معندوش حساب ولا هيسجّل دخول. العزل هنا بيتم عن
@@ -23,7 +25,9 @@ publicCatalogRouter.get("/:slug/settings", async (req, res) => {
   if (!tenant) return res.status(404).json({ error: "Menu not found" });
 
   const settings = await getOrCreateCatalogSettings(tenant.id);
-  res.json({ ...settings, brandNameFromTenant: tenant.name });
+  // طرق الدفع اللي العميل يختار منها (من غير اللينكات نفسها)
+  const paymentMethods = publicPaymentMethods(await getTenantPaymentMethods(tenant.id));
+  res.json({ ...settings, brandNameFromTenant: tenant.name, paymentMethods });
 });
 
 publicCatalogRouter.get("/:slug/categories", async (req, res) => {
@@ -45,6 +49,7 @@ const createOrderSchema = z.object({
   customerName: z.string().min(1),
   customerPhone: z.string().min(1),
   items: z.array(z.object({ menuItemId: z.string().uuid(), quantity: z.number().int().positive() })).min(1),
+  paymentMethodId: z.string().max(64).optional(),
 });
 
 // العميل الحقيقي بيبعت الطلب من هنا - بدون أي توكن، السعر بيتاخد من

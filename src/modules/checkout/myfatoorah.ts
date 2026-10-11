@@ -1,4 +1,5 @@
 import { prisma } from "../../config/db";
+import { buildPaymentLink, resolvePaymentMethods, type PaymentMethod } from "../payment-settings/payment-methods";
 
 // بيانات نداءات MyFatoorah الحقيقية - v3 API (v2 قديم ومتروك رسميًا،
 // MyFatoorah نفسهم بيقولوا "Older versions /v2 should not be used for
@@ -143,22 +144,27 @@ export async function checkTenantMyFatoorahPaymentStatus(
   );
 }
 
-// نقطة دخول موحّدة لدفع التاجر: لو اختار MyFatoorah بنكلّم API بتاعها
-// (تأكيد تلقائي). لو اختار "لينك دفع خاص" (أي مزوّد تاني) بنرجّع اللينك
-// بتاعه بعد استبدال {amount} و{reference} - والتأكيد بيتم يدويًا من التاجر
-export async function initiateTenantPayment(
+// كل طرق الدفع اللي التاجر مفعّلها (بما فيها إعداده القديم لو لسه ما
+// استخدمش الشاشة الجديدة)
+export async function getTenantPaymentMethods(tenantId: string): Promise<PaymentMethod[]> {
+  return resolvePaymentMethods(await getOrCreateTenantPaymentSettings(tenantId));
+}
+
+// نقطة دخول موحّدة لدفع التاجر حسب الطريقة اللي العميل اختارها:
+//  - MyFatoorah: بنكلّم API بتاعها (تأكيد تلقائي)
+//  - لينك: بنرجّع لينك التاجر بعد استبدال {amount} و{reference}
+//  - تحويل بنكي / كاش: مفيش لينك - العميل بيشوف التعليمات، والتاجر بيأكد
+export async function startTenantPayment(
   tenantId: string,
+  method: PaymentMethod,
   input: { amount: number; redirectionUrl: string; reference: string }
-): Promise<InitiatePaymentResult & { manual?: boolean }> {
-  const settings = await getOrCreateTenantPaymentSettings(tenantId);
-  if (settings.provider === "CUSTOM_LINK") {
-    if (!settings.customPaymentUrl) return { ok: false, error: "The business hasn't set up its payment link yet." };
-    const url = settings.customPaymentUrl
-      .replace(/\{amount\}/g, encodeURIComponent(String(input.amount)))
-      .replace(/\{reference\}/g, encodeURIComponent(input.reference));
-    return { ok: true, paymentUrl: url, invoiceId: undefined, manual: true };
+): Promise<InitiatePaymentResult> {
+  if (method.type === "MYFATOORAH") return initiateTenantMyFatoorahPayment(tenantId, input);
+  if (method.type === "LINK") {
+    if (!method.url) return { ok: false, error: "The business hasn't set up its payment link yet." };
+    return { ok: true, paymentUrl: buildPaymentLink(method.url, input.amount, input.reference) };
   }
-  return initiateTenantMyFatoorahPayment(tenantId, input);
+  return { ok: true };
 }
 
 export { getPlatformSettings };

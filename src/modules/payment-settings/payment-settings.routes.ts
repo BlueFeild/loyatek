@@ -3,6 +3,8 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { prisma } from "../../config/db";
 import { getOrCreateTenantPaymentSettings } from "../checkout/myfatoorah";
+import { Prisma } from "@prisma/client";
+import { httpsPaymentUrl, normalizePaymentMethods, paymentMethodsInputSchema, resolvePaymentMethods } from "./payment-methods";
 
 // مفتاح MyFatoorah الخاص بكل تاجر لوحده - مش نفس مفتاح المنصة. أي
 // تاجر (OWNER/ADMIN) بيوصّل حساب MyFatoorah بتاعه هو عشان فلوس
@@ -21,22 +23,32 @@ paymentSettingsRouter.get("/", async (req, res) => {
     keyPreview: settings.myFatoorahApiKey ? `••••${settings.myFatoorahApiKey.slice(-4)}` : null,
     customProviderName: settings.customProviderName,
     customPaymentUrl: settings.customPaymentUrl,
+    hasMyFatoorahKey: Boolean(settings.myFatoorahApiKey),
+    methods: resolvePaymentMethods(settings),
   });
 });
 
-// رابط الدفع لازم يكون https فقط (مفيش javascript: أو http) لأنه بيتفتح
-// للعميل. {amount} و{reference} اختيارية جوه الرابط
-const httpsUrl = z
-  .string()
-  .trim()
-  .max(2000)
-  .refine((v) => {
-    try {
-      return new URL(v.replace(/\{(amount|reference)\}/g, "x")).protocol === "https:";
-    } catch {
-      return false;
-    }
-  }, "Payment link must be a valid https:// URL");
+const httpsUrl = httpsPaymentUrl;
+
+// التاجر بيحفظ قايمة طرق الدفع كلها مرة واحدة (إضافة / حذف / ترتيب).
+// MyFatoorah في القايمة لازم يكون مفتاحها متسجّل الأول
+paymentSettingsRouter.put("/methods", requireRole("OWNER", "ADMIN"), async (req, res) => {
+  const parsed = paymentMethodsInputSchema.safeParse(req.body);
+  // رسالة واحدة مقروءة للتاجر بدل JSON
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid payment methods" });
+
+  const settings = await getOrCreateTenantPaymentSettings(req.auth!.tenantId);
+  if (parsed.data.methods.some((m) => m.type === "MYFATOORAH") && !settings.myFatoorahApiKey) {
+    return res.status(400).json({ error: "Save your MyFatoorah API key first, then add MyFatoorah as a payment method." });
+  }
+
+  const methods = normalizePaymentMethods(parsed.data.methods);
+  await prisma.tenantPaymentSettings.update({
+    where: { tenantId: req.auth!.tenantId },
+    data: { methods: methods as unknown as Prisma.InputJsonValue },
+  });
+  res.json({ ok: true, methods });
+});
 
 const updateSchema = z.discriminatedUnion("provider", [
   z.object({

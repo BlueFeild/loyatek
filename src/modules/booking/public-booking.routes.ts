@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { getOrCreateSettings, getAvailableSlots, createBooking, confirmBookingPaymentIfPaid } from "./bookings.service";
 import { isModuleActive } from "../../utils/modules";
+import { getTenantPaymentMethods } from "../checkout/myfatoorah";
+import { publicPaymentMethods } from "../payment-settings/payment-methods";
 
 // راوتر عام بالكامل - العميل بيحجز موعد من غير حساب ولا تسجيل دخول،
 // بالظبط زي منطق الكتالوج العام، والعزل بين الشركات بيتم عن طريق الـ slug
@@ -21,7 +23,9 @@ publicBookingRouter.get("/:slug/settings", async (req, res) => {
   if (!tenant) return res.status(404).json({ error: "Booking page not found" });
 
   const settings = await getOrCreateSettings(tenant.id);
-  res.json(settings);
+  // طرق الدفع اللي العميل يختار منها (من غير اللينكات نفسها)
+  const paymentMethods = publicPaymentMethods(await getTenantPaymentMethods(tenant.id));
+  res.json({ ...settings, paymentMethods });
 });
 
 publicBookingRouter.get("/:slug/resources", async (req, res) => {
@@ -50,6 +54,7 @@ const createBookingSchema = z.object({
   date: z.string(),
   hour: z.number().int().min(0).max(23),
   note: z.string().optional(),
+  paymentMethodId: z.string().max(64).optional(),
 });
 
 publicBookingRouter.post("/:slug/bookings", async (req, res) => {
@@ -73,6 +78,7 @@ publicBookingRouter.post("/:slug/bookings", async (req, res) => {
       date: new Date(parsed.data.date),
       hour: parsed.data.hour,
       note: parsed.data.note,
+      paymentMethodId: parsed.data.paymentMethodId,
       // MyFatoorah v3 بيستخدم رابط رجوع واحد بس، وبيضيف paymentId له
       // تلقائيًا - إحنا اللي بنتأكد من الدفع الحقيقي بعد الرجوع
       redirectionUrlBase: `${frontendBase}/book/${req.params.slug}`,

@@ -778,6 +778,10 @@ model Booking {
   note          String?
   paymentStatus PaymentGateStatus @default(NOT_REQUIRED)
   amount        Decimal?      @db.Decimal(10, 2)
+  // طريقة الدفع اللي العميل اختارها (MYFATOORAH / LINK / BANK_TRANSFER /
+  // CASH) واسمها وقت الحجز - عشان التاجر يعرف يستلم الفلوس إزاي
+  paymentMethodType  String?
+  paymentMethodLabel String?
   myFatoorahInvoiceId  String?
   myFatoorahPaymentId  String?
   myFatoorahPaymentUrl String? @db.Text
@@ -990,6 +994,9 @@ model CatalogOrder {
   totalAmount   Decimal     @db.Decimal(10, 2)
   status        OrderStatus @default(PENDING)
   paymentStatus PaymentGateStatus @default(NOT_REQUIRED)
+  // طريقة الدفع اللي العميل اختارها واسمها وقت الطلب
+  paymentMethodType  String?
+  paymentMethodLabel String?
   myFatoorahInvoiceId  String?
   myFatoorahPaymentId  String?
   myFatoorahPaymentUrl String? @db.Text
@@ -1062,6 +1069,10 @@ model TenantPaymentSettings {
   provider         String   @default("MYFATOORAH")
   customProviderName String?
   customPaymentUrl String?  @db.Text
+  // قايمة طرق الدفع اللي العميل بيختار منها (لينكات / تحويل بنكي / كاش /
+  // MyFatoorah) - شوفي payment-methods.ts. null = لسه على الإعداد القديم
+  // (provider + customPaymentUrl) وبيتحوّل تلقائيًا لطريقة واحدة
+  methods          Json?
   updatedAt        DateTime @updatedAt
 
   @@map("tenant_payment_settings")

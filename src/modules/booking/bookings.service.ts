@@ -2,7 +2,8 @@ import { prisma } from "../../config/db";
 import { getOrCreateWhatsappSettings, sendWhatsappTestMessage, sendWhatsappTextMessage } from "../whatsapp/whatsapp.service";
 import { renderMessageTemplate } from "../../utils/messageTemplate";
 import { createNotification } from "../notifications/notifications.service";
-import { initiateTenantPayment, checkTenantMyFatoorahPaymentStatus } from "../checkout/myfatoorah";
+import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus } from "../checkout/myfatoorah";
+import { pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
 
 // إعدادات الحجز لكل شركة - بتتنشئ تلقائيًا بقيم افتراضية أول مرة
 export async function getOrCreateSettings(tenantId: string) {
@@ -112,11 +113,24 @@ async function runBookingConfirmationSideEffects(booking: { id: string; resource
 // تعارض الحجز على مستوى قاعدة البيانات نفسها، مش بس فحص في الكود.
 // redirectionUrlBase من غير أي query params - بنضيف bookingId بعد ما
 // الحجز يتحفظ فعليًا ونعرف الـ id بتاعه
-export async function createBooking(input: CreateBookingInput & { redirectionUrlBase?: string }) {
+export async function createBooking(input: CreateBookingInput & { redirectionUrlBase?: string; paymentMethodId?: string }) {
   const dayStart = new Date(input.date);
   dayStart.setHours(0, 0, 0, 0);
 
   const settings = await getOrCreateSettings(input.tenantId);
+  const amount = Number(settings.paymentAmount ?? 0);
+  // الدفع مفعّل بمبلغ صفر = مفيش حاجة تتدفع، فبيتعامل كحجز مجاني عادي
+  const paymentOn = settings.paymentRequired && amount > 0;
+
+  // بنختار طريقة الدفع قبل ما نحجز المكان - عشان اختيار غلط مايسيبش
+  // ميعاد محجوز من غير ما حد يقدر يدفع
+  let method: PaymentMethod | null = null;
+  if (paymentOn) {
+    const methods = await getTenantPaymentMethods(input.tenantId);
+    if (methods.length === 0) throw new Error("This business hasn't set up a payment method yet.");
+    method = pickPaymentMethod(methods, input.paymentMethodId);
+    if (!method) throw new Error("Please choose one of the available payment methods.");
+  }
 
   let booking;
   try {
@@ -130,8 +144,10 @@ export async function createBooking(input: CreateBookingInput & { redirectionUrl
         date: dayStart,
         hour: input.hour,
         note: input.note,
-        paymentStatus: settings.paymentRequired ? "AWAITING_PAYMENT" : "NOT_REQUIRED",
-        amount: settings.paymentRequired ? settings.paymentAmount : null,
+        paymentStatus: paymentOn ? "AWAITING_PAYMENT" : "NOT_REQUIRED",
+        amount: paymentOn ? settings.paymentAmount : null,
+        paymentMethodType: method?.type ?? null,
+        paymentMethodLabel: method?.label ?? null,
       },
       include: { resource: true },
     });
@@ -143,22 +159,37 @@ export async function createBooking(input: CreateBookingInput & { redirectionUrl
   }
 
   // من غير دفع - نفس السلوك القديم بالظبط، تأكيد فوري
-  if (!settings.paymentRequired) {
+  if (!paymentOn || !method) {
     const whatsappConfirmationSent = await runBookingConfirmationSideEffects(booking, input.tenantId, booking.resource.name);
-    return { ...booking, whatsappConfirmationSent, paymentUrl: null, paymentError: null };
+    return { ...booking, whatsappConfirmationSent, paymentUrl: null, paymentError: null, paymentInstructions: null };
   }
 
-  // الدفع مفعّل - الحجز محفوظ فعليًا بحالة AWAITING_PAYMENT (المكان
-  // محجوز فعليًا بفضل الـ unique constraint)، وبيتأكد فعليًا بس بعد
-  // ما الدفع الحقيقي ينجح (شوفي confirmBookingPaymentIfPaid تحت)
-  const payment = await initiateTenantPayment(input.tenantId, {
-    amount: Number(settings.paymentAmount),
+  const paymentInstructions = { type: method.type, label: method.label, details: method.details ?? null, amount, reference: shortReference(booking.id) };
+
+  // كاش عند الوصول: الميعاد بيتأكد فورًا (واتساب + إشعار)، والفلوس
+  // بتتدفع في المكان - التاجر يدوس "Mark paid" لما يستلم
+  if (method.type === "CASH") {
+    const whatsappConfirmationSent = await runBookingConfirmationSideEffects(booking, input.tenantId, booking.resource.name);
+    return { ...booking, whatsappConfirmationSent, paymentUrl: null, paymentError: null, paymentInstructions };
+  }
+
+  // تحويل بنكي: الميعاد محجوز بحالة AWAITING_PAYMENT، والعميل بيشوف
+  // بيانات التحويل. بيتأكد لما التاجر يدوس "Mark paid"
+  if (method.type === "BANK_TRANSFER") {
+    return { ...booking, whatsappConfirmationSent: false, paymentUrl: null, paymentError: null, paymentInstructions };
+  }
+
+  // MyFatoorah أو لينك دفع - الحجز محفوظ فعليًا بحالة AWAITING_PAYMENT
+  // (المكان محجوز فعليًا بفضل الـ unique constraint)، وبيتأكد بس بعد
+  // ما الدفع ينجح (MyFatoorah تلقائي / اللينك بـ "Mark paid")
+  const payment = await startTenantPayment(input.tenantId, method, {
+    amount,
     redirectionUrl: `${input.redirectionUrlBase ?? ""}?bookingId=${booking.id}`,
     reference: booking.id,
   });
 
   if (!payment.ok) {
-    return { ...booking, whatsappConfirmationSent: false, paymentUrl: null, paymentError: payment.error };
+    return { ...booking, whatsappConfirmationSent: false, paymentUrl: null, paymentError: payment.error, paymentInstructions: null };
   }
 
   const updated = await prisma.booking.update({
@@ -167,7 +198,7 @@ export async function createBooking(input: CreateBookingInput & { redirectionUrl
     include: { resource: true },
   });
 
-  return { ...updated, whatsappConfirmationSent: false, paymentUrl: payment.paymentUrl, paymentError: null };
+  return { ...updated, whatsappConfirmationSent: false, paymentUrl: payment.paymentUrl, paymentError: null, paymentInstructions: null };
 }
 
 // بيتأكد من حالة دفع حجز حقيقي بالسؤال المباشر لـ MyFatoorah (بمفتاح
@@ -200,6 +231,8 @@ export async function markBookingPaidManually(tenantId: string, bookingId: strin
   if (booking.paymentStatus === "PAID") return { ...booking, whatsappConfirmationSent: false };
   if (booking.paymentStatus !== "AWAITING_PAYMENT") throw new Error("This booking isn't waiting for payment");
   const updated = await prisma.booking.update({ where: { id: booking.id }, data: { paymentStatus: "PAID" }, include: { resource: true } });
+  // حجز الكاش اتأكد خلاص وقت الحجز (واتساب اتبعت) - مانبعتش تاني
+  if (booking.paymentMethodType === "CASH") return { ...updated, whatsappConfirmationSent: false };
   const whatsappConfirmationSent = await runBookingConfirmationSideEffects(updated, updated.tenantId, updated.resource.name);
   return { ...updated, whatsappConfirmationSent };
 }

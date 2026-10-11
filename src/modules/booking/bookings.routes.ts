@@ -82,9 +82,10 @@ const createBookingSchema = z.object({
   date: z.string(),
   hour: z.number().int().min(0).max(23),
   note: z.string().optional(),
+  paymentMethodId: z.string().max(64).optional(),
 });
 
-bookingsRouter.post("/", requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async (req, res) => {
+bookingsRouter.post("/",requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async (req, res) => {
   const parsed = createBookingSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -99,6 +100,7 @@ bookingsRouter.post("/", requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), asyn
       date: new Date(parsed.data.date),
       hour: parsed.data.hour,
       note: parsed.data.note,
+      paymentMethodId: parsed.data.paymentMethodId,
       redirectionUrlBase: `${frontendBase}/booking`,
     });
     res.status(201).json(booking);

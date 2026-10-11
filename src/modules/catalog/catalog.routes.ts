@@ -155,9 +155,10 @@ const createOrderSchema = z.object({
   customerName: z.string().min(1),
   customerPhone: z.string().min(1),
   items: z.array(z.object({ menuItemId: z.string().uuid(), quantity: z.number().int().positive() })).min(1),
+  paymentMethodId: z.string().max(64).optional(),
 });
 
-catalogRouter.post("/orders", async (req, res) => {
+catalogRouter.post("/orders",async (req, res) => {
   const parsed = createOrderSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
