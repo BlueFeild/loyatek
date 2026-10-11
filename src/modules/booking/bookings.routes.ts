@@ -13,6 +13,7 @@ import {
   rescheduleBooking,
   getBookingStats,
 } from "./bookings.service";
+import { parseCalendarDate } from "../../utils/calendarDate";
 
 export const bookingsRouter = Router();
 
@@ -58,7 +59,9 @@ bookingsRouter.get("/slots", async (req, res) => {
   const { resourceId, date } = req.query as { resourceId?: string; date?: string };
   if (!resourceId || !date) return res.status(400).json({ error: "resourceId and date are required" });
 
-  const slots = await getAvailableSlots(req.auth!.tenantId, resourceId, new Date(date));
+  if (!parseCalendarDate(date)) return res.status(400).json({ error: "date must be YYYY-MM-DD" });
+
+  const slots = await getAvailableSlots(req.auth!.tenantId, resourceId, date);
   res.json(slots);
 });
 
@@ -97,7 +100,7 @@ bookingsRouter.post("/",requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async
       resourceId: parsed.data.resourceId,
       customerName: parsed.data.customerName,
       customerPhone: parsed.data.customerPhone,
-      date: new Date(parsed.data.date),
+      date: parsed.data.date,
       hour: parsed.data.hour,
       note: parsed.data.note,
       paymentMethodId: parsed.data.paymentMethodId,
@@ -152,7 +155,7 @@ bookingsRouter.post("/:id/reschedule", requireRole("OWNER", "ADMIN", "MANAGER", 
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
-    const booking = await rescheduleBooking(req.auth!.tenantId, req.params.id, new Date(parsed.data.date), parsed.data.hour);
+    const booking = await rescheduleBooking(req.auth!.tenantId, req.params.id, parsed.data.date, parsed.data.hour);
     res.json(booking);
   } catch (err: any) {
     res.status(400).json({ error: err.message });

@@ -13,7 +13,8 @@ export async function createLinkedCompany(ownerUserId: string, name: string, ind
   if (!ownerUser) throw new Error("Owner user not found");
 
   const slug = await generateUniqueSlug(name);
-  const trialExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  // الشركة المجانية (السوبر أدمن) مالهاش تجربة - كل حاجة مفتوحة دايمًا
+  const trialExpiresAt = opts.free ? null : new Date(Date.now() + 24 * 60 * 60 * 1000);
 
   const tenant = await prisma.tenant.create({
     data: {

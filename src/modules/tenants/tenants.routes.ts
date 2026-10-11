@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { generateUniqueSlug } from "../../utils/slug";
-import { getEffectiveModules } from "../../utils/modules";
+import { getEffectiveModules, isTrialActive } from "../../utils/modules";
 
 export const tenantsRouter = Router();
 
@@ -24,7 +24,8 @@ tenantsRouter.get("/me", async (req, res) => {
     tenant = await prisma.tenant.update({ where: { id: tenant.id }, data: { slug }, include: { branches: true } });
   }
 
-  const trialActive = Boolean(tenant.trialExpiresAt && tenant.trialExpiresAt > new Date());
+  // شركة صاحب المنصة (السوبر أدمن): مفيش تجربة - كل حاجة مجانية ودايمة
+  const trialActive = isTrialActive(tenant);
   const effectiveModules = getEffectiveModules(tenant);
 
   res.json({ ...tenant, trialActive, effectiveModules });

@@ -4,6 +4,7 @@ import { renderMessageTemplate } from "../../utils/messageTemplate";
 import { createNotification } from "../notifications/notifications.service";
 import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus } from "../checkout/myfatoorah";
 import { pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
+import { formatCalendarDate, parseCalendarDate, todayCalendarDate } from "../../utils/calendarDate";
 
 // إعدادات الحجز لكل شركة - بتتنشئ تلقائيًا بقيم افتراضية أول مرة
 export async function getOrCreateSettings(tenantId: string) {
@@ -39,11 +40,10 @@ export async function updateSettings(tenantId: string, data: UpdateSettingsInput
 // الأماكن المتاحة فعليًا لمورد معيّن في يوم معيّن - بناءً على إعدادات
 // ساعات العمل الحقيقية، مطروح منها الساعات المعطّلة والحجوزات
 // الموجودة بالفعل. مش قائمة ثابتة.
-export async function getAvailableSlots(tenantId: string, resourceId: string, date: Date) {
+export async function getAvailableSlots(tenantId: string, resourceId: string, date: string | Date) {
   const settings = await getOrCreateSettings(tenantId);
 
-  const dayStart = new Date(date);
-  dayStart.setHours(0, 0, 0, 0);
+  const dayStart = requireCalendarDate(date);
 
   const existingBookings = await prisma.booking.findMany({
     where: { tenantId, resourceId, date: dayStart, status: { not: "CANCELLED" } },
@@ -65,9 +65,16 @@ interface CreateBookingInput {
   resourceId: string;
   customerName: string;
   customerPhone: string;
-  date: Date;
+  // يوم الحجز "YYYY-MM-DD" (يوم تقويم - شوفي utils/calendarDate.ts)
+  date: string | Date;
   hour: number;
   note?: string;
+}
+
+function requireCalendarDate(value: string | Date) {
+  const day = parseCalendarDate(value);
+  if (!day) throw new Error("Invalid date — please pick a day again");
+  return day;
 }
 
 // خطوات "تأكيد" الحجز الحقيقية - واتساب + إشعار داخلي. بتتنفّذ فورًا
@@ -86,7 +93,7 @@ async function runBookingConfirmationSideEffects(booking: { id: string; resource
         const text = renderMessageTemplate(bookingSettings.waTemplate, {
           name: booking.customerName,
           resource: resourceName,
-          date: booking.date.toLocaleDateString("en-GB"),
+          date: formatCalendarDate(booking.date),
           time: `${String(booking.hour).padStart(2, "0")}:00`,
         });
         let result = await sendWhatsappTextMessage(waSettings.metaAccessToken, waSettings.metaPhoneNumberId, phone, text);
@@ -102,7 +109,7 @@ async function runBookingConfirmationSideEffects(booking: { id: string; resource
     tenantId,
     type: "BOOKING_CONFIRMED",
     title: "New booking confirmed",
-    body: `${booking.customerName} booked ${resourceName} on ${booking.date.toLocaleDateString()} at ${booking.hour}:00`,
+    body: `${booking.customerName} booked ${resourceName} on ${formatCalendarDate(booking.date)} at ${booking.hour}:00`,
     link: "/booking",
   });
 
@@ -114,8 +121,7 @@ async function runBookingConfirmationSideEffects(booking: { id: string; resource
 // redirectionUrlBase من غير أي query params - بنضيف bookingId بعد ما
 // الحجز يتحفظ فعليًا ونعرف الـ id بتاعه
 export async function createBooking(input: CreateBookingInput & { redirectionUrlBase?: string; paymentMethodId?: string }) {
-  const dayStart = new Date(input.date);
-  dayStart.setHours(0, 0, 0, 0);
+  const dayStart = requireCalendarDate(input.date);
 
   const settings = await getOrCreateSettings(input.tenantId);
   const amount = Number(settings.paymentAmount ?? 0);
@@ -243,12 +249,11 @@ export async function cancelBooking(tenantId: string, bookingId: string) {
   return prisma.booking.update({ where: { id: bookingId }, data: { status: "CANCELLED" } });
 }
 
-export async function rescheduleBooking(tenantId: string, bookingId: string, newDate: Date, newHour: number) {
+export async function rescheduleBooking(tenantId: string, bookingId: string, newDate: string | Date, newHour: number) {
   const booking = await prisma.booking.findFirst({ where: { id: bookingId, tenantId } });
   if (!booking) throw new Error("Booking not found");
 
-  const dayStart = new Date(newDate);
-  dayStart.setHours(0, 0, 0, 0);
+  const dayStart = requireCalendarDate(newDate);
 
   try {
     return await prisma.booking.update({
@@ -269,16 +274,13 @@ export async function rescheduleBooking(tenantId: string, bookingId: string, new
 export async function getBookingStats(tenantId: string, branchId: string) {
   const settings = await getOrCreateSettings(tenantId);
 
-  const now = new Date();
-  const todayStart = new Date(now);
-  todayStart.setHours(0, 0, 0, 0);
-  const todayEnd = new Date(todayStart);
-  todayEnd.setDate(todayEnd.getDate() + 1);
+  // أيام تقويم UTC - نفس تمثيل عمود date في قاعدة البيانات
+  const DAY = 24 * 60 * 60 * 1000;
+  const todayStart = todayCalendarDate();
+  const todayEnd = new Date(todayStart.getTime() + DAY);
 
-  const weekStart = new Date(todayStart);
-  weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-  const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekEnd.getDate() + 7);
+  const weekStart = new Date(todayStart.getTime() - todayStart.getUTCDay() * DAY);
+  const weekEnd = new Date(weekStart.getTime() + 7 * DAY);
 
   const [bookingsThisWeek, bookingsToday, resources] = await Promise.all([
     prisma.booking.count({

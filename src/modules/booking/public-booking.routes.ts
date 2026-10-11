@@ -5,6 +5,7 @@ import { getOrCreateSettings, getAvailableSlots, createBooking, confirmBookingPa
 import { isModuleActive } from "../../utils/modules";
 import { getTenantPaymentMethods } from "../checkout/myfatoorah";
 import { publicPaymentMethods } from "../payment-settings/payment-methods";
+import { parseCalendarDate } from "../../utils/calendarDate";
 
 // راوتر عام بالكامل - العميل بيحجز موعد من غير حساب ولا تسجيل دخول،
 // بالظبط زي منطق الكتالوج العام، والعزل بين الشركات بيتم عن طريق الـ slug
@@ -43,7 +44,9 @@ publicBookingRouter.get("/:slug/slots", async (req, res) => {
   const { resourceId, date } = req.query as { resourceId?: string; date?: string };
   if (!resourceId || !date) return res.status(400).json({ error: "resourceId and date are required" });
 
-  const slots = await getAvailableSlots(tenant.id, resourceId, new Date(date));
+  if (!parseCalendarDate(date)) return res.status(400).json({ error: "date must be YYYY-MM-DD" });
+
+  const slots = await getAvailableSlots(tenant.id, resourceId, date);
   res.json(slots);
 });
 
@@ -75,7 +78,7 @@ publicBookingRouter.post("/:slug/bookings", async (req, res) => {
       resourceId: parsed.data.resourceId,
       customerName: parsed.data.customerName,
       customerPhone: parsed.data.customerPhone,
-      date: new Date(parsed.data.date),
+      date: parsed.data.date,
       hour: parsed.data.hour,
       note: parsed.data.note,
       paymentMethodId: parsed.data.paymentMethodId,

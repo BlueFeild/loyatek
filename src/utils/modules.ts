@@ -24,11 +24,17 @@ export function getRealActiveModules(tenant: TenantLike): string[] {
   return ALL_MODULES.filter((m) => isModuleActive(tenant, m));
 }
 
+// التجربة المجانية شغالة؟ شركات صاحب المنصة مالهاش تجربة أصلًا - كل
+// حاجة مجانية ودايمة، فمايظهرلهاش بانر "Free trial" ولا "اشترك"
+export function isTrialActive(tenant: TenantLike, now: Date = new Date()): boolean {
+  if (tenant.isPlatformOwner) return false;
+  return Boolean(tenant.trialExpiresAt && tenant.trialExpiresAt > now);
+}
+
 // الوصول الفعلي في واجهة التاجر = الاشتراك الحقيقي الشغال + كل حاجة
 // مؤقتًا لو التجربة المجانية لسه شغالة
 export function getEffectiveModules(tenant: TenantLike): string[] {
-  const trialActive = Boolean(tenant.trialExpiresAt && tenant.trialExpiresAt > new Date());
-  if (trialActive) return [...ALL_MODULES];
+  if (isTrialActive(tenant)) return [...ALL_MODULES];
   return getRealActiveModules(tenant);
 }
 

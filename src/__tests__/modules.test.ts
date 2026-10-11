@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isModuleActive, getEffectiveModules, computeExpiryDate, ALL_MODULES } from "../utils/modules";
+import { isModuleActive, getEffectiveModules, computeExpiryDate, isTrialActive, ALL_MODULES } from "../utils/modules";
 
 function tenant(overrides: Partial<Parameters<typeof isModuleActive>[0]> = {}) {
   return {
@@ -61,6 +61,21 @@ describe("getEffectiveModules — وصول التاجر في الواجهة (ت�
   it("مفيش تجربة خالص ومفيش اشتراك = effectiveModules فاضية تمامًا", () => {
     const t = tenant({ subscribedModules: [], trialExpiresAt: null });
     expect(getEffectiveModules(t)).toEqual([]);
+  });
+});
+
+describe("isTrialActive — بانر التجربة المجانية", () => {
+  const future = new Date(Date.now() + 12 * 60 * 60 * 1000);
+  it("تاجر عادي جديد = التجربة شغالة", () => {
+    expect(isTrialActive(tenant({ trialExpiresAt: future }))).toBe(true);
+  });
+  it("شركة السوبر أدمن (صاحب المنصة) = مفيش تجربة حتى لو اتعملت من شوية - كل حاجة مجانية", () => {
+    const t = tenant({ trialExpiresAt: future, isPlatformOwner: true });
+    expect(isTrialActive(t)).toBe(false);
+    expect(getEffectiveModules(t)).toEqual([...ALL_MODULES]);
+  });
+  it("تجربة منتهية = مش شغالة", () => {
+    expect(isTrialActive(tenant({ trialExpiresAt: new Date(Date.now() - 1000) }))).toBe(false);
   });
 });
 
