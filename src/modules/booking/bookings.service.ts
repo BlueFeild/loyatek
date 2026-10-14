@@ -1,5 +1,6 @@
 import { prisma } from "../../config/db";
-import { getOrCreateWhatsappSettings, sendWhatsappTestMessage, sendWhatsappTextMessage } from "../whatsapp/whatsapp.service";
+import { getOrCreateWhatsappSettings, recordWhatsappMessage, sendWhatsappTestMessage, sendWhatsappTextMessage } from "../whatsapp/whatsapp.service";
+import { sendBookingTemplate, type TemplateLang } from "../whatsapp/booking-templates";
 import { renderMessageTemplate } from "../../utils/messageTemplate";
 import { createNotification } from "../notifications/notifications.service";
 import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus } from "../checkout/myfatoorah";
@@ -35,6 +36,10 @@ interface UpdateSettingsInput {
   merchantEmail?: string;
   waMerchantTemplate?: string;
   askCustomerEmail?: boolean;
+  waTemplateLang?: string;
+  reminderEnabled?: boolean;
+  reminderHoursBefore?: number;
+  timezone?: string;
 }
 
 export async function updateSettings(tenantId: string, data: UpdateSettingsInput) {
@@ -103,28 +108,33 @@ async function runBookingConfirmationSideEffects(
     payment: booking.paymentMethodLabel ?? "",
   };
   const digits = (v: string) => v.replace(/[^\d]/g, "");
+  const lang: TemplateLang = bookingSettings.waTemplateLang === "ar" ? "ar" : "en";
+  const templateValues = { ...vars, business: bookingSettings.brandName };
+  // نص حر + تسجيله في Team Inbox
+  async function sendText(to: string, text: string, contactName?: string) {
+    const r = await sendWhatsappTextMessage(waSettings.metaAccessToken!, waSettings.metaPhoneNumberId!, to, text);
+    await recordWhatsappMessage({ tenantId, direction: "OUT", contactPhone: to, contactName, body: text, kind: "text", waMessageId: r.messageId, status: r.ok ? "sent" : "failed", error: r.ok ? null : r.error });
+    return r;
+  }
+  const waSettings = await getOrCreateWhatsappSettings(tenantId);
   try {
-    const waSettings = await getOrCreateWhatsappSettings(tenantId);
     const waReady = waSettings.isConnected && waSettings.metaAccessToken && waSettings.metaPhoneNumberId;
     if (bookingSettings.waAutomation && waReady) {
-      // الرسالة اللي كتبها التاجر نفسه (waTemplate) - لو Meta رفضت النص
-      // الحر (برا نافذة الـ24 ساعة) بنرجع للقالب المعتمد الجاهز
-      const text = renderMessageTemplate(bookingSettings.waTemplate, vars);
       const phone = digits(booking.customerPhone);
-      let result = await sendWhatsappTextMessage(waSettings.metaAccessToken!, waSettings.metaPhoneNumberId!, phone, text);
+      // 1) القالب المعتمد (بيوصل لأي رقم). 2) لو لسه مش معتمد: رسالة التاجر
+      // كنص حر (بتوصل بس جوه نافذة الـ24 ساعة). 3) آخر حل: hello_world
+      let result = await sendBookingTemplate(tenantId, "BOOKING_CONFIRMATION", lang, phone, templateValues, booking.customerName);
+      if (!result?.ok) result = await sendText(phone, renderMessageTemplate(bookingSettings.waTemplate, vars), booking.customerName);
       if (!result.ok) result = await sendWhatsappTestMessage(waSettings.metaAccessToken!, waSettings.metaPhoneNumberId!, phone);
       whatsappConfirmationSent = result.ok;
     }
-    // إشعار واتساب للتاجر نفسه (رقمه هو) بكل حجز جديد - نص حر، فـ Meta بتقبله
-    // بس جوه نافذة الـ24 ساعة (لو التاجر كلّم رقم البيزنس آخر 24 ساعة)
-    if (waReady && digits(bookingSettings.merchantWhatsapp) && bookingSettings.waMerchantTemplate.trim()) {
-      const result = await sendWhatsappTextMessage(
-        waSettings.metaAccessToken!,
-        waSettings.metaPhoneNumberId!,
-        digits(bookingSettings.merchantWhatsapp),
-        renderMessageTemplate(bookingSettings.waMerchantTemplate, vars)
-      );
-      if (!result.ok) console.warn(`[booking] merchant WhatsApp notification not delivered for tenant ${tenantId}`);
+    // إشعار واتساب للتاجر نفسه (رقمه هو) بكل حجز جديد: القالب المعتمد
+    // BOOKING_MERCHANT_ALERT لو موجود، وإلا نص حر (جوه نافذة الـ24 ساعة بس)
+    if (waReady && digits(bookingSettings.merchantWhatsapp)) {
+      const to = digits(bookingSettings.merchantWhatsapp);
+      let result = await sendBookingTemplate(tenantId, "BOOKING_MERCHANT_ALERT", lang, to, templateValues);
+      if (!result?.ok && bookingSettings.waMerchantTemplate.trim()) result = await sendText(to, renderMessageTemplate(bookingSettings.waMerchantTemplate, vars));
+      if (result && !result.ok) console.warn(`[booking] merchant WhatsApp notification not delivered for tenant ${tenantId}: ${result.error}`);
     }
   } catch {
     // فشل الإرسال ميوقفش نجاح الحجز نفسه - ده feature إضافي مش أساسي

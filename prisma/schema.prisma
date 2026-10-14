@@ -107,6 +107,8 @@ model Tenant {
   vendorBills     VendorBill[]
   whatsappTemplates WhatsappTemplate[]
   whatsappSettings WhatsappSettings?
+  whatsappMessages WhatsappMessage[]
+  whatsappAutoReplies WhatsappAutoReply[]
   botFlowNodes    BotFlowNode[]
   whatsappContactNotes WhatsappContactNote[]
   whatsappCampaigns WhatsappCampaign[]
@@ -725,6 +727,13 @@ model BookingSettings {
   waMerchantTemplate String  @default("🔔 New booking\n{name} · {phone}\n{resource}\n{date} at {time}")
   // نطلب إيميل العميل (اختياري) في صفحة الحجز - بيوصله تأكيد بالإيميل
   askCustomerEmail   Boolean @default(false)
+  // لغة قوالب واتساب المعتمدة للحجز (en / ar)
+  waTemplateLang     String  @default("en")
+  // تذكير واتساب تلقائي قبل الميعاد (بالقالب المعتمد BOOKING_REMINDER)
+  reminderEnabled     Boolean @default(false)
+  reminderHoursBefore Int     @default(24)
+  // المنطقة الزمنية للبيزنس - مواعيد الحجز (يوم + ساعة) بتتحسب بيها
+  timezone            String  @default("Asia/Qatar")
   updatedAt       DateTime @updatedAt
 
   @@map("booking_settings")
@@ -781,6 +790,8 @@ model Booking {
   customerPhone String
   // إيميل العميل لو كتبه في صفحة الحجز (اختياري)
   customerEmail String?
+  // اتبعت تذكير الواتساب امتى (null = لسه) - بيمنع التذكير يتبعت مرتين
+  reminderSentAt DateTime?
   date          DateTime      @db.Date
   hour          Int // ساعة الميعاد (0-23) - بديل بسيط وحقيقي عن توقيت كامل
   status        BookingStatus @default(CONFIRMED)
@@ -1058,12 +1069,63 @@ model WhatsappSettings {
   // ومطلوب بس لو عايزة ترفعي صورة في رأس القالب (Meta بتستخدم نظام
   // رفع ملفات منفصل اسمه Resumable Upload API بيحتاج App ID)
   metaAppId       String?
+  // isConnected = آخر تأكيد حقيقي من Meta نجح (مش مجرد إن الخانات مليانة)
   isConnected     Boolean  @default(false)
+  displayPhoneNumber String?
+  verifiedName       String?
+  lastVerifiedAt     DateTime?
+  lastVerifyError    String?
+  // Webhook (استقبال الرسايل من Meta): لينك سري لكل تاجر + Verify Token،
+  // و App Secret للتأكد إن الرسالة جاية من Meta فعلًا (X-Hub-Signature-256)
+  webhookKey         String?  @unique
+  webhookVerifyToken String?
+  metaAppSecret      String?  @db.Text
+  lastWebhookAt      DateTime?
+  // البوت: ردود تلقائية بالكلمات (WhatsappAutoReply) + رد افتراضي اختياري
+  botEnabled         Boolean  @default(false)
+  botFallbackReply   String   @default("") @db.Text
   updatedAt       DateTime @updatedAt
 
   templates WhatsappTemplate[]
 
   @@map("whatsapp_settings")
+}
+
+// كل رسالة واتساب جاية أو طالعة - بتظهر في Team Inbox. حالة التوصيل
+// بتتحدث من الـ webhook (sent / delivered / read / failed)
+model WhatsappMessage {
+  id           String   @id @default(uuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  direction    String // IN | OUT
+  contactPhone String
+  contactName  String?
+  body         String   @db.Text
+  kind         String   @default("text") // text | template | bot | ...
+  waMessageId  String?  @unique
+  status       String   @default("sent")
+  error        String?
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId, contactPhone, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("whatsapp_messages")
+}
+
+// رد تلقائي: لو رسالة العميل فيها أي كلمة من keywords، البوت يرد بـ reply
+// ({name} {booking_link} {menu_link} {links_link})
+model WhatsappAutoReply {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  keywords  String[]
+  reply     String   @db.Text
+  enabled   Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@map("whatsapp_auto_replies")
 }
 
 // مفتاح MyFatoorah الحقيقي الخاص بكل تاجر لوحده - مختلف عن
@@ -1119,6 +1181,9 @@ model WhatsappTemplate {
   status          TemplateStatus @default(PENDING)
   metaTemplateId  String? // معرّف القالب عند Meta نفسها - للاستعلام عن حالته بعد كده
   rejectionReason String?
+  // قوالب الحجز الجاهزة: BOOKING_CONFIRMATION / BOOKING_MERCHANT_ALERT /
+  // BOOKING_REMINDER (null = قالب عادي عمله التاجر للحملات)
+  purpose         String?
   createdAt       DateTime @default(now())
 
   campaigns WhatsappCampaign[]

@@ -14,6 +14,7 @@ import {
   getBookingStats,
 } from "./bookings.service";
 import { parseCalendarDate } from "../../utils/calendarDate";
+import { isValidTimeZone } from "../../utils/timezone";
 
 export const bookingsRouter = Router();
 
@@ -48,6 +49,11 @@ const updateSettingsSchema = z.object({
   merchantEmail: z.union([z.literal(""), z.string().trim().email().max(200)]).optional(),
   waMerchantTemplate: z.string().max(1000).optional(),
   askCustomerEmail: z.boolean().optional(),
+  // قوالب الواتساب المعتمدة + التذكير قبل الميعاد
+  waTemplateLang: z.enum(["en", "ar"]).optional(),
+  reminderEnabled: z.boolean().optional(),
+  reminderHoursBefore: z.number().int().min(1).max(72).optional(),
+  timezone: z.string().refine(isValidTimeZone, "Unknown time zone").optional(),
 });
 
 bookingsRouter.patch("/settings", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {

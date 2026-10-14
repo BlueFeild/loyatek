@@ -22,6 +22,7 @@ import { agencyRouter } from "./modules/agency/agency.routes";
 import { catalogRouter } from "./modules/catalog/catalog.routes";
 import { publicCatalogRouter } from "./modules/catalog/public-catalog.routes";
 import { publicBookingRouter } from "./modules/booking/public-booking.routes";
+import { publicWhatsappWebhookRouter } from "./modules/whatsapp/webhook";
 import { publicWalletRouter } from "./modules/wallet/public-wallet.routes";
 import { publicContactRouter } from "./modules/contact/public-contact.routes";
 import { checkoutRouter } from "./modules/checkout/checkout.routes";
@@ -66,7 +67,15 @@ app.use(
   })
 );
 // حد أعلى مرفوع عشان يستوعب الصور المرفوعة كـ base64 (لوجو، صور أصناف، غلاف فئات...)
-app.use(express.json({ limit: "10mb" }));
+app.use(
+  express.json({
+    limit: "10mb",
+    // نسخة خام من الطلب - لازمة للتأكد من توقيع Meta على webhook الواتساب
+    verify: (req, _res, buf) => {
+      (req as unknown as { rawBody?: Buffer }).rawBody = buf;
+    },
+  })
+);
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
@@ -93,6 +102,8 @@ app.use("/api/agency", agencyRouter);
 app.use("/api/catalog", catalogRouter);
 app.use("/api/public/menu", publicCatalogRouter);
 app.use("/api/public/booking", publicBookingRouter);
+// Meta بتبعت رسايل الواتساب الجاية هنا (موقّعة بالـ App Secret بتاع التاجر)
+app.use("/api/public/whatsapp/webhook", publicWhatsappWebhookRouter);
 app.use("/api/public/wallet", publicWalletRouter);
 app.use("/api/public/contact", publicContactRouter);
 app.use("/api/checkout", checkoutRouter);

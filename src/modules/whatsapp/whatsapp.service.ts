@@ -1,5 +1,11 @@
 import { prisma } from "../../config/db";
 
+// عنوان Meta Graph API - ثابت في الإنتاج، وبيتغير بس في الاختبارات (سيرفر Meta
+// وهمي على الجهاز) عن طريق META_GRAPH_BASE_URL. بيتقري وقت كل نداء
+export function graphBase(): string {
+  return (process.env.META_GRAPH_BASE_URL || "https://graph.facebook.com/v21.0").replace(/\/+$/, "");
+}
+
 export async function getOrCreateWhatsappSettings(tenantId: string) {
   const existing = await prisma.whatsappSettings.findUnique({ where: { tenantId } });
   if (existing) return existing;
@@ -40,7 +46,7 @@ export async function sendWhatsappTestMessage(
   languageCode: string = "en_US"
 ): Promise<SendMessageResult> {
   try {
-    const res = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+    const res = await fetch(`${graphBase()}/${phoneNumberId}/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -65,6 +71,116 @@ export async function sendWhatsappTestMessage(
   }
 }
 
+// قالب معتمد فيه متغيرات ({{1}} {{2}} ...) - زي تأكيد الحجز باسم العميل
+// والميعاد. القوالب المعتمدة بتوصل لأي رقم من غير شرط نافذة الـ24 ساعة
+export async function sendWhatsappTemplate(
+  accessToken: string,
+  phoneNumberId: string,
+  toPhoneNumber: string,
+  templateName: string,
+  languageCode: string,
+  bodyParams: string[]
+): Promise<SendMessageResult> {
+  try {
+    const template: Record<string, unknown> = { name: templateName, language: { code: languageCode } };
+    if (bodyParams.length) {
+      // Meta بترفض متغير فاضي - بنحط شرطة بداله
+      template.components = [{ type: "body", parameters: bodyParams.map((t) => ({ type: "text", text: (t || "").trim() || "-" })) }];
+    }
+    const res = await fetch(`${graphBase()}/${phoneNumberId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ messaging_product: "whatsapp", to: toPhoneNumber, type: "template", template }),
+    });
+    const data = (await res.json()) as MetaGraphResponse;
+    if (!res.ok) return { ok: false, error: data?.error?.message || "Meta rejected the template message" };
+    return { ok: true, messageId: data?.messages?.[0]?.id };
+  } catch (err: unknown) {
+    return { ok: false, error: `Could not reach Meta: ${errorMessage(err)}` };
+  }
+}
+
+// التأكد الحقيقي من الربط: بنسأل Meta عن رقم الواتساب نفسه بالمفتاح ده.
+// لو المفتاح غلط أو منتهي أو الرقم مش تبعه، Meta بترجّع سبب واضح
+export async function verifyWhatsappConnection(
+  accessToken: string,
+  phoneNumberId: string,
+  wabaId?: string | null
+): Promise<{ ok: boolean; displayPhoneNumber?: string; verifiedName?: string; qualityRating?: string; wabaName?: string; error?: string }> {
+  try {
+    const res = await fetch(`${graphBase()}/${phoneNumberId}?fields=display_phone_number,verified_name,quality_rating`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const data = (await res.json()) as MetaGraphResponse & { display_phone_number?: string; verified_name?: string; quality_rating?: string };
+    if (!res.ok) return { ok: false, error: data?.error?.message || "Meta couldn't find this phone number with this token" };
+    let wabaName: string | undefined;
+    if (wabaId) {
+      const w = await fetch(`${graphBase()}/${wabaId}?fields=name`, { headers: { Authorization: `Bearer ${accessToken}` } });
+      const wd = (await w.json()) as MetaGraphResponse & { name?: string };
+      if (!w.ok) return { ok: false, error: `Phone number OK, but the WABA ID was rejected: ${wd?.error?.message || "unknown error"}` };
+      wabaName = wd.name;
+    }
+    return { ok: true, displayPhoneNumber: data.display_phone_number, verifiedName: data.verified_name, qualityRating: data.quality_rating, wabaName };
+  } catch (err: unknown) {
+    return { ok: false, error: `Could not reach Meta: ${errorMessage(err)}` };
+  }
+}
+
+// قالب موجود بالفعل عند Meta بنفس الاسم (مثلاً اتعمل قبل كده) - بنجيبه بدل ما نفشل
+export async function findWhatsappTemplateByName(
+  accessToken: string,
+  wabaId: string,
+  name: string,
+  language: string
+): Promise<{ id: string; status: string } | null> {
+  try {
+    const res = await fetch(`${graphBase()}/${wabaId}/message_templates?name=${encodeURIComponent(name)}&fields=id,name,language,status`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const data = (await res.json()) as { data?: { id: string; name: string; language: string; status: string }[] };
+    if (!res.ok) return null;
+    const hit = (data.data ?? []).find((t) => t.name === name && t.language === language);
+    return hit ? { id: hit.id, status: hit.status } : null;
+  } catch {
+    return null;
+  }
+}
+
+// سجل الرسايل (الجاية والطالعة) - بيظهر في Team Inbox، وحالة التوصيل
+// (sent / delivered / read / failed) بتتحدث من الـ webhook
+export async function recordWhatsappMessage(input: {
+  tenantId: string;
+  direction: "IN" | "OUT";
+  contactPhone: string;
+  contactName?: string | null;
+  body: string;
+  kind?: string;
+  waMessageId?: string | null;
+  status?: string;
+  error?: string | null;
+}) {
+  const data = {
+    tenantId: input.tenantId,
+    direction: input.direction,
+    contactPhone: input.contactPhone.replace(/[^\d]/g, ""),
+    contactName: input.contactName ?? null,
+    body: input.body.slice(0, 4000),
+    kind: input.kind ?? "text",
+    waMessageId: input.waMessageId || null,
+    status: input.status ?? (input.direction === "IN" ? "received" : "sent"),
+    error: input.error ?? null,
+  };
+  try {
+    if (data.waMessageId) {
+      // Meta ممكن تبعت نفس الحدث أكتر من مرة - مانسجلوش مرتين
+      return await prisma.whatsappMessage.upsert({ where: { waMessageId: data.waMessageId }, create: data, update: {} });
+    }
+    return await prisma.whatsappMessage.create({ data });
+  } catch {
+    return null; // السجل مايوقفش الإرسال نفسه
+  }
+}
+
 // رسالة نص حرة (التاجر كاتبها بنفسه). ملحوظة من Meta: النص الحر بيوصل
 // بس لو العميل كلّم رقم الشركة في آخر 24 ساعة، غير كده Meta بترفض وبنرجّع
 // الخطأ ليتصرف اللي استدعاها (مثلاً fallback لقالب معتمد)
@@ -75,7 +191,7 @@ export async function sendWhatsappTextMessage(
   body: string
 ): Promise<SendMessageResult> {
   try {
-    const res = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+    const res = await fetch(`${graphBase()}/${phoneNumberId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({ messaging_product: "whatsapp", to: toPhoneNumber, type: "text", text: { body } }),
@@ -103,7 +219,7 @@ export async function uploadWhatsappAudio(
     form.append("messaging_product", "whatsapp");
     form.append("file", blob, "voice-note.webm");
 
-    const res = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/media`, {
+    const res = await fetch(`${graphBase()}/${phoneNumberId}/media`, {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}` },
       body: form,
@@ -128,7 +244,7 @@ export async function sendWhatsappAudioMessage(
   mediaId: string
 ): Promise<SendMessageResult> {
   try {
-    const res = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+    const res = await fetch(`${graphBase()}/${phoneNumberId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({
@@ -198,6 +314,8 @@ interface CreateTemplateInput {
   buttonText?: string;
   buttonUrl?: string;
   headerImageHandle?: string;
+  // أمثلة لقيم المتغيرات {{1}} {{2}}... (Meta بتطلبها للمراجعة)
+  bodyExamples?: string[];
 }
 
 interface CreateTemplateResult {
@@ -219,7 +337,13 @@ export async function createWhatsappTemplate(
     if (input.headerImageHandle) {
       components.push({ type: "HEADER", format: "IMAGE", example: { header_handle: [input.headerImageHandle] } });
     }
-    components.push({ type: "BODY", text: input.bodyText });
+    // لو النص فيه متغيرات {{1}} {{2}}، Meta بتطلب مثال لكل واحد وإلا بترفض القالب
+    const varCount = new Set(Array.from(input.bodyText.matchAll(/\{\{(\d+)\}\}/g), (m) => m[1])).size;
+    components.push(
+      varCount > 0 && input.bodyExamples?.length
+        ? { type: "BODY", text: input.bodyText, example: { body_text: [input.bodyExamples.slice(0, varCount)] } }
+        : { type: "BODY", text: input.bodyText }
+    );
     if (input.buttonText && input.buttonUrl) {
       components.push({
         type: "BUTTONS",
@@ -227,7 +351,7 @@ export async function createWhatsappTemplate(
       });
     }
 
-    const res = await fetch(`https://graph.facebook.com/v21.0/${wabaId}/message_templates`, {
+    const res = await fetch(`${graphBase()}/${wabaId}/message_templates`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({
@@ -253,7 +377,7 @@ export async function getWhatsappTemplateStatus(
   metaTemplateId: string
 ): Promise<{ ok: boolean; status?: string; rejectionReason?: string; error?: string }> {
   try {
-    const res = await fetch(`https://graph.facebook.com/v21.0/${metaTemplateId}?fields=status,rejected_reason`, {
+    const res = await fetch(`${graphBase()}/${metaTemplateId}?fields=status,rejected_reason`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     const data = (await res.json()) as MetaGraphResponse & { status?: string; rejected_reason?: string };
@@ -280,7 +404,7 @@ export async function uploadTemplateHeaderImage(
 
     // خطوة 1: فتح جلسة رفع
     const sessionRes = await fetch(
-      `https://graph.facebook.com/v21.0/${appId}/uploads?file_length=${buffer.length}&file_type=${encodeURIComponent(mimeType)}&access_token=${accessToken}`,
+      `${graphBase()}/${appId}/uploads?file_length=${buffer.length}&file_type=${encodeURIComponent(mimeType)}&access_token=${accessToken}`,
       { method: "POST" }
     );
     const sessionData = (await sessionRes.json()) as { id?: string; error?: { message?: string } };
@@ -289,7 +413,7 @@ export async function uploadTemplateHeaderImage(
     }
 
     // خطوة 2: رفع البايتات الفعلية على نفس الجلسة
-    const uploadRes = await fetch(`https://graph.facebook.com/v21.0/${sessionData.id}`, {
+    const uploadRes = await fetch(`${graphBase()}/${sessionData.id}`, {
       method: "POST",
       headers: { Authorization: `OAuth ${accessToken}`, file_offset: "0" },
       body: buffer,

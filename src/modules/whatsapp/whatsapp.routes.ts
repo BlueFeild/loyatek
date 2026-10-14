@@ -1,39 +1,258 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
+import crypto from "crypto";
 import { z } from "zod";
 import * as XLSX from "xlsx";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
-import { getOrCreateWhatsappSettings, getUnifiedContacts, sendWhatsappTestMessage, uploadWhatsappAudio, sendWhatsappAudioMessage, createWhatsappTemplate, getWhatsappTemplateStatus, uploadTemplateHeaderImage } from "./whatsapp.service";
+import {
+  getOrCreateWhatsappSettings,
+  getUnifiedContacts,
+  sendWhatsappTestMessage,
+  sendWhatsappTextMessage,
+  uploadWhatsappAudio,
+  sendWhatsappAudioMessage,
+  createWhatsappTemplate,
+  getWhatsappTemplateStatus,
+  uploadTemplateHeaderImage,
+  verifyWhatsappConnection,
+  recordWhatsappMessage,
+} from "./whatsapp.service";
+import { BOOKING_TEMPLATE_PURPOSES, ensureBookingTemplates, getApprovedBookingTemplate, type BookingTemplatePurpose } from "./booking-templates";
 
 export const whatsappRouter = Router();
 
 whatsappRouter.use(requireAuth);
 
-// --- Settings (مكان محجوز لمفاتيح Meta لما تتوصل) ---
+// --- Settings (ربط حساب Meta الحقيقي) ---
+
+// لينك الـ webhook العام اللي التاجر بيحطه في تطبيقه على Meta
+function apiBase(req: Request) {
+  if (process.env.PUBLIC_API_BASE_URL) return process.env.PUBLIC_API_BASE_URL.replace(/\/+$/, "");
+  const proto = (req.header("x-forwarded-proto") || req.protocol).split(",")[0].trim();
+  return `${proto}://${req.get("host")}`;
+}
+
+// كل تاجر ليه لينك webhook سري + Verify Token (بيتعملوا أول مرة بس)
+async function ensureWebhookKeys(tenantId: string) {
+  const s = await getOrCreateWhatsappSettings(tenantId);
+  if (s.webhookKey && s.webhookVerifyToken) return s;
+  return prisma.whatsappSettings.update({
+    where: { tenantId },
+    data: { webhookKey: s.webhookKey ?? crypto.randomBytes(24).toString("hex"), webhookVerifyToken: s.webhookVerifyToken ?? crypto.randomBytes(16).toString("hex") },
+  });
+}
+
+// مفيش أي سر بيرجع للفرونت إند (لا الـ token ولا الـ App Secret) - بس حالة الربط
+function settingsView(s: Awaited<ReturnType<typeof getOrCreateWhatsappSettings>>, req: Request) {
+  return {
+    isConnected: s.isConnected,
+    hasAccessToken: !!s.metaAccessToken,
+    hasPhoneNumberId: !!s.metaPhoneNumberId,
+    hasWabaId: !!s.metaWabaId,
+    hasAppId: !!s.metaAppId,
+    hasAppSecret: !!s.metaAppSecret,
+    phoneNumberId: s.metaPhoneNumberId,
+    wabaId: s.metaWabaId,
+    appId: s.metaAppId,
+    displayPhoneNumber: s.displayPhoneNumber,
+    verifiedName: s.verifiedName,
+    lastVerifiedAt: s.lastVerifiedAt,
+    lastVerifyError: s.lastVerifyError,
+    webhookUrl: s.webhookKey ? `${apiBase(req)}/api/public/whatsapp/webhook/${s.webhookKey}` : null,
+    webhookVerifyToken: s.webhookVerifyToken,
+    lastWebhookAt: s.lastWebhookAt,
+    botEnabled: s.botEnabled,
+    botFallbackReply: s.botFallbackReply,
+  };
+}
+
+// تأكيد حقيقي من Meta وتحديث حالة الربط
+async function runVerify(tenantId: string) {
+  const s = await getOrCreateWhatsappSettings(tenantId);
+  if (!s.metaAccessToken || !s.metaPhoneNumberId) {
+    return prisma.whatsappSettings.update({ where: { tenantId }, data: { isConnected: false, lastVerifyError: "Add the access token and phone number ID first." } });
+  }
+  const v = await verifyWhatsappConnection(s.metaAccessToken, s.metaPhoneNumberId, s.metaWabaId);
+  return prisma.whatsappSettings.update({
+    where: { tenantId },
+    data: v.ok
+      ? { isConnected: true, displayPhoneNumber: v.displayPhoneNumber ?? null, verifiedName: v.verifiedName ?? null, lastVerifiedAt: new Date(), lastVerifyError: null }
+      : { isConnected: false, lastVerifyError: v.error ?? "Meta rejected the connection" },
+  });
+}
 
 whatsappRouter.get("/settings", async (req, res) => {
-  const settings = await getOrCreateWhatsappSettings(req.auth!.tenantId);
-  // متبعتش الـ access token نفسه للفرونت إند حتى لو موجود - بس نقول هل متوصل ولا لأ
-  res.json({ isConnected: settings.isConnected, hasPhoneNumberId: !!settings.metaPhoneNumberId, hasWabaId: !!settings.metaWabaId, hasAppId: !!settings.metaAppId });
+  const settings = await ensureWebhookKeys(req.auth!.tenantId);
+  res.json(settingsView(settings, req));
 });
 
 const updateSettingsSchema = z.object({
   metaAccessToken: z.string().trim().min(1).optional(),
-  metaPhoneNumberId: z.string().trim().min(1).optional(),
-  metaWabaId: z.string().trim().min(1).optional(),
-  metaAppId: z.string().trim().min(1).optional(),
+  metaPhoneNumberId: z.string().trim().regex(/^\d{5,30}$/, "Phone number ID is a long number from Meta (not the phone itself)").optional(),
+  metaWabaId: z.string().trim().regex(/^\d{5,30}$/, "WABA ID is a long number from Meta").optional(),
+  metaAppId: z.string().trim().regex(/^\d{5,30}$/, "App ID is a long number from Meta").optional(),
+  metaAppSecret: z.string().trim().regex(/^[a-f0-9]{16,64}$/i, "App Secret looks wrong — copy it from Meta App → Settings → Basic").optional(),
+  botEnabled: z.boolean().optional(),
+  botFallbackReply: z.string().max(1000).optional(),
 });
 
+// الحفظ بيدمج مع القديم (حقل مش مبعوت = بيفضل زي ما هو)، وبعد تغيير بيانات
+// الربط بنسأل Meta فورًا هل هي صح
 whatsappRouter.patch("/settings", requireRole("OWNER", "ADMIN"), async (req, res) => {
   const parsed = updateSettingsSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid settings" });
 
-  await getOrCreateWhatsappSettings(req.auth!.tenantId);
-  const updated = await prisma.whatsappSettings.update({
-    where: { tenantId: req.auth!.tenantId },
-    data: { ...parsed.data, isConnected: !!(parsed.data.metaAccessToken && parsed.data.metaPhoneNumberId) },
+  await ensureWebhookKeys(req.auth!.tenantId);
+  await prisma.whatsappSettings.update({ where: { tenantId: req.auth!.tenantId }, data: parsed.data });
+  const touchedCredentials = ["metaAccessToken", "metaPhoneNumberId", "metaWabaId"].some((k) => k in parsed.data);
+  const updated = touchedCredentials ? await runVerify(req.auth!.tenantId) : await getOrCreateWhatsappSettings(req.auth!.tenantId);
+  res.json(settingsView(updated, req));
+});
+
+whatsappRouter.post("/verify", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  await ensureWebhookKeys(req.auth!.tenantId);
+  const updated = await runVerify(req.auth!.tenantId);
+  res.json(settingsView(updated, req));
+});
+
+// رسالة تجربة لأي رقم: من غير نص = قالب hello_world المعتمد من Meta (بيوصل
+// دايمًا)، بنص = رسالة حرة (بتوصل بس لو الرقم ده كلّم البيزنس آخر 24 ساعة)
+const testMessageSchema = z.object({
+  to: z.string().trim().regex(/^\+?[\d\s-]{7,20}$/, "Enter the number with country code, e.g. 97455551234"),
+  text: z.string().trim().max(1000).optional(),
+});
+
+whatsappRouter.post("/test-message", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  const parsed = testMessageSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid number" });
+  const s = await getOrCreateWhatsappSettings(req.auth!.tenantId);
+  if (!s.metaAccessToken || !s.metaPhoneNumberId) return res.status(400).json({ error: "Connect WhatsApp first." });
+  const to = parsed.data.to.replace(/[^\d]/g, "");
+  const result = parsed.data.text
+    ? await sendWhatsappTextMessage(s.metaAccessToken, s.metaPhoneNumberId, to, parsed.data.text)
+    : await sendWhatsappTestMessage(s.metaAccessToken, s.metaPhoneNumberId, to);
+  await recordWhatsappMessage({
+    tenantId: req.auth!.tenantId,
+    direction: "OUT",
+    contactPhone: to,
+    body: parsed.data.text || "hello_world (Meta test template)",
+    kind: parsed.data.text ? "text" : "template",
+    waMessageId: result.messageId,
+    status: result.ok ? "sent" : "failed",
+    error: result.ok ? null : result.error,
   });
-  res.json({ isConnected: updated.isConnected, hasPhoneNumberId: !!updated.metaPhoneNumberId, hasWabaId: !!updated.metaWabaId, hasAppId: !!updated.metaAppId });
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ ok: true, messageId: result.messageId });
+});
+
+// --- قوالب الحجز المعتمدة (تأكيد / إشعار التاجر / تذكير) ---
+
+whatsappRouter.get("/booking-templates", async (req, res) => {
+  const rows = await prisma.whatsappTemplate.findMany({ where: { tenantId: req.auth!.tenantId, purpose: { not: null } }, orderBy: { name: "asc" } });
+  res.json(rows.map((t) => ({ id: t.id, name: t.name, language: t.language, purpose: t.purpose, status: t.status, rejectionReason: t.rejectionReason, bodyText: t.bodyText })));
+});
+
+whatsappRouter.post("/booking-templates", requireRole("OWNER", "ADMIN"), async (req, res) => {
+  const lang = req.body?.language === "ar" ? "ar" : "en";
+  try {
+    res.json({ results: await ensureBookingTemplates(req.auth!.tenantId, lang) });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+// تحديث حالة كل قوالب الحجز من Meta مرة واحدة
+whatsappRouter.post("/booking-templates/refresh", async (req, res) => {
+  const tenantId = req.auth!.tenantId;
+  const rows = await prisma.whatsappTemplate.findMany({ where: { tenantId, purpose: { not: null }, status: "PENDING" } });
+  for (const t of rows) {
+    if (t.purpose && (BOOKING_TEMPLATE_PURPOSES as readonly string[]).includes(t.purpose)) {
+      await getApprovedBookingTemplate(tenantId, t.purpose as BookingTemplatePurpose, t.language === "ar" ? "ar" : "en");
+    }
+  }
+  const all = await prisma.whatsappTemplate.findMany({ where: { tenantId, purpose: { not: null } }, orderBy: { name: "asc" } });
+  res.json(all.map((t) => ({ id: t.id, name: t.name, language: t.language, purpose: t.purpose, status: t.status, rejectionReason: t.rejectionReason, bodyText: t.bodyText })));
+});
+
+// --- البوت: ردود تلقائية بالكلمات المفتاحية ---
+
+whatsappRouter.get("/auto-replies", async (req, res) => {
+  res.json(await prisma.whatsappAutoReply.findMany({ where: { tenantId: req.auth!.tenantId }, orderBy: { sortOrder: "asc" } }));
+});
+
+const autoReplySchema = z.object({
+  keywords: z.array(z.string().trim().min(1).max(60)).min(1).max(20),
+  reply: z.string().trim().min(1).max(1000),
+  enabled: z.boolean().optional(),
+});
+
+whatsappRouter.post("/auto-replies", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  const parsed = autoReplySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid auto-reply" });
+  const count = await prisma.whatsappAutoReply.count({ where: { tenantId: req.auth!.tenantId } });
+  const row = await prisma.whatsappAutoReply.create({ data: { tenantId: req.auth!.tenantId, ...parsed.data, sortOrder: count } });
+  res.status(201).json(row);
+});
+
+whatsappRouter.patch("/auto-replies/:id", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  const parsed = autoReplySchema.partial().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid auto-reply" });
+  const row = await prisma.whatsappAutoReply.findFirst({ where: { id: req.params.id, tenantId: req.auth!.tenantId } });
+  if (!row) return res.status(404).json({ error: "Auto-reply not found" });
+  res.json(await prisma.whatsappAutoReply.update({ where: { id: row.id }, data: parsed.data }));
+});
+
+whatsappRouter.delete("/auto-replies/:id", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  const row = await prisma.whatsappAutoReply.findFirst({ where: { id: req.params.id, tenantId: req.auth!.tenantId } });
+  if (!row) return res.status(404).json({ error: "Auto-reply not found" });
+  await prisma.whatsappAutoReply.delete({ where: { id: row.id } });
+  res.json({ ok: true });
+});
+
+// --- المحادثات الحقيقية (من الـ webhook) ---
+
+whatsappRouter.get("/conversations", async (req, res) => {
+  const tenantId = req.auth!.tenantId;
+  const recent = await prisma.whatsappMessage.findMany({ where: { tenantId }, orderBy: { createdAt: "desc" }, take: 500 });
+  const byPhone = new Map<string, { phone: string; name: string | null; lastMessage: string; lastAt: Date; lastDirection: string; lastInAt: Date | null }>();
+  for (const m of recent) {
+    const c = byPhone.get(m.contactPhone);
+    if (!c) {
+      byPhone.set(m.contactPhone, { phone: m.contactPhone, name: m.contactName, lastMessage: m.body, lastAt: m.createdAt, lastDirection: m.direction, lastInAt: m.direction === "IN" ? m.createdAt : null });
+    } else {
+      if (!c.name && m.contactName) c.name = m.contactName;
+      if (!c.lastInAt && m.direction === "IN") c.lastInAt = m.createdAt;
+    }
+  }
+  res.json(Array.from(byPhone.values()));
+});
+
+whatsappRouter.get("/conversations/:phone/messages", async (req, res) => {
+  const phone = req.params.phone.replace(/[^\d]/g, "");
+  const rows = await prisma.whatsappMessage.findMany({ where: { tenantId: req.auth!.tenantId, contactPhone: phone }, orderBy: { createdAt: "asc" }, take: 300 });
+  res.json(rows);
+});
+
+// رد من Team Inbox - نص حر (مسموح لأن العميل كلّمنا آخر 24 ساعة)
+whatsappRouter.post("/conversations/:phone/reply", requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async (req, res) => {
+  const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+  if (!text || text.length > 4000) return res.status(400).json({ error: "Write a message (up to 4000 characters)." });
+  const s = await getOrCreateWhatsappSettings(req.auth!.tenantId);
+  if (!s.isConnected || !s.metaAccessToken || !s.metaPhoneNumberId) return res.status(400).json({ error: "Connect WhatsApp first." });
+  const phone = req.params.phone.replace(/[^\d]/g, "");
+  const result = await sendWhatsappTextMessage(s.metaAccessToken, s.metaPhoneNumberId, phone, text);
+  const row = await recordWhatsappMessage({
+    tenantId: req.auth!.tenantId,
+    direction: "OUT",
+    contactPhone: phone,
+    body: text,
+    kind: "text",
+    waMessageId: result.messageId,
+    status: result.ok ? "sent" : "failed",
+    error: result.ok ? null : result.error,
+  });
+  if (!result.ok) return res.status(400).json({ error: result.error, message: row });
+  res.json(row);
 });
 
 // --- Bot Flow Builder ---
