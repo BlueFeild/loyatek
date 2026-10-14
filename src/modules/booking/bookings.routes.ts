@@ -32,6 +32,8 @@ const updateSettingsSchema = z.object({
   brandName: z.string().optional(),
   logoDataUrl: z.string().nullable().optional(),
   services: z.array(z.string()).optional(),
+  // سعر كل خدمة بالدولار (الفرونت بيحوّل من عملة الشركة)
+  servicePrices: z.record(z.string().max(120), z.number().min(0).max(1_000_000)).optional(),
   openHour: z.number().int().min(0).max(23).optional(),
   closeHour: z.number().int().min(1).max(24).optional(),
   disabledHours: z.array(z.number().int()).optional(),

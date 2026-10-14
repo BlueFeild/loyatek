@@ -32,3 +32,13 @@ describe("تاريخ الحجز = يوم تقويم ثابت (مايتزحلقش
     expect(calendarDateKey(todayCalendarDate(new Date("2026-10-12T23:59:00Z")))).toBe("2026-10-12");
   });
 });
+
+describe("todayKeyInTimezone", () => {
+  it("uses the business timezone (Qatar is already tomorrow at 22:30 UTC)", async () => {
+    const { todayKeyInTimezone } = await import("../utils/calendarDate");
+    const now = new Date("2026-10-14T22:30:00Z");
+    expect(todayKeyInTimezone("Asia/Qatar", now)).toBe("2026-10-15");
+    expect(todayKeyInTimezone("UTC", now)).toBe("2026-10-14");
+    expect(todayKeyInTimezone("Not/AZone", now)).toBe("2026-10-14");
+  });
+});

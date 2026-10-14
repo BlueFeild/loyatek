@@ -34,3 +34,12 @@ export function formatCalendarDate(date: Date, locale = "en-GB"): string {
 export function todayCalendarDate(now: Date = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
+
+// النهارده "YYYY-MM-DD" بتوقيت البيزنس (مثلًا Asia/Qatar) - لو التوقيت غلط بنرجع لـ UTC
+export function todayKeyInTimezone(timezone: string | null | undefined, now: Date = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  } catch {
+    return calendarDateKey(todayCalendarDate(now));
+  }
+}

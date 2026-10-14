@@ -5,8 +5,9 @@ import { getOrCreateSettings, getAvailableSlots, createBooking, confirmBookingPa
 import { isModuleActive } from "../../utils/modules";
 import { getTenantPaymentMethods } from "../checkout/myfatoorah";
 import { publicPaymentMethods } from "../payment-settings/payment-methods";
-import { parseCalendarDate } from "../../utils/calendarDate";
+import { calendarDateKey, parseCalendarDate, todayKeyInTimezone } from "../../utils/calendarDate";
 import { getRates, isCurrencyCode, rateFor } from "../../utils/money";
+import { pricesForServices } from "./service-pricing";
 
 // راوتر عام بالكامل - العميل بيحجز موعد من غير حساب ولا تسجيل دخول،
 // بالظبط زي منطق الكتالوج العام، والعزل بين الشركات بيتم عن طريق الـ slug
@@ -32,7 +33,9 @@ publicBookingRouter.get("/:slug/settings", async (req, res) => {
   // مبلغ الحجز متخزن بالدولار - الصفحة بتعرضه بعملة الشركة بالسعر ده
   const rates = await getRates();
   const currency = isCurrencyCode(tenant.displayCurrency) ? tenant.displayCurrency : "USD";
-  res.json({ ...publicSettings, paymentMethods, currency, rate: rateFor(currency, rates) });
+  // أسعار الخدمات الموجودة بس (بالدولار)
+  const servicePrices = pricesForServices(settings.servicePrices, settings.services);
+  res.json({ ...publicSettings, servicePrices, paymentMethods, currency, rate: rateFor(currency, rates) });
 });
 
 publicBookingRouter.get("/:slug/resources", async (req, res) => {
@@ -66,6 +69,8 @@ const createBookingSchema = z.object({
   paymentMethodId: z.string().max(64).optional(),
   // إيميل العميل (اختياري) - فاضي أو إيميل صحيح
   customerEmail: z.union([z.literal(""), z.string().trim().email().max(200)]).optional(),
+  // الخدمات اللي اختارها (السعر بيتحسب على السيرفر)
+  services: z.array(z.string().max(120)).max(30).optional(),
 });
 
 publicBookingRouter.post("/:slug/bookings", async (req, res) => {
@@ -77,6 +82,13 @@ publicBookingRouter.post("/:slug/bookings", async (req, res) => {
 
   const parsed = createBookingSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  // العميل مايقدرش يحجز يوم فات (بتوقيت البيزنس)
+  const day = parseCalendarDate(parsed.data.date);
+  const bookingSettings = await getOrCreateSettings(tenant.id);
+  if (day && calendarDateKey(day) < todayKeyInTimezone(bookingSettings.timezone)) {
+    return res.status(400).json({ error: "This day has already passed — please pick another day." });
+  }
 
   try {
     const frontendBase = process.env.FRONTEND_BASE_URL || "http://localhost:5173";
@@ -91,6 +103,7 @@ publicBookingRouter.post("/:slug/bookings", async (req, res) => {
       note: parsed.data.note,
       paymentMethodId: parsed.data.paymentMethodId,
       customerEmail: parsed.data.customerEmail || undefined,
+      services: parsed.data.services,
       // MyFatoorah v3 بيستخدم رابط رجوع واحد بس، وبيضيف paymentId له
       // تلقائيًا - إحنا اللي بنتأكد من الدفع الحقيقي بعد الرجوع
       redirectionUrlBase: `${frontendBase}/book/${req.params.slug}`,

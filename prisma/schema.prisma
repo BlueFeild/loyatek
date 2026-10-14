@@ -721,8 +721,11 @@ model BookingSettings {
   // فعليًا. لو من غيرها، نفس السلوك القديم بالظبط (تأكيد واتساب فوري
   // من غير دفع)
   paymentRequired Boolean  @default(false)
-  // مبلغ ثابت بيتاخد وقت الحجز لو الدفع مفعّل - مش لكل خدمة لوحدها
+  // مبلغ ثابت بيتاخد وقت الحجز لو الدفع مفعّل (لو العميل مااختارش خدمة ليها سعر)
   paymentAmount   Decimal  @default(0) @db.Decimal(18, 6)
+  // سعر كل خدمة بالدولار { "اسم الخدمة": سعر } - العميل بيختار خدمة أو أكتر
+  // والإجمالي بيتحسب على السيرفر (modules/booking/service-pricing.ts)
+  servicePrices   Json     @default("{}")
   // إشعار للتاجر نفسه بكل حجز جديد: واتساب على رقمه و/أو إيميل (Resend).
   // waMerchantTemplate بيقبل {name} {phone} {resource} {date} {time} {payment}
   merchantWhatsapp   String  @default("")
@@ -797,6 +800,8 @@ model Booking {
   reminderSentAt DateTime?
   date          DateTime      @db.Date
   hour          Int // ساعة الميعاد (0-23) - بديل بسيط وحقيقي عن توقيت كامل
+  // الخدمات اللي العميل اختارها وقت الحجز
+  services      String[]      @default([])
   status        BookingStatus @default(CONFIRMED)
   note          String?
   paymentStatus PaymentGateStatus @default(NOT_REQUIRED)

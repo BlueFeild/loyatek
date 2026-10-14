@@ -8,6 +8,7 @@ import { confirmsOnOrder, pickPaymentMethod, shortReference, type PaymentMethod 
 import { formatCalendarDate, parseCalendarDate, todayCalendarDate } from "../../utils/calendarDate";
 import { isValidEmail, sendEmail } from "../../utils/email";
 import { getTenantMoney, payableAmount } from "../../utils/money";
+import { computeBookingAmount, hasPricedServices } from "./service-pricing";
 
 // إعدادات الحجز لكل شركة - بتتنشئ تلقائيًا بقيم افتراضية أول مرة
 export async function getOrCreateSettings(tenantId: string) {
@@ -21,6 +22,7 @@ interface UpdateSettingsInput {
   brandName?: string;
   logoDataUrl?: string | null;
   services?: string[];
+  servicePrices?: Record<string, number>;
   openHour?: number;
   closeHour?: number;
   disabledHours?: number[];
@@ -82,6 +84,8 @@ interface CreateBookingInput {
   note?: string;
   // إيميل العميل (اختياري) - بيوصله تأكيد الحجز بالإيميل لو Resend متظبط
   customerEmail?: string;
+  // الخدمات اللي العميل اختارها (أسماء من إعدادات الحجز)
+  services?: string[];
 }
 
 function requireCalendarDate(value: string | Date) {
@@ -94,7 +98,7 @@ function requireCalendarDate(value: string | Date) {
 // لو الدفع مش مفعّل، أو بس بعد ما الدفع يتأكد فعليًا لو مفعّل - عشان
 // التاجر ميتاكدش من حجز حد لسه ما دفعش
 async function runBookingConfirmationSideEffects(
-  booking: { id: string; resourceId: string; customerName: string; customerPhone: string; customerEmail?: string | null; paymentMethodLabel?: string | null; date: Date; hour: number },
+  booking: { id: string; resourceId: string; customerName: string; customerPhone: string; customerEmail?: string | null; paymentMethodLabel?: string | null; date: Date; hour: number; services?: string[] },
   tenantId: string,
   resourceName: string
 ) {
@@ -107,6 +111,7 @@ async function runBookingConfirmationSideEffects(
     date: formatCalendarDate(booking.date),
     time: `${String(booking.hour).padStart(2, "0")}:00`,
     payment: booking.paymentMethodLabel ?? "",
+    services: (booking.services ?? []).join(", "),
   };
   const digits = (v: string) => v.replace(/[^\d]/g, "");
   const lang: TemplateLang = bookingSettings.waTemplateLang === "ar" ? "ar" : "en";
@@ -181,7 +186,13 @@ export async function createBooking(input: CreateBookingInput & { redirectionUrl
   const dayStart = requireCalendarDate(input.date);
 
   const settings = await getOrCreateSettings(input.tenantId);
-  const amount = Number(settings.paymentAmount ?? 0);
+  // المبلغ = مجموع أسعار الخدمات اللي اختارها (من الأسعار المحفوظة)، أو
+  // المبلغ الثابت لو مفيش خدمات بسعر
+  const pricing = computeBookingAmount(settings, input.services);
+  if (settings.paymentRequired && hasPricedServices(settings.servicePrices, settings.services) && pricing.services.length === 0) {
+    throw new Error("Please choose at least one service.");
+  }
+  const amount = pricing.amount;
   // الدفع مفعّل بمبلغ صفر = مفيش حاجة تتدفع، فبيتعامل كحجز مجاني عادي
   const paymentOn = settings.paymentRequired && amount > 0;
 
@@ -208,8 +219,9 @@ export async function createBooking(input: CreateBookingInput & { redirectionUrl
         date: dayStart,
         hour: input.hour,
         note: input.note,
+        services: pricing.services,
         paymentStatus: paymentOn ? "AWAITING_PAYMENT" : "NOT_REQUIRED",
-        amount: paymentOn ? settings.paymentAmount : null,
+        amount: paymentOn ? amount : null,
         paymentMethodType: method?.type ?? null,
         paymentMethodLabel: method?.label ?? null,
       },
