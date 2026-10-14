@@ -68,14 +68,16 @@ app.use(
   })
 );
 // حد أعلى مرفوع عشان يستوعب الصور المرفوعة كـ base64 (لوجو، صور أصناف، غلاف فئات...)
-app.use(
-  express.json({
-    limit: "10mb",
-    // نسخة خام من الطلب - لازمة للتأكد من توقيع Meta على webhook الواتساب
-    verify: (req, _res, buf) => {
-      (req as unknown as { rawBody?: Buffer }).rawBody = buf;
-    },
-  })
+// نسخة خام من الطلب - لازمة للتأكد من توقيع Meta على webhook الواتساب
+const keepRawBody = (req: unknown, _res: unknown, buf: Buffer) => {
+  (req as { rawBody?: Buffer }).rawBody = buf;
+};
+const jsonParser = express.json({ limit: "10mb", verify: keepRawBody });
+// رفع ملفات Link-in-Bio لحد 20MB - بالـ base64 بيكبروا حوالي الثلث، فالحد ده
+// للمسار ده بس
+const bigJsonParser = express.json({ limit: "30mb" });
+app.use((req, res, next) =>
+  req.method === "POST" && req.path === "/api/linktree/links/file" ? bigJsonParser(req, res, next) : jsonParser(req, res, next)
 );
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));

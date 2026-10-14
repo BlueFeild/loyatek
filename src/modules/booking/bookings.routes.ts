@@ -99,6 +99,8 @@ const createBookingSchema = z.object({
   hour: z.number().int().min(0).max(23),
   note: z.string().optional(),
   paymentMethodId: z.string().max(64).optional(),
+  // الخدمات اللي اختارها (السعر بيتحسب على السيرفر)
+  services: z.array(z.string().max(120)).max(30).optional(),
 });
 
 bookingsRouter.post("/",requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async (req, res) => {
@@ -117,6 +119,7 @@ bookingsRouter.post("/",requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async
       hour: parsed.data.hour,
       note: parsed.data.note,
       paymentMethodId: parsed.data.paymentMethodId,
+      services: parsed.data.services,
       redirectionUrlBase: `${frontendBase}/booking`,
     });
     res.status(201).json(booking);

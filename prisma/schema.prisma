@@ -1563,6 +1563,8 @@ model LinktreeSettings {
   displayName     String   @default("My Business")
   bio             String   @default("")
   avatarDataUrl   String?  @db.Text
+  // شكل اللوجو: { fit: cover|contain, shape: circle|rounded|square, zoom, x, y } - null = الافتراضي
+  avatarStyle     Json?
   themeColor      String   @default("#38BDF8")
   // خلفية صفحة اللينك-تري العامة - منفصلة عن themeColor اللي بيلوّن
   // بس الأزرار والأفتار؛ افتراضيًا نفس الخلفية الغامقة القديمة عشان

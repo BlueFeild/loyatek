@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
@@ -20,6 +21,17 @@ const updateSettingsSchema = z.object({
   displayName: z.string().min(1).optional(),
   bio: z.string().optional(),
   avatarDataUrl: z.string().nullable().optional(),
+  // شكل اللوجو في الصفحة (في النص دايمًا) - الفرونت بيقرا القيم بـ readAvatarStyle
+  avatarStyle: z
+    .object({
+      fit: z.enum(["cover", "contain"]),
+      shape: z.enum(["circle", "rounded", "square"]),
+      zoom: z.number().min(100).max(250),
+      x: z.number().min(0).max(100),
+      y: z.number().min(0).max(100),
+    })
+    .nullable()
+    .optional(),
   themeColor: z.string().optional(),
   backgroundColor: z.string().optional(),
 });
@@ -31,7 +43,7 @@ linktreeRouter.patch("/settings", requireRole("OWNER", "ADMIN", "MANAGER"), asyn
   await getOrCreateSettings(req.auth!.tenantId);
   const updated = await prisma.linktreeSettings.update({
     where: { tenantId: req.auth!.tenantId },
-    data: parsed.data,
+    data: { ...parsed.data, avatarStyle: parsed.data.avatarStyle === null ? Prisma.DbNull : parsed.data.avatarStyle },
   });
   res.json(updated);
 });
@@ -77,7 +89,7 @@ linktreeRouter.post("/links", requireRole("OWNER", "ADMIN", "MANAGER"), async (r
 
 // --- ملفات مرفوعة (PDF، صور، مستندات...) ---
 // قايمة بيضاء بالأنواع (من غير svg/html عشان مايتحولوش لصفحات نشطة)،
-// حد أقصى 5MB للملف و10 ملفات للشركة
+// حد أقصى 20MB للملف و10 ملفات و100MB إجمالي للشركة (الملفات في الداتابيز)
 export const LINKTREE_ALLOWED_FILE_TYPES: Record<string, string> = {
   "application/pdf": "pdf",
   "image/png": "png",
@@ -94,8 +106,11 @@ export const LINKTREE_ALLOWED_FILE_TYPES: Record<string, string> = {
   "application/vnd.ms-powerpoint": "ppt",
   "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
 };
-export const LINKTREE_MAX_FILE_BYTES = 5 * 1024 * 1024;
+export const LINKTREE_MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const LINKTREE_MAX_FILES = 10;
+export const LINKTREE_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
+// ويندوز ساعات بيسمّي نفس النوع باسم تاني (ZIP مثلًا)
+const MIME_ALIASES: Record<string, string> = { "application/x-zip-compressed": "application/zip", "application/x-zip": "application/zip" };
 
 const uploadFileSchema = z.object({
   label: z.string().trim().min(1).max(120),
@@ -107,7 +122,8 @@ const uploadFileSchema = z.object({
 linktreeRouter.post("/links/file", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   const parsed = uploadFileSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const { label, mimeType, dataBase64 } = parsed.data;
+  const { label, dataBase64 } = parsed.data;
+  const mimeType = MIME_ALIASES[parsed.data.mimeType] ?? parsed.data.mimeType;
   // اسم الملف للعرض والتحميل بس: بنشيل أي مسارات/رموز تحكم
   const fileName = parsed.data.fileName.replace(/[\\/\r\n"]/g, "_");
 
@@ -117,13 +133,17 @@ linktreeRouter.post("/links/file", requireRole("OWNER", "ADMIN", "MANAGER"), asy
   const buffer = Buffer.from(dataBase64, "base64");
   if (buffer.length === 0) return res.status(400).json({ error: "The file is empty" });
   if (buffer.length > LINKTREE_MAX_FILE_BYTES) {
-    return res.status(413).json({ error: "File is too large (max 5 MB)" });
+    return res.status(413).json({ error: "File is too large (max 20 MB)" });
   }
 
   const tenantId = req.auth!.tenantId;
   const existing = await prisma.linktreeLink.count({ where: { tenantId, kind: "FILE" } });
   if (existing >= LINKTREE_MAX_FILES) {
     return res.status(400).json({ error: `You can upload up to ${LINKTREE_MAX_FILES} files. Delete one first.` });
+  }
+  const used = await prisma.linktreeLink.aggregate({ where: { tenantId, kind: "FILE" }, _sum: { fileSize: true } });
+  if ((used._sum.fileSize ?? 0) + buffer.length > LINKTREE_MAX_TOTAL_BYTES) {
+    return res.status(413).json({ error: "Your files would go over 100 MB in total. Delete a file first." });
   }
 
   const maxOrder = await prisma.linktreeLink.aggregate({ where: { tenantId }, _max: { sortOrder: true } });
