@@ -31,17 +31,29 @@ resourcesRouter.post("/", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, 
   res.status(201).json(resource);
 });
 
-// حذف مورد - بيرفض الحذف لو عليه حجوزات حقيقية مرتبطة بيه، عشان
-// محدش يمسح مورد بالغلط ويفقد سجل حجوزات عميل حقيقي
+// حذف مورد - لو عليه حجوزات بيرفض الأول ويرجّع عددها (409)، عشان محدش يمسح
+// سجل حجوزات حقيقي بالغلط. لو التاجر أكّد (?withBookings=1) بيتمسح هو
+// وحجوزاته مع بعض (OWNER / ADMIN بس)
 resourcesRouter.delete("/:id", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
-  const resource = await prisma.resource.findFirst({ where: { id: req.params.id, tenantId: req.auth!.tenantId } });
+  const tenantId = req.auth!.tenantId;
+  const resource = await prisma.resource.findFirst({ where: { id: req.params.id, tenantId } });
   if (!resource) return res.status(404).json({ error: "Resource not found" });
 
-  const bookingCount = await prisma.booking.count({ where: { resourceId: resource.id } });
-  if (bookingCount > 0) {
-    return res.status(400).json({ error: `This resource has ${bookingCount} real booking(s) linked to it and can't be deleted.` });
+  const bookingCount = await prisma.booking.count({ where: { resourceId: resource.id, tenantId } });
+  const withBookings = req.query.withBookings === "1";
+  if (bookingCount > 0 && !withBookings) {
+    return res.status(409).json({
+      error: `This resource has ${bookingCount} booking(s). Delete it together with its bookings?`,
+      bookingCount,
+    });
+  }
+  if (bookingCount > 0 && !["OWNER", "ADMIN"].includes(req.auth!.role)) {
+    return res.status(403).json({ error: "Only the owner or an admin can delete a resource together with its bookings." });
   }
 
-  await prisma.resource.delete({ where: { id: resource.id } });
-  res.json({ ok: true });
+  await prisma.$transaction([
+    prisma.booking.deleteMany({ where: { resourceId: resource.id, tenantId } }),
+    prisma.resource.delete({ where: { id: resource.id } }),
+  ]);
+  res.json({ ok: true, deletedBookings: bookingCount });
 });
