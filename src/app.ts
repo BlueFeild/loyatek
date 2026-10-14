@@ -23,6 +23,7 @@ import { catalogRouter } from "./modules/catalog/catalog.routes";
 import { publicCatalogRouter } from "./modules/catalog/public-catalog.routes";
 import { publicBookingRouter } from "./modules/booking/public-booking.routes";
 import { publicWhatsappWebhookRouter } from "./modules/whatsapp/webhook";
+import { adminExchangeRatesRouter, publicExchangeRatesRouter } from "./modules/exchange-rates/exchange-rates.routes";
 import { publicWalletRouter } from "./modules/wallet/public-wallet.routes";
 import { publicContactRouter } from "./modules/contact/public-contact.routes";
 import { checkoutRouter } from "./modules/checkout/checkout.routes";
@@ -104,6 +105,9 @@ app.use("/api/public/menu", publicCatalogRouter);
 app.use("/api/public/booking", publicBookingRouter);
 // Meta بتبعت رسايل الواتساب الجاية هنا (موقّعة بالـ App Secret بتاع التاجر)
 app.use("/api/public/whatsapp/webhook", publicWhatsappWebhookRouter);
+// أسعار الصرف (الدولار عملة أساسية) - عامة للقراءة، وإدارتها للسوبر أدمن
+app.use("/api/public/exchange-rates", publicExchangeRatesRouter);
+app.use("/api/super-admin/exchange-rates", adminExchangeRatesRouter);
 app.use("/api/public/wallet", publicWalletRouter);
 app.use("/api/public/contact", publicContactRouter);
 app.use("/api/checkout", checkoutRouter);

@@ -39,7 +39,10 @@ model Tenant {
   id        String   @id @default(uuid())
   name      String
   industry  Industry
-  currency  Currency @default(USD)
+  currency  Currency @default(USD) // قديم - مش مستخدم في العرض (شوفي displayCurrency)
+  // عملة الشركة اللي كل المبالغ بتتعرض بيها (QAR / EGP / AED / ...). كل
+  // المبالغ متخزنة بالدولار وبتتحوّل بسعر الصرف (utils/money.ts)
+  displayCurrency String @default("USD")
   vatNumber String? // الرقم الضريبي - مطلوب لتوليد QR الفواتير
   // عدد أيام الراتب الأساسي لكل سنة خدمة، لحساب مكافأة نهاية الخدمة
   // (21 يوم = 3 أسابيع، شائع في قوانين العمل الخليجية) - قابل للتعديل
@@ -251,8 +254,8 @@ model InventoryItem {
   sku        String
   quantity   Int      @default(0)
   reorderAt  Int      @default(0)
-  costPrice  Decimal  @db.Decimal(12, 2)
-  sellPrice  Decimal  @db.Decimal(12, 2)
+  costPrice  Decimal  @db.Decimal(18, 6)
+  sellPrice  Decimal  @db.Decimal(18, 6)
   // تاريخ صلاحية اختياري - مش كل الأصناف عندها صلاحية (زي الأجهزة مثلاً)
   expiryDate DateTime?
   createdAt  DateTime @default(now())
@@ -353,7 +356,7 @@ model PurchaseOrderItem {
   itemId          String
   item            InventoryItem @relation(fields: [itemId], references: [id])
   quantity        Int
-  unitCost        Decimal       @db.Decimal(12, 2)
+  unitCost        Decimal       @db.Decimal(18, 6)
 
   @@index([purchaseOrderId])
   @@map("purchase_order_items")
@@ -386,7 +389,7 @@ model RfqQuote {
   rfqRequest   RfqRequest @relation(fields: [rfqRequestId], references: [id], onDelete: Cascade)
   supplierId   String
   supplier     Supplier   @relation(fields: [supplierId], references: [id])
-  price        Decimal    @db.Decimal(12, 2)
+  price        Decimal    @db.Decimal(18, 6)
   leadTimeDays Int
   rating       Decimal    @db.Decimal(2, 1) // 0.0 - 5.0
   selected     Boolean    @default(false)
@@ -448,8 +451,8 @@ model JournalEntryLine {
   journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
   accountId      String
   account        Account      @relation(fields: [accountId], references: [id])
-  debit          Decimal      @default(0) @db.Decimal(12, 2)
-  credit         Decimal      @default(0) @db.Decimal(12, 2)
+  debit          Decimal      @default(0) @db.Decimal(18, 6)
+  credit         Decimal      @default(0) @db.Decimal(18, 6)
 
   @@index([journalEntryId])
   @@index([accountId])
@@ -477,9 +480,9 @@ model Invoice {
   customer       Customer      @relation(fields: [customerId], references: [id])
   invoiceNumber  String
   status         InvoiceStatus @default(DRAFT)
-  subtotal       Decimal       @default(0) @db.Decimal(12, 2)
-  vatAmount      Decimal       @default(0) @db.Decimal(12, 2)
-  total          Decimal       @default(0) @db.Decimal(12, 2)
+  subtotal       Decimal       @default(0) @db.Decimal(18, 6)
+  vatAmount      Decimal       @default(0) @db.Decimal(18, 6)
+  total          Decimal       @default(0) @db.Decimal(18, 6)
   // Base64 TLV payload - نفس تنسيق QR كود الفواتير الضريبية في السعودية
   qrPayload      String?
   journalEntryId String? // القيد المحاسبي اللي اتعمل تلقائي وقت الإصدار
@@ -499,7 +502,7 @@ model InvoiceItem {
   invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   description String
   quantity    Int
-  unitPrice   Decimal  @db.Decimal(12, 2)
+  unitPrice   Decimal  @db.Decimal(18, 6)
 
   @@index([invoiceId])
   @@map("invoice_items")
@@ -523,9 +526,9 @@ model Employee {
   position       String
   // نسبة العمولة كرقم عشري: 0.05 = 5%
   commissionRate Decimal  @default(0) @db.Decimal(5, 4)
-  baseSalary     Decimal  @default(0) @db.Decimal(12, 2)
+  baseSalary     Decimal  @default(0) @db.Decimal(18, 6)
   // هدف المبيعات الشهري - بيتقارن بالمبيعات الفعلية (Actual) في تقرير HR
-  monthlyTarget  Decimal  @default(0) @db.Decimal(12, 2)
+  monthlyTarget  Decimal  @default(0) @db.Decimal(18, 6)
   // تاريخ التعيين الحقيقي - أساس حساب سنوات الخدمة لمكافأة نهاية
   // الخدمة، مختلف عن createdAt (اللي هو وقت إضافة السجل في النظام بس)
   hireDate        DateTime @default(now())
@@ -604,9 +607,9 @@ model Sale {
   itemId           String
   item             InventoryItem @relation(fields: [itemId], references: [id])
   quantity         Int
-  unitPrice        Decimal       @db.Decimal(12, 2)
-  totalAmount      Decimal       @db.Decimal(12, 2)
-  commissionAmount Decimal       @db.Decimal(12, 2)
+  unitPrice        Decimal       @db.Decimal(18, 6)
+  totalAmount      Decimal       @db.Decimal(18, 6)
+  commissionAmount Decimal       @db.Decimal(18, 6)
   createdAt        DateTime      @default(now())
 
   @@index([tenantId, branchId])
@@ -655,7 +658,7 @@ model Deal {
   customerId String
   customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   name       String
-  value      Decimal   @db.Decimal(12, 2)
+  value      Decimal   @db.Decimal(18, 6)
   stage      DealStage @default(LEAD)
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
@@ -719,7 +722,7 @@ model BookingSettings {
   // من غير دفع)
   paymentRequired Boolean  @default(false)
   // مبلغ ثابت بيتاخد وقت الحجز لو الدفع مفعّل - مش لكل خدمة لوحدها
-  paymentAmount   Decimal  @default(0) @db.Decimal(10, 2)
+  paymentAmount   Decimal  @default(0) @db.Decimal(18, 6)
   // إشعار للتاجر نفسه بكل حجز جديد: واتساب على رقمه و/أو إيميل (Resend).
   // waMerchantTemplate بيقبل {name} {phone} {resource} {date} {time} {payment}
   merchantWhatsapp   String  @default("")
@@ -797,7 +800,7 @@ model Booking {
   status        BookingStatus @default(CONFIRMED)
   note          String?
   paymentStatus PaymentGateStatus @default(NOT_REQUIRED)
-  amount        Decimal?      @db.Decimal(10, 2)
+  amount        Decimal?      @db.Decimal(18, 6)
   // طريقة الدفع اللي العميل اختارها (MYFATOORAH / LINK / BANK_TRANSFER /
   // CASH) واسمها وقت الحجز - عشان التاجر يعرف يستلم الفلوس إزاي
   paymentMethodType  String?
@@ -982,7 +985,7 @@ model MenuItem {
   category      MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   name          String
   description   String       @default("")
-  price         Decimal      @db.Decimal(10, 2)
+  price         Decimal      @db.Decimal(18, 6)
   photoDataUrl  String?      @db.Text
   sortOrder     Int          @default(0)
   createdAt     DateTime     @default(now())
@@ -1016,7 +1019,7 @@ model CatalogOrder {
   readyTime     Int? // بالدقايق - لطلبات الـ pickup بس
   customerName  String
   customerPhone String
-  totalAmount   Decimal     @db.Decimal(10, 2)
+  totalAmount   Decimal     @db.Decimal(18, 6)
   status        OrderStatus @default(PENDING)
   paymentStatus PaymentGateStatus @default(NOT_REQUIRED)
   // طريقة الدفع اللي العميل اختارها واسمها وقت الطلب
@@ -1040,7 +1043,7 @@ model OrderItem {
   menuItemId String
   menuItem   MenuItem     @relation(fields: [menuItemId], references: [id])
   name       String // نسخة من اسم الصنف وقت الطلب - عشان لو الاسم اتغيّر بعدين
-  price      Decimal      @db.Decimal(10, 2)
+  price      Decimal      @db.Decimal(18, 6)
   quantity   Int
 
   @@index([orderId])
@@ -1304,7 +1307,7 @@ model SubscriptionOrder {
   tenant           Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   selectedModules  String[]
   billingCycle     String                   @default("monthly") // monthly | yearly
-  amount           Decimal                  @db.Decimal(10, 2)
+  amount           Decimal                  @db.Decimal(18, 6)
   currency         String                   @default("USD")
   status           SubscriptionOrderStatus  @default(PENDING)
   // "MODULES" = اشتراك في موديولات عادي (الافتراضي، زي كل الطلبات
@@ -1372,9 +1375,9 @@ model FixedAsset {
   name              String
   category          String   @default("Equipment")
   purchaseDate      DateTime
-  purchaseValue     Decimal  @db.Decimal(12, 2)
+  purchaseValue     Decimal  @db.Decimal(18, 6)
   usefulLifeYears   Int      @default(5)
-  salvageValue      Decimal  @default(0) @db.Decimal(12, 2)
+  salvageValue      Decimal  @default(0) @db.Decimal(18, 6)
   createdAt         DateTime @default(now())
 
   @@index([tenantId, branchId])
@@ -1394,7 +1397,7 @@ model BudgetLine {
   category       String
   periodMonth    Int // 1-12
   periodYear     Int
-  budgetedAmount Decimal  @db.Decimal(12, 2)
+  budgetedAmount Decimal  @db.Decimal(18, 6)
   createdAt      DateTime @default(now())
 
   @@unique([tenantId, branchId, category, periodMonth, periodYear])
@@ -1439,7 +1442,7 @@ model VehicleServiceLog {
   vehicle    Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   serviceDate DateTime @default(now())
   description String
-  cost       Decimal  @db.Decimal(10, 2)
+  cost       Decimal  @db.Decimal(18, 6)
   mileageAt  Int
 
   @@index([vehicleId])
@@ -1619,7 +1622,7 @@ model VendorBill {
   vendorName    String
   billNumber    String?
   category      String     @default("General") // زي "Rent", "Utilities", "Subscriptions"
-  amount        Decimal    @db.Decimal(12, 2)
+  amount        Decimal    @db.Decimal(18, 6)
   issueDate     DateTime   @default(now())
   dueDate       DateTime?
   status        BillStatus @default(UNPAID)
@@ -1679,4 +1682,16 @@ model PlatformEvent {
 
   @@index([type, createdAt])
   @@map("platform_events")
+}
+
+// أسعار الصرف (1 دولار = rate من العملة دي). autoRate بيتحدث تلقائي من
+// الإنترنت، manualRate = سعر مثبّت من السوبر أدمن (بيغلب على التلقائي)
+model ExchangeRate {
+  currency      String    @id
+  autoRate      Decimal?  @db.Decimal(18, 8)
+  manualRate    Decimal?  @db.Decimal(18, 8)
+  autoUpdatedAt DateTime?
+  updatedAt     DateTime  @updatedAt
+
+  @@map("exchange_rates")
 }

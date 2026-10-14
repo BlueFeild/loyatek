@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db";
 import { generateZatcaQrPayload } from "./zatca-qr";
+import { getTenantMoney, payableAmount } from "../../utils/money";
 
 export const VAT_RATE = 0.05; // 5% - نفس المعيار المستخدم في دول الخليج
 
@@ -85,12 +86,14 @@ export async function issueInvoice(tenantId: string, invoiceId: string) {
   const total = Number(invoice.total);
   const issuedAt = new Date();
 
+  // المبالغ متخزنة بالدولار - كود الفاتورة (ZATCA) لازم يبقى بعملة الشركة (ريال مثلًا)
+  const money = await getTenantMoney(tenantId);
   const qrPayload = generateZatcaQrPayload({
     sellerName: tenant.name,
     vatNumber: tenant.vatNumber,
     timestamp: issuedAt.toISOString(),
-    invoiceTotal: total.toFixed(2),
-    vatAmount: vatAmount.toFixed(2),
+    invoiceTotal: payableAmount(total, money.currency, money.rates).toFixed(2),
+    vatAmount: payableAmount(vatAmount, money.currency, money.rates).toFixed(2),
   });
 
   const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {

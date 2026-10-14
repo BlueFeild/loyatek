@@ -4,7 +4,7 @@ import { renderMessageTemplate } from "../../utils/messageTemplate";
 import { createNotification } from "../notifications/notifications.service";
 import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus } from "../checkout/myfatoorah";
 import { confirmsOnOrder, pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
-import { formatMoney } from "../../utils/money";
+import { formatUsdAs, getTenantMoney, payableAmount } from "../../utils/money";
 import { isValidEmail, sendEmail } from "../../utils/email";
 
 export async function getOrCreateCatalogSettings(tenantId: string) {
@@ -60,8 +60,9 @@ interface CreateOrderInput {
 async function notifyNewOrder(order: { id: string; customerName: string; customerPhone?: string | null; mode: string; tableLabel: string | null; totalAmount: any; items: { id: string; name?: string; quantity?: number }[] }, tenantId: string) {
   const modeLabel = order.mode === "DINE_IN" ? (order.tableLabel ? `Table ${order.tableLabel}` : "Dine-in") : "Pickup";
   const settings = await getOrCreateCatalogSettings(tenantId);
-  // الإجمالي بعملة المنيو اللي التاجر اختارها ("QAR 25.00")
-  const total = formatMoney(order.totalAmount, settings.currency);
+  // الإجمالي متخزن بالدولار - بيتعرض بعملة الشركة ("QAR 25.00")
+  const money = await getTenantMoney(tenantId);
+  const total = formatUsdAs(order.totalAmount, money.currency, money.rates);
   await createNotification({
     tenantId,
     type: "CATALOG_ORDER",
@@ -161,7 +162,10 @@ export async function createOrder(input: CreateOrderInput) {
     return { ...order, paymentUrl: null, paymentError: null, paymentInstructions: null };
   }
 
-  const paymentInstructions = { type: method.type, label: method.label, details: method.details ?? null, amount: totalAmount, reference: shortReference(order.id) };
+  // الإجمالي متخزن بالدولار - العميل بيدفع بعملة الشركة بسعر الصرف الحالي
+  const money = await getTenantMoney(input.tenantId);
+  const payAmount = payableAmount(totalAmount, money.currency, money.rates);
+  const paymentInstructions = { type: method.type, label: method.label, details: method.details ?? null, amount: payAmount, currency: money.currency, reference: shortReference(order.id) };
 
   // كاش عند الاستلام: الأوردر بيروح للمطبخ فورًا، والتاجر يدوس
   // "Mark paid" لما يستلم الفلوس
@@ -178,7 +182,7 @@ export async function createOrder(input: CreateOrderInput) {
   // MyFatoorah أو لينك دفع - الأوردر محفوظ فعليًا بحالة AWAITING_PAYMENT،
   // وميوصلش إشعار للمطبخ إلا بعد ما الدفع يتأكد
   const payment = await startTenantPayment(input.tenantId, method, {
-    amount: totalAmount,
+    amount: payAmount,
     redirectionUrl: `${input.redirectionUrlBase ?? ""}?orderId=${order.id}`,
     reference: order.id,
   });

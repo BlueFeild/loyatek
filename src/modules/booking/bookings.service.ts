@@ -7,6 +7,7 @@ import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPayme
 import { confirmsOnOrder, pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
 import { formatCalendarDate, parseCalendarDate, todayCalendarDate } from "../../utils/calendarDate";
 import { isValidEmail, sendEmail } from "../../utils/email";
+import { getTenantMoney, payableAmount } from "../../utils/money";
 
 // إعدادات الحجز لكل شركة - بتتنشئ تلقائيًا بقيم افتراضية أول مرة
 export async function getOrCreateSettings(tenantId: string) {
@@ -227,7 +228,10 @@ export async function createBooking(input: CreateBookingInput & { redirectionUrl
     return { ...booking, whatsappConfirmationSent, paymentUrl: null, paymentError: null, paymentInstructions: null };
   }
 
-  const paymentInstructions = { type: method.type, label: method.label, details: method.details ?? null, amount, reference: shortReference(booking.id) };
+  // المبلغ متخزن بالدولار - العميل بيدفع بعملة الشركة بسعر الصرف الحالي
+  const money = await getTenantMoney(input.tenantId);
+  const payAmount = payableAmount(amount, money.currency, money.rates);
+  const paymentInstructions = { type: method.type, label: method.label, details: method.details ?? null, amount: payAmount, currency: money.currency, reference: shortReference(booking.id) };
 
   // كاش عند الوصول: الميعاد بيتأكد فورًا (واتساب + إشعار)، والفلوس
   // بتتدفع في المكان - التاجر يدوس "Mark paid" لما يستلم
@@ -246,7 +250,7 @@ export async function createBooking(input: CreateBookingInput & { redirectionUrl
   // (المكان محجوز فعليًا بفضل الـ unique constraint)، وبيتأكد بس بعد
   // ما الدفع ينجح (MyFatoorah تلقائي / اللينك بـ "Mark paid")
   const payment = await startTenantPayment(input.tenantId, method, {
-    amount,
+    amount: payAmount,
     redirectionUrl: `${input.redirectionUrlBase ?? ""}?bookingId=${booking.id}`,
     reference: booking.id,
   });

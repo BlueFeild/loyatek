@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import jwt from "jsonwebtoken";
 
 // القيم دي معروفة لأي حد شاف الكود ده على GitHub - استخدامها في
@@ -42,7 +43,9 @@ export function signAccessToken(payload: AccessTokenPayload): string {
 
 // Refresh token طويل العمر - يتخزن في DB ويستخدم لتجديد الـ access token
 export function signRefreshToken(userId: string): string {
-  return jwt.sign({ userId }, REFRESH_SECRET, { expiresIn: "30d" });
+  // jwtid عشوائي: من غيره تسجيلين دخول في نفس الثانية كانوا بيطلعوا نفس التوكن
+  // بالظبط وقاعدة البيانات ترفضه (unique) فالدخول يفشل
+  return jwt.sign({ userId }, REFRESH_SECRET, { expiresIn: "30d", jwtid: randomUUID() });
 }
 
 export function verifyAccessToken(token: string): AccessTokenPayload {

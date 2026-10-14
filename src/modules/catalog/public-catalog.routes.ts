@@ -5,6 +5,7 @@ import { getOrCreateCatalogSettings, createOrder, confirmOrderPaymentIfPaid } fr
 import { isModuleActive } from "../../utils/modules";
 import { getTenantPaymentMethods } from "../checkout/myfatoorah";
 import { publicPaymentMethods } from "../payment-settings/payment-methods";
+import { getRates, isCurrencyCode, rateFor } from "../../utils/money";
 
 // راوتر عام بالكامل - مفيهوش requireAuth خالص، لأن العميل اللي بيسكان
 // الـ QR على الترابيزة معندوش حساب ولا هيسجّل دخول. العزل هنا بيتم عن
@@ -29,7 +30,10 @@ publicCatalogRouter.get("/:slug/settings", async (req, res) => {
   const paymentMethods = publicPaymentMethods(await getTenantPaymentMethods(tenant.id));
   // إيميل التاجر ورقم واتساب المطبخ وقوالب الرسايل ماتطلعش للعامة
   const { merchantEmail: _e, kitchenWhatsapp: _k, waMerchantTemplate: _m, waCustomerTemplate: _c, posLink: _p, ...publicSettings } = settings;
-  res.json({ ...publicSettings, brandNameFromTenant: tenant.name, paymentMethods });
+  // الأسعار متخزنة بالدولار - المنيو بيعرضها بعملة الشركة بالسعر ده
+  const rates = await getRates();
+  const currency = isCurrencyCode(tenant.displayCurrency) ? tenant.displayCurrency : "USD";
+  res.json({ ...publicSettings, brandNameFromTenant: tenant.name, paymentMethods, currency, rate: rateFor(currency, rates) });
 });
 
 publicCatalogRouter.get("/:slug/categories", async (req, res) => {

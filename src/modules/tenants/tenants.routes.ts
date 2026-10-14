@@ -4,6 +4,7 @@ import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { generateUniqueSlug } from "../../utils/slug";
 import { getEffectiveModules, isTrialActive } from "../../utils/modules";
+import { CURRENCY_CODES, getRates } from "../../utils/money";
 
 export const tenantsRouter = Router();
 
@@ -27,8 +28,21 @@ tenantsRouter.get("/me", async (req, res) => {
   // شركة صاحب المنصة (السوبر أدمن): مفيش تجربة - كل حاجة مجانية ودايمة
   const trialActive = isTrialActive(tenant);
   const effectiveModules = getEffectiveModules(tenant);
+  // أسعار الصرف الحالية - الفرونت بيحوّل بيها كل المبالغ (المتخزنة بالدولار)
+  // لعملة الشركة، وبيحوّل اللي التاجر بيكتبه لدولار قبل الحفظ
+  const rates = await getRates();
 
-  res.json({ ...tenant, trialActive, effectiveModules });
+  res.json({ ...tenant, trialActive, effectiveModules, rates });
+});
+
+// عملة الشركة: كل المبالغ في اللوحة والمنيو والحجز والفواتير والرسايل
+// بتتعرض بيها (المخزّن نفسه بيفضل بالدولار)
+const currencySchema = z.object({ displayCurrency: z.enum(CURRENCY_CODES) });
+tenantsRouter.patch("/me/currency", requireRole("OWNER", "ADMIN"), async (req, res) => {
+  const parsed = currencySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Unsupported currency" });
+  const tenant = await prisma.tenant.update({ where: { id: req.auth!.tenantId }, data: { displayCurrency: parsed.data.displayCurrency } });
+  res.json({ displayCurrency: tenant.displayCurrency, rates: await getRates() });
 });
 
 const createBranchSchema = z.object({

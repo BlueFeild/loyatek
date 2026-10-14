@@ -1,3 +1,4 @@
+import { getRates, toUsd } from "../../utils/money";
 import { prisma } from "../../config/db";
 
 // منيو تجريبي جاهز - التاجر يضغط زرار ويشوف التصميمات الأربعة (List / Grid /
@@ -55,6 +56,8 @@ export async function addDemoMenu(tenantId: string) {
   if (missing.length === 0) return { created: 0, alreadyThere: true };
 
   const offset = await prisma.menuCategory.count({ where: { tenantId } });
+  // بسعر الصرف الحالي عشان المنيو القطري يعرض 18.00 بالظبط مش 17.95
+  const rates = await getRates();
   let created = 0;
   for (let ci = 0; ci < missing.length; ci++) {
     const cat = missing[ci];
@@ -69,7 +72,8 @@ export async function addDemoMenu(tenantId: string) {
             tenantId,
             name: it.name,
             description: it.description,
-            price: it.price,
+            // الأسعار التجريبية مكتوبة بالريال القطري، والتخزين بالدولار
+            price: toUsd(it.price, "QAR", rates),
             photoDataUrl: svgPhoto(it.emoji, it.c[0], it.c[1]),
             sortOrder: ii,
           })),

@@ -6,6 +6,7 @@ import { isModuleActive } from "../../utils/modules";
 import { getTenantPaymentMethods } from "../checkout/myfatoorah";
 import { publicPaymentMethods } from "../payment-settings/payment-methods";
 import { parseCalendarDate } from "../../utils/calendarDate";
+import { getRates, isCurrencyCode, rateFor } from "../../utils/money";
 
 // راوتر عام بالكامل - العميل بيحجز موعد من غير حساب ولا تسجيل دخول،
 // بالظبط زي منطق الكتالوج العام، والعزل بين الشركات بيتم عن طريق الـ slug
@@ -28,7 +29,10 @@ publicBookingRouter.get("/:slug/settings", async (req, res) => {
   const paymentMethods = publicPaymentMethods(await getTenantPaymentMethods(tenant.id));
   // بيانات التاجر الخاصة (رقمه وإيميله ورسالة إشعاره) ماتطلعش للعامة
   const { merchantWhatsapp: _w, merchantEmail: _e, waMerchantTemplate: _t, ...publicSettings } = settings;
-  res.json({ ...publicSettings, paymentMethods });
+  // مبلغ الحجز متخزن بالدولار - الصفحة بتعرضه بعملة الشركة بالسعر ده
+  const rates = await getRates();
+  const currency = isCurrencyCode(tenant.displayCurrency) ? tenant.displayCurrency : "USD";
+  res.json({ ...publicSettings, paymentMethods, currency, rate: rateFor(currency, rates) });
 });
 
 publicBookingRouter.get("/:slug/resources", async (req, res) => {

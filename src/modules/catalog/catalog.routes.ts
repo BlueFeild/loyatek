@@ -40,7 +40,11 @@ catalogRouter.patch("/settings", requireRole("OWNER", "ADMIN", "MANAGER"), async
   const parsed = updateSettingsSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const settings = await updateCatalogSettings(req.auth!.tenantId, parsed.data);
+  // العملة بقت للشركة كلها (Tenant.displayCurrency) - الأسعار متخزنة بالدولار،
+  // فعملة المنيو القديمة بتفضل USD ونسخة قديمة من الفرونت بتغيّر عملة الشركة
+  const { currency, ...rest } = parsed.data;
+  if (currency) await prisma.tenant.update({ where: { id: req.auth!.tenantId }, data: { displayCurrency: currency } });
+  const settings = await updateCatalogSettings(req.auth!.tenantId, rest);
   res.json(settings);
 });
 
