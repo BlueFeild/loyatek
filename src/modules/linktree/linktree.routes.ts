@@ -44,14 +44,25 @@ linktreeRouter.get("/links", async (req, res) => {
   res.json(links);
 });
 
+// أيقونة اللينك: مفتاح أيقونة جاهزة (حروف بس، زي "facebook") أو "none"،
+// أو صورة صغيرة مرفوعة (PNG/JPG/WEBP/GIF بس - من غير SVG) لحد ~300KB
+const iconKeySchema = z.string().regex(/^[a-z0-9_-]{1,32}$/).nullable();
+const iconImageSchema = z
+  .string()
+  .max(400_000, "Icon image is too large (max ~300 KB)")
+  .regex(/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/, "Icon must be a PNG, JPG, WEBP or GIF image")
+  .nullable();
+
 const createLinkSchema = z.object({
   label: z.string().min(1),
   url: z.string().url(),
+  icon: iconKeySchema.optional(),
+  iconDataUrl: iconImageSchema.optional(),
 });
 
 linktreeRouter.post("/links", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   const parsed = createLinkSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid link" });
 
   const maxOrder = await prisma.linktreeLink.aggregate({
     where: { tenantId: req.auth!.tenantId },
@@ -135,11 +146,13 @@ const updateLinkSchema = z.object({
   label: z.string().min(1).optional(),
   url: z.string().url().optional(),
   sortOrder: z.number().int().optional(),
+  icon: iconKeySchema.optional(),
+  iconDataUrl: iconImageSchema.optional(),
 });
 
 linktreeRouter.patch("/links/:id", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   const parsed = updateLinkSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid link" });
 
   const link = await prisma.linktreeLink.findFirst({ where: { id: req.params.id, tenantId: req.auth!.tenantId } });
   if (!link) return res.status(404).json({ error: "Link not found" });

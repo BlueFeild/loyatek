@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { getOrCreateCatalogSettings, updateCatalogSettings, createOrder, confirmOrderPaymentIfPaid, markOrderPaidManually } from "./catalog.service";
+import { MENU_CURRENCY_CODES } from "../../utils/money";
+import { addDemoMenu, removeDemoMenu } from "./demo-menu";
 
 export const catalogRouter = Router();
 
@@ -30,6 +32,8 @@ const updateSettingsSchema = z.object({
   posLink: z.string().optional(),
   waMerchantTemplate: z.string().max(1000).optional(),
   waCustomerTemplate: z.string().max(1000).optional(),
+  // عملة المنيو (QAR / EGP / AED / USD / EUR ...)
+  currency: z.enum(MENU_CURRENCY_CODES).optional(),
 });
 
 catalogRouter.patch("/settings", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
@@ -49,6 +53,15 @@ catalogRouter.get("/categories", async (req, res) => {
     orderBy: { sortOrder: "asc" },
   });
   res.json(categories);
+});
+
+// منيو تجريبي بزرار واحد - عشان التاجر يشوف التصميمات الأربعة شغالة ويجرّب
+catalogRouter.post("/demo-menu", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  res.status(201).json(await addDemoMenu(req.auth!.tenantId));
+});
+
+catalogRouter.delete("/demo-menu", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  res.json(await removeDemoMenu(req.auth!.tenantId));
 });
 
 const createCategorySchema = z.object({ name: z.string().min(1) });

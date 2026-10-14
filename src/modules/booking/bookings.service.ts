@@ -3,8 +3,9 @@ import { getOrCreateWhatsappSettings, sendWhatsappTestMessage, sendWhatsappTextM
 import { renderMessageTemplate } from "../../utils/messageTemplate";
 import { createNotification } from "../notifications/notifications.service";
 import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus } from "../checkout/myfatoorah";
-import { pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
+import { confirmsOnOrder, pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
 import { formatCalendarDate, parseCalendarDate, todayCalendarDate } from "../../utils/calendarDate";
+import { isValidEmail, sendEmail } from "../../utils/email";
 
 // إعدادات الحجز لكل شركة - بتتنشئ تلقائيًا بقيم افتراضية أول مرة
 export async function getOrCreateSettings(tenantId: string) {
@@ -30,6 +31,10 @@ interface UpdateSettingsInput {
   themeColor?: string;
   paymentRequired?: boolean;
   paymentAmount?: number;
+  merchantWhatsapp?: string;
+  merchantEmail?: string;
+  waMerchantTemplate?: string;
+  askCustomerEmail?: boolean;
 }
 
 export async function updateSettings(tenantId: string, data: UpdateSettingsInput) {
@@ -69,6 +74,8 @@ interface CreateBookingInput {
   date: string | Date;
   hour: number;
   note?: string;
+  // إيميل العميل (اختياري) - بيوصله تأكيد الحجز بالإيميل لو Resend متظبط
+  customerEmail?: string;
 }
 
 function requireCalendarDate(value: string | Date) {
@@ -80,29 +87,68 @@ function requireCalendarDate(value: string | Date) {
 // خطوات "تأكيد" الحجز الحقيقية - واتساب + إشعار داخلي. بتتنفّذ فورًا
 // لو الدفع مش مفعّل، أو بس بعد ما الدفع يتأكد فعليًا لو مفعّل - عشان
 // التاجر ميتاكدش من حجز حد لسه ما دفعش
-async function runBookingConfirmationSideEffects(booking: { id: string; resourceId: string; customerName: string; customerPhone: string; date: Date; hour: number; }, tenantId: string, resourceName: string) {
+async function runBookingConfirmationSideEffects(
+  booking: { id: string; resourceId: string; customerName: string; customerPhone: string; customerEmail?: string | null; paymentMethodLabel?: string | null; date: Date; hour: number },
+  tenantId: string,
+  resourceName: string
+) {
   let whatsappConfirmationSent = false;
+  const bookingSettings = await getOrCreateSettings(tenantId);
+  const vars = {
+    name: booking.customerName,
+    phone: booking.customerPhone,
+    resource: resourceName,
+    date: formatCalendarDate(booking.date),
+    time: `${String(booking.hour).padStart(2, "0")}:00`,
+    payment: booking.paymentMethodLabel ?? "",
+  };
+  const digits = (v: string) => v.replace(/[^\d]/g, "");
   try {
-    const bookingSettings = await getOrCreateSettings(tenantId);
-    if (bookingSettings.waAutomation) {
-      const waSettings = await getOrCreateWhatsappSettings(tenantId);
-      if (waSettings.isConnected && waSettings.metaAccessToken && waSettings.metaPhoneNumberId) {
-        const phone = booking.customerPhone.replace(/[^\d]/g, "");
-        // الرسالة اللي كتبها التاجر نفسه (waTemplate) - لو Meta رفضت النص
-        // الحر (برا نافذة الـ24 ساعة) بنرجع للقالب المعتمد الجاهز
-        const text = renderMessageTemplate(bookingSettings.waTemplate, {
-          name: booking.customerName,
-          resource: resourceName,
-          date: formatCalendarDate(booking.date),
-          time: `${String(booking.hour).padStart(2, "0")}:00`,
-        });
-        let result = await sendWhatsappTextMessage(waSettings.metaAccessToken, waSettings.metaPhoneNumberId, phone, text);
-        if (!result.ok) result = await sendWhatsappTestMessage(waSettings.metaAccessToken, waSettings.metaPhoneNumberId, phone);
-        whatsappConfirmationSent = result.ok;
-      }
+    const waSettings = await getOrCreateWhatsappSettings(tenantId);
+    const waReady = waSettings.isConnected && waSettings.metaAccessToken && waSettings.metaPhoneNumberId;
+    if (bookingSettings.waAutomation && waReady) {
+      // الرسالة اللي كتبها التاجر نفسه (waTemplate) - لو Meta رفضت النص
+      // الحر (برا نافذة الـ24 ساعة) بنرجع للقالب المعتمد الجاهز
+      const text = renderMessageTemplate(bookingSettings.waTemplate, vars);
+      const phone = digits(booking.customerPhone);
+      let result = await sendWhatsappTextMessage(waSettings.metaAccessToken!, waSettings.metaPhoneNumberId!, phone, text);
+      if (!result.ok) result = await sendWhatsappTestMessage(waSettings.metaAccessToken!, waSettings.metaPhoneNumberId!, phone);
+      whatsappConfirmationSent = result.ok;
+    }
+    // إشعار واتساب للتاجر نفسه (رقمه هو) بكل حجز جديد - نص حر، فـ Meta بتقبله
+    // بس جوه نافذة الـ24 ساعة (لو التاجر كلّم رقم البيزنس آخر 24 ساعة)
+    if (waReady && digits(bookingSettings.merchantWhatsapp) && bookingSettings.waMerchantTemplate.trim()) {
+      const result = await sendWhatsappTextMessage(
+        waSettings.metaAccessToken!,
+        waSettings.metaPhoneNumberId!,
+        digits(bookingSettings.merchantWhatsapp),
+        renderMessageTemplate(bookingSettings.waMerchantTemplate, vars)
+      );
+      if (!result.ok) console.warn(`[booking] merchant WhatsApp notification not delivered for tenant ${tenantId}`);
     }
   } catch {
     // فشل الإرسال ميوقفش نجاح الحجز نفسه - ده feature إضافي مش أساسي
+  }
+
+  // إيميلات (لو Resend متظبط في Railway): للتاجر بكل حجز، وللعميل لو كتب إيميله
+  try {
+    const when = `${vars.date} at ${vars.time}`;
+    if (isValidEmail(bookingSettings.merchantEmail)) {
+      await sendEmail(
+        bookingSettings.merchantEmail,
+        `New booking — ${booking.customerName}, ${when}`,
+        renderMessageTemplate(bookingSettings.waMerchantTemplate, vars) || `New booking: ${booking.customerName} (${booking.customerPhone}) — ${resourceName}, ${when}`
+      );
+    }
+    if (isValidEmail(booking.customerEmail)) {
+      await sendEmail(
+        booking.customerEmail,
+        `Booking confirmed — ${bookingSettings.brandName}, ${when}`,
+        renderMessageTemplate(bookingSettings.waTemplate, vars) || `Your booking at ${bookingSettings.brandName} is confirmed for ${when}.`
+      );
+    }
+  } catch {
+    // best effort
   }
 
   await createNotification({
@@ -147,6 +193,7 @@ export async function createBooking(input: CreateBookingInput & { redirectionUrl
         resourceId: input.resourceId,
         customerName: input.customerName,
         customerPhone: input.customerPhone,
+        customerEmail: isValidEmail(input.customerEmail) ? input.customerEmail.trim() : null,
         date: dayStart,
         hour: input.hour,
         note: input.note,
@@ -174,7 +221,7 @@ export async function createBooking(input: CreateBookingInput & { redirectionUrl
 
   // كاش عند الوصول: الميعاد بيتأكد فورًا (واتساب + إشعار)، والفلوس
   // بتتدفع في المكان - التاجر يدوس "Mark paid" لما يستلم
-  if (method.type === "CASH") {
+  if (confirmsOnOrder(method.type)) {
     const whatsappConfirmationSent = await runBookingConfirmationSideEffects(booking, input.tenantId, booking.resource.name);
     return { ...booking, whatsappConfirmationSent, paymentUrl: null, paymentError: null, paymentInstructions };
   }
@@ -238,7 +285,7 @@ export async function markBookingPaidManually(tenantId: string, bookingId: strin
   if (booking.paymentStatus !== "AWAITING_PAYMENT") throw new Error("This booking isn't waiting for payment");
   const updated = await prisma.booking.update({ where: { id: booking.id }, data: { paymentStatus: "PAID" }, include: { resource: true } });
   // حجز الكاش اتأكد خلاص وقت الحجز (واتساب اتبعت) - مانبعتش تاني
-  if (booking.paymentMethodType === "CASH") return { ...updated, whatsappConfirmationSent: false };
+  if (confirmsOnOrder(booking.paymentMethodType)) return { ...updated, whatsappConfirmationSent: false };
   const whatsappConfirmationSent = await runBookingConfirmationSideEffects(updated, updated.tenantId, updated.resource.name);
   return { ...updated, whatsappConfirmationSent };
 }

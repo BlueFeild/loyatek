@@ -43,6 +43,11 @@ const updateSettingsSchema = z.object({
   themeColor: z.string().optional(),
   paymentRequired: z.boolean().optional(),
   paymentAmount: z.number().min(0).optional(),
+  // إشعار التاجر بكل حجز (واتساب على رقمه / إيميل)
+  merchantWhatsapp: z.string().max(32).optional(),
+  merchantEmail: z.union([z.literal(""), z.string().trim().email().max(200)]).optional(),
+  waMerchantTemplate: z.string().max(1000).optional(),
+  askCustomerEmail: z.boolean().optional(),
 });
 
 bookingsRouter.patch("/settings", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {

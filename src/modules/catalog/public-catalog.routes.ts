@@ -27,7 +27,9 @@ publicCatalogRouter.get("/:slug/settings", async (req, res) => {
   const settings = await getOrCreateCatalogSettings(tenant.id);
   // طرق الدفع اللي العميل يختار منها (من غير اللينكات نفسها)
   const paymentMethods = publicPaymentMethods(await getTenantPaymentMethods(tenant.id));
-  res.json({ ...settings, brandNameFromTenant: tenant.name, paymentMethods });
+  // إيميل التاجر ورقم واتساب المطبخ وقوالب الرسايل ماتطلعش للعامة
+  const { merchantEmail: _e, kitchenWhatsapp: _k, waMerchantTemplate: _m, waCustomerTemplate: _c, posLink: _p, ...publicSettings } = settings;
+  res.json({ ...publicSettings, brandNameFromTenant: tenant.name, paymentMethods });
 });
 
 publicCatalogRouter.get("/:slug/categories", async (req, res) => {

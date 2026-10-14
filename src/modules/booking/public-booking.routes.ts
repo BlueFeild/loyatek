@@ -26,7 +26,9 @@ publicBookingRouter.get("/:slug/settings", async (req, res) => {
   const settings = await getOrCreateSettings(tenant.id);
   // طرق الدفع اللي العميل يختار منها (من غير اللينكات نفسها)
   const paymentMethods = publicPaymentMethods(await getTenantPaymentMethods(tenant.id));
-  res.json({ ...settings, paymentMethods });
+  // بيانات التاجر الخاصة (رقمه وإيميله ورسالة إشعاره) ماتطلعش للعامة
+  const { merchantWhatsapp: _w, merchantEmail: _e, waMerchantTemplate: _t, ...publicSettings } = settings;
+  res.json({ ...publicSettings, paymentMethods });
 });
 
 publicBookingRouter.get("/:slug/resources", async (req, res) => {
@@ -58,6 +60,8 @@ const createBookingSchema = z.object({
   hour: z.number().int().min(0).max(23),
   note: z.string().optional(),
   paymentMethodId: z.string().max(64).optional(),
+  // إيميل العميل (اختياري) - فاضي أو إيميل صحيح
+  customerEmail: z.union([z.literal(""), z.string().trim().email().max(200)]).optional(),
 });
 
 publicBookingRouter.post("/:slug/bookings", async (req, res) => {
@@ -82,6 +86,7 @@ publicBookingRouter.post("/:slug/bookings", async (req, res) => {
       hour: parsed.data.hour,
       note: parsed.data.note,
       paymentMethodId: parsed.data.paymentMethodId,
+      customerEmail: parsed.data.customerEmail || undefined,
       // MyFatoorah v3 بيستخدم رابط رجوع واحد بس، وبيضيف paymentId له
       // تلقائيًا - إحنا اللي بنتأكد من الدفع الحقيقي بعد الرجوع
       redirectionUrlBase: `${frontendBase}/book/${req.params.slug}`,

@@ -7,9 +7,17 @@ import { z } from "zod";
 //  - LINK: لينك دفع من أي مزوّد (SADAD / Dibsy / Tap / PayTabs / Stripe...)
 //  - BANK_TRANSFER: تحويل بنكي / Fawran / محفظة - بنعرض البيانات للعميل
 //  - CASH: كاش عند الوصول أو الاستلام - الحجز/الأوردر بيتأكد فورًا
+//  - CASH_OR_TRANSFER: اختيار واحد مدموج - العميل بيدفع كاش أو تحويل (براحته)
+//    عند الوصول/الاستلام؛ بنعرضله بيانات التحويل، والحجز/الأوردر بيتأكد فورًا زي الكاش
 // كل الطرق ماعدا MyFatoorah التاجر بيأكد فيها الدفع بنفسه بزرار "Mark paid"
-export const PAYMENT_METHOD_TYPES = ["MYFATOORAH", "LINK", "BANK_TRANSFER", "CASH"] as const;
+export const PAYMENT_METHOD_TYPES = ["MYFATOORAH", "LINK", "BANK_TRANSFER", "CASH", "CASH_OR_TRANSFER"] as const;
 export type PaymentMethodType = (typeof PAYMENT_METHOD_TYPES)[number];
+
+// الدفع بيحصل في المكان (كاش، أو كاش/تحويل) - الحجز/الأوردر بيتأكد فورًا
+// وقت الطلب، و"Mark paid" بعدها مابيبعتش تأكيد تاني
+export function confirmsOnOrder(type: string | null | undefined): boolean {
+  return type === "CASH" || type === "CASH_OR_TRANSFER";
+}
 
 export interface PaymentMethod {
   id: string;
@@ -45,7 +53,7 @@ const methodSchema = z
   })
   .superRefine((m, ctx) => {
     if (m.type === "LINK" && !m.url) ctx.addIssue({ code: "custom", path: ["url"], message: "A payment link needs its https:// link" });
-    if (m.type === "BANK_TRANSFER" && !m.details)
+    if ((m.type === "BANK_TRANSFER" || m.type === "CASH_OR_TRANSFER") && !m.details)
       ctx.addIssue({ code: "custom", path: ["details"], message: "Add the account details your customers transfer to" });
   });
 
@@ -62,7 +70,7 @@ export function normalizePaymentMethods(input: z.infer<typeof paymentMethodsInpu
     seen.add(id);
     const out: PaymentMethod = { id, type: m.type, label: m.label };
     if (m.type === "LINK") out.url = m.url;
-    if ((m.type === "BANK_TRANSFER" || m.type === "CASH") && m.details) out.details = m.details;
+    if ((m.type === "BANK_TRANSFER" || m.type === "CASH" || m.type === "CASH_OR_TRANSFER") && m.details) out.details = m.details;
     return out;
   });
 }

@@ -718,6 +718,13 @@ model BookingSettings {
   paymentRequired Boolean  @default(false)
   // مبلغ ثابت بيتاخد وقت الحجز لو الدفع مفعّل - مش لكل خدمة لوحدها
   paymentAmount   Decimal  @default(0) @db.Decimal(10, 2)
+  // إشعار للتاجر نفسه بكل حجز جديد: واتساب على رقمه و/أو إيميل (Resend).
+  // waMerchantTemplate بيقبل {name} {phone} {resource} {date} {time} {payment}
+  merchantWhatsapp   String  @default("")
+  merchantEmail      String  @default("")
+  waMerchantTemplate String  @default("🔔 New booking\n{name} · {phone}\n{resource}\n{date} at {time}")
+  // نطلب إيميل العميل (اختياري) في صفحة الحجز - بيوصله تأكيد بالإيميل
+  askCustomerEmail   Boolean @default(false)
   updatedAt       DateTime @updatedAt
 
   @@map("booking_settings")
@@ -772,6 +779,8 @@ model Booking {
   resource      Resource      @relation(fields: [resourceId], references: [id], onDelete: Cascade)
   customerName  String
   customerPhone String
+  // إيميل العميل لو كتبه في صفحة الحجز (اختياري)
+  customerEmail String?
   date          DateTime      @db.Date
   hour          Int // ساعة الميعاد (0-23) - بديل بسيط وحقيقي عن توقيت كامل
   status        BookingStatus @default(CONFIRMED)
@@ -929,6 +938,9 @@ model CatalogSettings {
   // {mode} {prep} {name} أو يسيبهم (مثلاً من غير مبلغ)
   waMerchantTemplate String @default("🔔 New Order\n{mode}\n\n{items}\n\nTotal: {total}")
   waCustomerTemplate String @default("✅ Order confirmed!\n{mode}\n\n{items}\n\nTotal: {total}\nEstimated prep time: {prep} minutes.")
+  // عملة المنيو اللي التاجر بيختارها (QAR / EGP / AED / USD / EUR ...) -
+  // الأسعار والإجمالي ({total}) بيظهروا بيها. USD = نفس العرض القديم ($)
+  currency        String   @default("USD")
   updatedAt       DateTime @updatedAt
 
   @@map("catalog_settings")
@@ -941,6 +953,8 @@ model MenuCategory {
   name           String
   coverImageDataUrl String? @db.Text
   sortOrder      Int      @default(0)
+  // قسم من المنيو التجريبي (زرار "Add demo menu") - بيتشال بزرار واحد
+  isDemo         Boolean  @default(false)
   createdAt      DateTime @default(now())
 
   items MenuItem[]
@@ -1501,6 +1515,10 @@ model LinktreeLink {
   fileName  String?
   fileSize  Int?
   file      LinktreeFile?
+  // أيقونة جنب اللينك: مفتاح أيقونة جاهزة (facebook / instagram / ...) أو
+  // "none"؛ null = بتتكتشف تلقائي من اللينك. iconDataUrl = صورة رفعها التاجر
+  icon        String?
+  iconDataUrl String?  @db.Text
   createdAt DateTime @default(now())
 
   @@index([tenantId])

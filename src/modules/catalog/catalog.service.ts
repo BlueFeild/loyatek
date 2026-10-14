@@ -3,7 +3,9 @@ import { getOrCreateWhatsappSettings, sendWhatsappTextMessage } from "../whatsap
 import { renderMessageTemplate } from "../../utils/messageTemplate";
 import { createNotification } from "../notifications/notifications.service";
 import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus } from "../checkout/myfatoorah";
-import { pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
+import { confirmsOnOrder, pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
+import { formatMoney } from "../../utils/money";
+import { isValidEmail, sendEmail } from "../../utils/email";
 
 export async function getOrCreateCatalogSettings(tenantId: string) {
   const existing = await prisma.catalogSettings.findUnique({ where: { tenantId } });
@@ -26,6 +28,7 @@ interface UpdateCatalogSettingsInput {
   posLink?: string;
   waMerchantTemplate?: string;
   waCustomerTemplate?: string;
+  currency?: string;
 }
 
 export async function updateCatalogSettings(tenantId: string, data: UpdateCatalogSettingsInput) {
@@ -56,24 +59,39 @@ interface CreateOrderInput {
 // يجهّز أوردر لسه ما اتدفعش)
 async function notifyNewOrder(order: { id: string; customerName: string; customerPhone?: string | null; mode: string; tableLabel: string | null; totalAmount: any; items: { id: string; name?: string; quantity?: number }[] }, tenantId: string) {
   const modeLabel = order.mode === "DINE_IN" ? (order.tableLabel ? `Table ${order.tableLabel}` : "Dine-in") : "Pickup";
+  const settings = await getOrCreateCatalogSettings(tenantId);
+  // الإجمالي بعملة المنيو اللي التاجر اختارها ("QAR 25.00")
+  const total = formatMoney(order.totalAmount, settings.currency);
   await createNotification({
     tenantId,
     type: "CATALOG_ORDER",
     title: "New order received",
-    body: `${order.customerName} — ${modeLabel} — ${order.items.length} item(s) — ${Number(order.totalAmount).toFixed(2)}`,
+    body: `${order.customerName} — ${modeLabel} — ${order.items.length} item(s) — ${total}`,
     link: "/catalog",
   });
+
+  const items = order.items.map((i) => `${i.quantity ?? 1}× ${i.name ?? ""}`).join("\n");
+
+  // إيميل للتاجر (Merchant email في إعدادات المنيو) - لو Resend متظبط في Railway
+  if (isValidEmail(settings.merchantEmail)) {
+    await sendEmail(
+      settings.merchantEmail,
+      `New order — ${order.customerName} · ${modeLabel} · ${total}`,
+      renderMessageTemplate(settings.waMerchantTemplate, { name: order.customerName, mode: modeLabel, items, total, prep: settings.prepTime }) ||
+        `New order from ${order.customerName} (${modeLabel})\n\n${items}\n\nTotal: ${total}`
+    ).catch(() => {});
+  }
 
   // رسائل واتساب بالنص اللي كتبه التاجر (للمطبخ وللعميل) - best effort،
   // فشلها مايوقفش الأوردر
   try {
-    const [settings, wa] = await Promise.all([getOrCreateCatalogSettings(tenantId), getOrCreateWhatsappSettings(tenantId)]);
+    const wa = await getOrCreateWhatsappSettings(tenantId);
     if (!(wa.isConnected && wa.metaAccessToken && wa.metaPhoneNumberId)) return;
     const vars = {
       name: order.customerName,
       mode: modeLabel,
-      items: order.items.map((i) => `${i.quantity ?? 1}× ${i.name ?? ""}`).join("\n"),
-      total: Number(order.totalAmount).toFixed(2),
+      items,
+      total,
       prep: settings.prepTime,
     };
     const digits = (v: string) => v.replace(/[^\d]/g, "");
@@ -147,7 +165,7 @@ export async function createOrder(input: CreateOrderInput) {
 
   // كاش عند الاستلام: الأوردر بيروح للمطبخ فورًا، والتاجر يدوس
   // "Mark paid" لما يستلم الفلوس
-  if (method.type === "CASH") {
+  if (confirmsOnOrder(method.type)) {
     await notifyNewOrder(order, input.tenantId);
     return { ...order, paymentUrl: null, paymentError: null, paymentInstructions };
   }
@@ -207,6 +225,6 @@ export async function markOrderPaidManually(tenantId: string, orderId: string) {
   if (order.paymentStatus !== "AWAITING_PAYMENT") throw new Error("This order isn't waiting for payment");
   const updated = await prisma.catalogOrder.update({ where: { id: order.id }, data: { paymentStatus: "PAID" }, include: { items: true } });
   // أوردر الكاش راح للمطبخ خلاص وقت الطلب - مانبعتش إشعار تاني
-  if (order.paymentMethodType !== "CASH") await notifyNewOrder(updated, updated.tenantId);
+  if (!confirmsOnOrder(order.paymentMethodType)) await notifyNewOrder(updated, updated.tenantId);
   return updated;
 }

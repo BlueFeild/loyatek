@@ -29,7 +29,7 @@ publicLinktreeRouter.get("/:slug", async (req, res) => {
     avatarDataUrl: settings?.avatarDataUrl ?? null,
     themeColor: settings?.themeColor ?? "#38BDF8",
     backgroundColor: settings?.backgroundColor ?? "#0f172a",
-    links: links.map((l: any) => ({ id: l.id, label: l.label, url: l.url, kind: l.kind, fileName: l.fileName, fileSize: l.fileSize })),
+    links: links.map((l: any) => ({ id: l.id, label: l.label, url: l.url, kind: l.kind, fileName: l.fileName, fileSize: l.fileSize, icon: l.icon, iconDataUrl: l.iconDataUrl })),
   });
 });
 

@@ -46,7 +46,8 @@ const updateSettingsSchema = z.object({
   logoDataUrl: z.string().nullable().optional(),
   centerLabel: z.string().optional(),
   centerIconDataUrl: z.string().nullable().optional(),
-  stampGlyph: z.string().max(8).optional(),
+  // أيقونة أو أكتر مفصولة بمسافة ("☕ ❤") - بتتبادل على الكارت
+  stampGlyph: z.string().max(64).optional(),
   stampIconDataUrl: z.string().nullable().optional(),
   centerBorderThickness: z.number().int().min(0).max(4).optional(),
   centerRingColor: z.string().optional(),
