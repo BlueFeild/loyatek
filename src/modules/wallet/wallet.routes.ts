@@ -47,8 +47,13 @@ const updateSettingsSchema = z.object({
   centerLabel: z.string().optional(),
   centerIconDataUrl: z.string().nullable().optional(),
   // أيقونة أو أكتر مفصولة بمسافة ("☕ ❤") - بتتبادل على الكارت
-  stampGlyph: z.string().max(64).optional(),
+  stampGlyph: z.string().max(200).optional(),
   stampIconDataUrl: z.string().nullable().optional(),
+  // صور الأختام المرفوعة (PNG/JPEG صغيرة بيعملها الفرونت) - حد أقصى 6
+  stampIconImages: z
+    .array(z.object({ id: z.string().regex(/^[a-z0-9]{1,16}$/i), dataUrl: z.string().regex(/^data:image\/(png|jpeg);base64,/).max(400_000) }))
+    .max(6)
+    .optional(),
   centerBorderThickness: z.number().int().min(0).max(4).optional(),
   centerRingColor: z.string().optional(),
   centerInnerGlow: z.boolean().optional(),

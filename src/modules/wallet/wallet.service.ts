@@ -21,6 +21,7 @@ interface UpdateWalletSettingsInput {
   centerIconDataUrl?: string | null;
   stampGlyph?: string;
   stampIconDataUrl?: string | null;
+  stampIconImages?: { id: string; dataUrl: string }[];
   centerBorderThickness?: number;
   centerRingColor?: string;
   centerInnerGlow?: boolean;

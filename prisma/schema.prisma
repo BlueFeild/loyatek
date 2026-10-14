@@ -843,10 +843,14 @@ model WalletSettings {
   logoDataUrl            String?  @db.Text
   centerLabel            String   @default("Brand Icon")
   centerIconDataUrl      String?  @db.Text
-  // أيقونة الأختام (الدواير الصغيرة على الكارت): رمز جاهز أو صورة بيرفعها
-  // التاجر. فاضية = بتتبع أيقونة الدايرة الكبيرة
+  // أيقونات الأختام (الدواير الصغيرة على الكارت) بالترتيب، مفصولة بمسافة:
+  // رمز جاهز (☕) أو "img:<id>" = صورة من stampIconImages. خليط عادي، وفاضية =
+  // بتتبع أيقونة الدايرة الكبيرة
   stampGlyph             String   @default("")
+  // قديم (صورة واحدة) - الـ migration نقلها لـ stampIconImages
   stampIconDataUrl       String?  @db.Text
+  // الصور اللي التاجر رفعها للأختام [{ id, dataUrl }] (حد أقصى 6)
+  stampIconImages        Json     @default("[]")
   centerBorderThickness  Int      @default(2)
   centerRingColor        String   @default("#38BDF8")
   centerInnerGlow        Boolean  @default(true)
