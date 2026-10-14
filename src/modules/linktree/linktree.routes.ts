@@ -29,6 +29,8 @@ const updateSettingsSchema = z.object({
       zoom: z.number().min(100).max(250),
       x: z.number().min(0).max(100),
       y: z.number().min(0).max(100),
+      bg: z.enum(["none", "white"]).optional(),
+      size: z.enum(["s", "m", "l"]).optional(),
     })
     .nullable()
     .optional(),
