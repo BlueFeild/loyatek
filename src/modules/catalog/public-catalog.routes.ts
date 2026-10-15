@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { getOrCreateCatalogSettings, createOrder, confirmOrderPaymentIfPaid } from "./catalog.service";
-import { isModuleActive } from "../../utils/modules";
+import { isModuleLive } from "../../utils/platform-config";
 import { getTenantPaymentMethods } from "../checkout/myfatoorah";
 import { publicPaymentMethods } from "../payment-settings/payment-methods";
 import { getRates, isCurrencyCode, rateFor } from "../../utils/money";
@@ -17,7 +17,8 @@ async function findTenantBySlug(slug: string) {
   // الرابط العام بيشتغل بس لو الكتالوج مشترك فيه فعليًا وماكانش انتهى
   // (مش وقت التجربة المجانية) - عشان محدش يستخدم حساب تجريبي أو اشتراك
   // منتهي كنظام طلبات حقيقي شغال
-  if (!tenant || !isModuleActive(tenant, "catalog")) return null;
+  // شغال = اشتراك (شامل أيام السماح) والحساب مش موقوف
+  if (!tenant || !(await isModuleLive(tenant, "catalog"))) return null;
   return tenant;
 }
 

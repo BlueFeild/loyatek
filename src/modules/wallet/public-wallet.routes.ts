@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { getOrCreateWalletSettings } from "./wallet.service";
-import { isModuleActive } from "../../utils/modules";
+import { isModuleLive } from "../../utils/platform-config";
 import { loadGoogleWalletConfig } from "./google-wallet.service";
 import { createGooglePassLink, publicBaseUrl } from "./wallet-pass.service";
 import { solidColorPng } from "./png";
@@ -15,7 +15,8 @@ async function findTenantBySlug(slug: string) {
   const tenant = await prisma.tenant.findUnique({ where: { slug } });
   // نفس منطق الكتالوج والحجز - الرابط العام يشتغل بس لو مشترك فعليًا
   // وماكانش انتهى الاشتراك
-  if (!tenant || !isModuleActive(tenant, "wallet")) return null;
+  // شغال = اشتراك (شامل أيام السماح) والحساب مش موقوف
+  if (!tenant || !(await isModuleLive(tenant, "wallet"))) return null;
   return tenant;
 }
 

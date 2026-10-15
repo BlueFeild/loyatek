@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { verifyAccessToken, AccessTokenPayload } from "../utils/jwt";
+import { checkAccess } from "../utils/account-access";
 
 // إضافة بيانات المستخدم لكل request بعد التحقق من الـ token
 declare global {
@@ -10,20 +11,28 @@ declare global {
   }
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Missing or invalid Authorization header" });
   }
 
   const token = header.split(" ")[1];
+  let payload: AccessTokenPayload;
   try {
-    const payload = verifyAccessToken(token);
-    req.auth = payload; // بيحتوي على tenantId و role و branchId
-    next();
+    payload = verifyAccessToken(token);
   } catch {
     return res.status(401).json({ error: "Invalid or expired token" });
   }
+  req.auth = payload; // بيحتوي على tenantId و role و branchId
+
+  // شركة موقوفة / مؤرشفة أو مستخدم متوقف: كل الجلسات المفتوحة بتقف خلال ثواني.
+  // السوبر أدمن (حتى وهو داخل كشركة) بيقدر يفتح عشان يراجع
+  if (!payload.isSuperAdmin && !payload.impersonatedBy) {
+    const denied = await checkAccess(payload.userId, payload.tenantId);
+    if (denied) return res.status(403).json({ error: denied.message, code: denied.code });
+  }
+  next();
 }
 
 // Middleware للتحقق من صلاحية الدور (Role-Based Access Control)

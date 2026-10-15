@@ -3,7 +3,10 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "../../config/db";
 import { requireAuth, requireSuperAdmin } from "../../middleware/auth";
-import { computeExpiryDate } from "../../utils/modules";
+import { ACCOUNT_STATUSES, ALL_MODULES, computeExpiryDate, isInGrace, isModuleActive, moduleExpiry } from "../../utils/modules";
+import { clearAccessCache } from "../../utils/account-access";
+import { clearPlatformConfigCache, getPlatformConfig } from "../../utils/platform-config";
+import { MODULE_PRICES } from "../checkout/pricing";
 import { signAccessToken } from "../../utils/jwt";
 import { generateUniqueSlug } from "../../utils/slug";
 import { getPlatformAnalytics } from "../analytics/analytics.service";
@@ -61,8 +64,12 @@ superAdminRouter.post("/tenants/:id/impersonate", async (req, res) => {
 
 // قائمة كل الشركات المسجّلة على المنصة - مع كل المستخدمين، الرابط العام،
 // وإحصائيات استخدام حقيقية لكل خدمة (مش بس عدد المستخدمين)
-superAdminRouter.get("/tenants", async (_req, res) => {
-  const tenants = await prisma.tenant.findMany({
+// ?view=archived = الحسابات المؤرشفة بس، غير كده كل الحسابات ماعدا المؤرشفة
+superAdminRouter.get("/tenants", async (req, res) => {
+  const archived = req.query.view === "archived";
+  const [tenants, paidByTenant, config] = await Promise.all([
+    prisma.tenant.findMany({
+    where: archived ? { accountStatus: "ARCHIVED" } : { accountStatus: { not: "ARCHIVED" } },
     include: {
       users: { orderBy: { createdAt: "asc" } },
       branches: true,
@@ -77,9 +84,22 @@ superAdminRouter.get("/tenants", async (_req, res) => {
       },
     },
     orderBy: { createdAt: "desc" },
-  });
+    }),
+    // دفع حقيقي (PAID / ACTIVATED) - عشان نفرّق الحساب الحقيقي من التجريبي
+    prisma.subscriptionOrder.groupBy({
+      by: ["tenantId"],
+      where: { status: { in: ["PAID", "ACTIVATED"] } },
+      _count: { _all: true },
+      _sum: { amount: true },
+    }),
+    getPlatformConfig(),
+  ]);
+  const paid = new Map(paidByTenant.map((g: any) => [g.tenantId, { count: g._count._all, total: Number(g._sum.amount ?? 0) }]));
+  const now = new Date();
 
-  const result = tenants.map((t: any) => ({
+  const result = tenants.map((t: any) => {
+    const graceDays = t.graceDays ?? config.defaultGraceDays;
+    return {
     id: t.id,
     name: t.name,
     industry: t.industry,
@@ -99,9 +119,128 @@ superAdminRouter.get("/tenants", async (_req, res) => {
       walletCustomers: t._count.walletCustomers,
       catalogOrders: t._count.catalogOrders,
     },
-  }));
+    accountStatus: t.accountStatus,
+    statusReason: t.statusReason,
+    statusChangedAt: t.statusChangedAt,
+    graceDays: t.graceDays,
+    effectiveGraceDays: graceDays,
+    trialExpiresAt: t.trialExpiresAt,
+    isPlatformOwner: t.isPlatformOwner,
+    paidOrders: paid.get(t.id)?.count ?? 0,
+    paidTotal: paid.get(t.id)?.total ?? 0,
+    // حالة كل خدمة فعليًا: active / grace (خلصت ولسه في السماح) / expired / off
+    moduleStatus: Object.fromEntries(
+      ALL_MODULES.map((m) => {
+        const on = t.isPlatformOwner || t.subscribedModules.includes(m);
+        if (!on) return [m, "off"];
+        if (isInGrace(t, m, now, graceDays)) return [m, "grace"];
+        return [m, isModuleActive({ ...t, accountStatus: "ACTIVE" }, m, now, graceDays) ? "active" : "expired"];
+      })
+    ),
+    };
+  });
 
   res.json(result);
+});
+
+// إيقاف / تشغيل / أرشفة / استرجاع حساب. الإيقاف بيقفل الدخول (حتى الجلسات
+// المفتوحة خلال ثواني) والصفحات العامة، والداتا كلها بتفضل محفوظة
+const statusSchema = z.object({
+  status: z.enum(ACCOUNT_STATUSES),
+  reason: z.string().trim().max(200).optional(),
+});
+async function setTenantStatus(ids: string[], status: (typeof ACCOUNT_STATUSES)[number], reason?: string) {
+  // شركات صاحب المنصة (bluefield) ماتتوقفش أبدًا
+  const result = await prisma.tenant.updateMany({
+    where: { id: { in: ids }, isPlatformOwner: false },
+    data: { accountStatus: status, statusReason: status === "ACTIVE" ? null : reason || null, statusChangedAt: new Date() },
+  });
+  clearAccessCache();
+  return result.count;
+}
+
+superAdminRouter.patch("/tenants/:id/status", async (req, res) => {
+  const parsed = statusSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Choose ACTIVE, SUSPENDED or ARCHIVED" });
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } });
+  if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+  if (tenant.isPlatformOwner) return res.status(400).json({ error: "The platform owner account can't be paused or archived." });
+  await setTenantStatus([tenant.id], parsed.data.status, parsed.data.reason);
+  res.json({ ok: true, status: parsed.data.status });
+});
+
+// أكتر من حساب مرة واحدة (مثلًا أرشفة كل الحسابات التجريبية)
+const bulkStatusSchema = statusSchema.extend({ ids: z.array(z.string().uuid()).min(1).max(500) });
+superAdminRouter.post("/tenants/bulk-status", async (req, res) => {
+  const parsed = bulkStatusSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Pick at least one company and a status" });
+  const updated = await setTenantStatus(parsed.data.ids, parsed.data.status, parsed.data.reason);
+  res.json({ ok: true, updated });
+});
+
+// أيام السماح لشركة معيّنة (null = الافتراضي بتاع المنصة)
+const graceSchema = z.object({ graceDays: z.number().int().min(0).max(365).nullable() });
+superAdminRouter.patch("/tenants/:id/grace", async (req, res) => {
+  const parsed = graceSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Grace days must be 0 – 365 (or empty for the default)" });
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } });
+  if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+  await prisma.tenant.update({ where: { id: tenant.id }, data: { graceDays: parsed.data.graceDays } });
+  res.json({ ok: true, graceDays: parsed.data.graceDays });
+});
+
+// تاريخ انتهاء خدمة لشركة: تاريخ معيّن، أو null = من غير انتهاء. بيشغّل
+// الخدمة لو كانت مقفولة
+const expirySchema = z.object({ expiresAt: z.string().datetime().nullable() });
+superAdminRouter.patch("/tenants/:id/modules/:module/expiry", async (req, res) => {
+  const moduleId = req.params.module;
+  if (!(ALL_MODULES as readonly string[]).includes(moduleId)) return res.status(400).json({ error: "Unknown service" });
+  const parsed = expirySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Pick a valid date (or no expiry)" });
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } });
+  if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+  const expirations = { ...((tenant.moduleExpirations as Record<string, string>) ?? {}) };
+  if (parsed.data.expiresAt) expirations[moduleId] = new Date(parsed.data.expiresAt).toISOString();
+  else delete expirations[moduleId];
+  const subscribedModules = Array.from(new Set([...tenant.subscribedModules, moduleId]));
+  const updated = await prisma.tenant.update({ where: { id: tenant.id }, data: { subscribedModules, moduleExpirations: expirations } });
+  res.json({ subscribedModules: updated.subscribedModules, moduleExpirations: updated.moduleExpirations });
+});
+
+// أسعار الخدمات + أيام السماح الافتراضية (بتطبق على الطلبات الجديدة بس -
+// الاشتراكات اللي اتدفعت خلاص مش بتتغيّر)
+superAdminRouter.get("/platform-config", async (_req, res) => {
+  const config = await getPlatformConfig();
+  res.json({ ...config, defaults: { modulePrices: MODULE_PRICES } });
+});
+
+const platformConfigSchema = z.object({
+  modulePrices: z.record(z.enum(ALL_MODULES), z.number().min(0).max(100000)).optional(),
+  extraCompanyBasePrice: z.number().min(0).max(100000).optional(),
+  yearlyDiscountPct: z.number().int().min(0).max(90).optional(),
+  defaultGraceDays: z.number().int().min(0).max(365).optional(),
+});
+superAdminRouter.patch("/platform-config", async (req, res) => {
+  const parsed = platformConfigSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Prices must be 0 or more, discount 0 – 90%, grace 0 – 365 days" });
+  const d = parsed.data;
+  const current = await getPlatformConfig();
+  await prisma.platformSettings.upsert({
+    where: { id: "singleton" },
+    create: { id: "singleton" },
+    update: {},
+  });
+  await prisma.platformSettings.update({
+    where: { id: "singleton" },
+    data: {
+      ...(d.modulePrices ? { modulePrices: { ...current.pricing.modulePrices, ...d.modulePrices } } : {}),
+      ...(d.extraCompanyBasePrice !== undefined ? { extraCompanyBasePrice: d.extraCompanyBasePrice } : {}),
+      ...(d.yearlyDiscountPct !== undefined ? { yearlyDiscountPct: d.yearlyDiscountPct } : {}),
+      ...(d.defaultGraceDays !== undefined ? { defaultGraceDays: d.defaultGraceDays } : {}),
+    },
+  });
+  clearPlatformConfigCache();
+  res.json(await getPlatformConfig());
 });
 
 const updateUserActiveSchema = z.object({ isActive: z.boolean() });
@@ -115,6 +254,7 @@ superAdminRouter.patch("/users/:id/active", async (req, res) => {
   if (!user) return res.status(404).json({ error: "User not found" });
 
   const updated = await prisma.user.update({ where: { id: user.id }, data: { isActive: parsed.data.isActive } });
+  clearAccessCache();
   res.json({ id: updated.id, isActive: updated.isActive });
 });
 const updateModulesSchema = z.object({
@@ -129,9 +269,19 @@ superAdminRouter.patch("/tenants/:id/modules", async (req, res) => {
   const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } });
   if (!tenant) return res.status(404).json({ error: "Tenant not found" });
 
+  // خدمة اتقفلت = صلاحيتها اتسحبت وتاريخها اتمسح (لو اتفتحت تاني ماترجعش
+  // بتاريخ قديم منتهي). خدمة اتفتحت وتاريخها القديم فات = من غير انتهاء لحد
+  // ما السوبر أدمن يحدد تاريخ
+  const expirations = { ...((tenant.moduleExpirations as Record<string, string>) ?? {}) };
+  const now = new Date();
+  for (const m of Object.keys(expirations)) {
+    const on = parsed.data.subscribedModules.includes(m as any);
+    if (!on) delete expirations[m];
+    else if (!tenant.subscribedModules.includes(m) && moduleExpiry(tenant, m)! <= now) delete expirations[m];
+  }
   const updated = await prisma.tenant.update({
     where: { id: req.params.id },
-    data: { subscribedModules: parsed.data.subscribedModules },
+    data: { subscribedModules: parsed.data.subscribedModules, moduleExpirations: expirations },
   });
   res.json(updated);
 });
@@ -144,12 +294,66 @@ superAdminRouter.get("/contact-messages", async (_req, res) => {
 
 // كل طلبات الاشتراك الحقيقية - عشان السوبر أدمن يراجعها ويفعّل الخدمات
 // بعد ما يتأكد إن الدفع اتم فعليًا
-superAdminRouter.get("/orders", async (_req, res) => {
+// فلاتر: from / to (YYYY-MM-DD، شاملين اليوم كله)، status، tenantId، q (اسم الشركة / رقم الفاتورة)
+function ordersWhere(q: Record<string, unknown>) {
+  const where: any = {};
+  const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(`${v}T00:00:00.000Z`) : null);
+  const from = day(q.from);
+  const to = day(q.to);
+  if (from || to) where.createdAt = { ...(from ? { gte: from } : {}), ...(to ? { lt: new Date(to.getTime() + 86400000) } : {}) };
+  if (typeof q.status === "string" && ["PENDING", "PAID", "ACTIVATED", "CANCELLED"].includes(q.status)) where.status = q.status;
+  if (typeof q.tenantId === "string" && q.tenantId) where.tenantId = q.tenantId;
+  if (typeof q.q === "string" && q.q.trim()) {
+    const term = q.q.trim();
+    where.OR = [
+      { tenant: { name: { contains: term, mode: "insensitive" } } },
+      { id: { startsWith: term } },
+      { myFatoorahInvoiceId: { contains: term } },
+      { extraCompanyName: { contains: term, mode: "insensitive" } },
+    ];
+  }
+  return where;
+}
+
+superAdminRouter.get("/orders", async (req, res) => {
   const orders = await prisma.subscriptionOrder.findMany({
+    where: ordersWhere(req.query as Record<string, unknown>),
     include: { tenant: { select: { name: true, slug: true } } },
     orderBy: { createdAt: "desc" },
   });
   res.json(orders);
+});
+
+// نفس الفلاتر كملف Excel (CSV)
+superAdminRouter.get("/orders/export.csv", async (req, res) => {
+  const orders = await prisma.subscriptionOrder.findMany({
+    where: ordersWhere(req.query as Record<string, unknown>),
+    include: { tenant: { select: { name: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+  const cell = (v: unknown) => {
+    const t = String(v ?? "");
+    return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+  };
+  const rows = [
+    ["Date", "Invoice", "Client", "Type", "Items", "Billing", "Amount (USD)", "Status", "MyFatoorah #"],
+    ...orders.map((o: any) => [
+      o.createdAt.toISOString().slice(0, 10),
+      o.id.slice(0, 8).toUpperCase(),
+      o.tenant?.name ?? "",
+      o.orderType === "EXTRA_COMPANY" ? "Extra company" : "Services",
+      o.orderType === "EXTRA_COMPANY" ? `${o.extraCompanyName ?? ""} (${o.selectedModules.join(" + ")})` : o.selectedModules.join(" + "),
+      o.billingCycle,
+      Number(o.amount).toFixed(2),
+      o.status,
+      o.myFatoorahInvoiceId ?? "",
+    ]),
+  ];
+  // BOM عشان Excel يفتح العربي صح
+  const csv = "\ufeff" + rows.map((r) => r.map(cell).join(",")).join("\r\n");
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="bluefield-invoices-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(csv);
 });
 
 // تفعيل طلب اشتراك - بيضيف الخدمات المطلوبة لقائمة اشتراكات الشركة

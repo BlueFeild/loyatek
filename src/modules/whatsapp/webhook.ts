@@ -124,6 +124,9 @@ function publicBase() {
 async function runBot(tenantId: string, m: IncomingMessage) {
   const settings = await prisma.whatsappSettings.findUnique({ where: { tenantId } });
   if (!settings?.botEnabled || !settings.isConnected || !settings.metaAccessToken || !settings.metaPhoneNumberId) return;
+  // الحساب موقوف: الرسايل بتتسجّل بس البوت مابيردش
+  const owner = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { accountStatus: true, isPlatformOwner: true } });
+  if (owner && !owner.isPlatformOwner && owner.accountStatus !== "ACTIVE") return;
   if (m.type !== "text" && m.type !== "button" && m.type !== "interactive") return;
 
   const rules = await prisma.whatsappAutoReply.findMany({ where: { tenantId } });

@@ -3,7 +3,8 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { generateUniqueSlug } from "../../utils/slug";
-import { getEffectiveModules, isTrialActive } from "../../utils/modules";
+import { ALL_MODULES, getEffectiveModules, isInGrace, isTrialActive, moduleExpiry } from "../../utils/modules";
+import { tenantGraceDays } from "../../utils/platform-config";
 import { CURRENCY_CODES, getRates } from "../../utils/money";
 
 export const tenantsRouter = Router();
@@ -27,12 +28,19 @@ tenantsRouter.get("/me", async (req, res) => {
 
   // شركة صاحب المنصة (السوبر أدمن): مفيش تجربة - كل حاجة مجانية ودايمة
   const trialActive = isTrialActive(tenant);
-  const effectiveModules = getEffectiveModules(tenant);
+  const now = new Date();
+  const graceDays = await tenantGraceDays(tenant);
+  const effectiveModules = getEffectiveModules(tenant, now, graceDays);
+  // خدمات خلص اشتراكها ولسه شغالة في فترة السماح - الفرونت بيعرض تنبيه "جدّد قبل ..."
+  const graceModules = ALL_MODULES.filter((m) => isInGrace(tenant!, m, now, graceDays)).map((m) => {
+    const exp = moduleExpiry(tenant!, m)!;
+    return { module: m, expiredAt: exp, graceEndsAt: new Date(exp.getTime() + graceDays * 86400000) };
+  });
   // أسعار الصرف الحالية - الفرونت بيحوّل بيها كل المبالغ (المتخزنة بالدولار)
   // لعملة الشركة، وبيحوّل اللي التاجر بيكتبه لدولار قبل الحفظ
   const rates = await getRates();
 
-  res.json({ ...tenant, trialActive, effectiveModules, rates });
+  res.json({ ...tenant, trialActive, effectiveModules, graceModules, rates });
 });
 
 // عملة الشركة: كل المبالغ في اللوحة والمنيو والحجز والفواتير والرسايل

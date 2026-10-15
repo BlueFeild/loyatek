@@ -64,6 +64,13 @@ model Tenant {
   // شركة تابعة لصاحب المنصة (السوبر أدمن) - كل الخدمات مجانية ومفتوحة ليها
   // دايمًا من غير اشتراك أو دفع أو تاريخ انتهاء
   isPlatformOwner Boolean @default(false)
+  // حالة الحساب (السوبر أدمن): ACTIVE / SUSPENDED (موقوف مؤقتًا - دخول وصفحات
+  // عامة مقفولة) / ARCHIVED (مقفول ومتشال من اللوحة، يرجع بـ Restore)
+  accountStatus   String   @default("ACTIVE")
+  statusReason    String?
+  statusChangedAt DateTime?
+  // أيام السماح بعد انتهاء الاشتراك (null = الافتراضي بتاع المنصة)
+  graceDays       Int?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1295,6 +1302,12 @@ model PlatformSettings {
   id                  String  @id @default("singleton")
   myFatoorahApiKey    String? @db.Text
   myFatoorahIsTest    Boolean @default(true)
+  // أسعار الخدمات اللي السوبر أدمن غيّرها { moduleId: سعر شهري بالدولار } - فاضي = pricing.ts
+  modulePrices          Json     @default("{}")
+  extraCompanyBasePrice Decimal? @db.Decimal(18, 6)
+  yearlyDiscountPct     Int?
+  // أيام السماح الافتراضية بعد انتهاء الاشتراك
+  defaultGraceDays      Int      @default(3)
   updatedAt           DateTime @updatedAt
 
   @@map("platform_settings")

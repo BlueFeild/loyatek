@@ -24,7 +24,8 @@ export function isReminderDue(input: {
 }
 
 export async function runBookingReminders(now: Date = new Date()) {
-  const settingsList = await prisma.bookingSettings.findMany({ where: { reminderEnabled: true } });
+  // حسابات موقوفة / مؤرشفة مابيتبعتلهاش تذكيرات
+  const settingsList = await prisma.bookingSettings.findMany({ where: { reminderEnabled: true, tenant: { OR: [{ accountStatus: "ACTIVE" }, { isPlatformOwner: true }] } } });
   let sent = 0;
   let failed = 0;
   for (const settings of settingsList) {

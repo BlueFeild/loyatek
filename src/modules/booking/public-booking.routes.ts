@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { getOrCreateSettings, getAvailableSlots, createBooking, confirmBookingPaymentIfPaid } from "./bookings.service";
-import { isModuleActive } from "../../utils/modules";
+import { isModuleLive } from "../../utils/platform-config";
 import { getTenantPaymentMethods } from "../checkout/myfatoorah";
 import { publicPaymentMethods } from "../payment-settings/payment-methods";
 import { calendarDateKey, parseCalendarDate, todayKeyInTimezone } from "../../utils/calendarDate";
@@ -17,7 +17,8 @@ async function findTenantBySlug(slug: string) {
   const tenant = await prisma.tenant.findUnique({ where: { slug }, include: { branches: true } });
   // نفس منطق الكتالوج - الرابط العام يشتغل بس لو مشترك فعليًا وماكانش
   // انتهى الاشتراك
-  if (!tenant || !isModuleActive(tenant, "booking")) return null;
+  // شغال = اشتراك (شامل أيام السماح) والحساب مش موقوف
+  if (!tenant || !(await isModuleLive(tenant, "booking"))) return null;
   return tenant;
 }
 

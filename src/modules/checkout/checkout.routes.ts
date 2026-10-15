@@ -3,13 +3,8 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { initiateMyFatoorahPayment } from "./myfatoorah";
-import {
-  MODULE_PRICES,
-  YEARLY_DISCOUNT,
-  EXTRA_COMPANY_BASE_MONTHLY_PRICE,
-  modulesOrderAmount,
-  extraCompanyAmount,
-} from "./pricing";
+import { modulesOrderAmount, extraCompanyAmount } from "./pricing";
+import { getPlatformConfig } from "../../utils/platform-config";
 
 const MODULE_IDS = ["erp", "booking", "wallet", "whatsapp", "catalog", "linktree"] as const;
 
@@ -30,7 +25,7 @@ checkoutRouter.post("/orders", requireRole("OWNER", "ADMIN"), async (req, res) =
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const { selectedModules, billingCycle, currency } = parsed.data;
-  const amount = modulesOrderAmount(selectedModules, billingCycle);
+  const amount = modulesOrderAmount(selectedModules, billingCycle, (await getPlatformConfig()).pricing);
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   if (!tenant) return res.status(404).json({ error: "Tenant not found" });
@@ -82,7 +77,7 @@ checkoutRouter.post("/extra-company-orders", requireRole("OWNER"), async (req, r
 
   const { name, industry, billingCycle, currency } = parsed.data;
   const selectedModules = Array.from(new Set(parsed.data.selectedModules));
-  const amount = extraCompanyAmount(selectedModules, billingCycle);
+  const amount = extraCompanyAmount(selectedModules, billingCycle, (await getPlatformConfig()).pricing);
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   if (!tenant) return res.status(404).json({ error: "Tenant not found" });
@@ -119,12 +114,9 @@ checkoutRouter.post("/extra-company-orders", requireRole("OWNER"), async (req, r
 });
 
 // الأسعار الفعلية اللي الباك إند بيحاسب بيها - الفرونت بيعرض منها بس
-checkoutRouter.get("/pricing", (_req, res) => {
-  res.json({
-    modulePrices: MODULE_PRICES,
-    extraCompanyBasePrice: EXTRA_COMPANY_BASE_MONTHLY_PRICE,
-    yearlyDiscount: YEARLY_DISCOUNT,
-  });
+checkoutRouter.get("/pricing", async (_req, res) => {
+  // نفس الأسعار اللي السوبر أدمن حاطها (أو الافتراضي)
+  res.json((await getPlatformConfig()).pricing);
 });
 
 checkoutRouter.get("/orders", async (req, res) => {

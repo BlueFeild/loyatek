@@ -46,6 +46,7 @@ import { dealsRouter } from "./modules/crm/deals.routes";
 import { notificationsRouter } from "./modules/notifications/notifications.routes";
 import { analyticsRouter } from "./modules/analytics/analytics.routes";
 import { paymentSettingsRouter } from "./modules/payment-settings/payment-settings.routes";
+import { getPlatformConfig } from "./utils/platform-config";
 
 export const app = express();
 
@@ -109,6 +110,10 @@ app.use("/api/public/booking", publicBookingRouter);
 app.use("/api/public/whatsapp/webhook", publicWhatsappWebhookRouter);
 // أسعار الصرف (الدولار عملة أساسية) - عامة للقراءة، وإدارتها للسوبر أدمن
 app.use("/api/public/exchange-rates", publicExchangeRatesRouter);
+// أسعار الخدمات الحالية (اللي السوبر أدمن حاطها) - لصفحة الأسعار العامة
+app.get("/api/public/pricing", async (_req, res) => {
+  res.json((await getPlatformConfig()).pricing);
+});
 app.use("/api/super-admin/exchange-rates", adminExchangeRatesRouter);
 app.use("/api/public/wallet", publicWalletRouter);
 app.use("/api/public/contact", publicContactRouter);

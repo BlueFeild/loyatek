@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../../config/db";
-import { isModuleActive } from "../../utils/modules";
+import { isModuleLive } from "../../utils/platform-config";
 
 // راوتر عام بالكامل - أي حد يقدر يفتح صفحة الينكتري من غير حساب،
 // بالظبط زي منطق الكتالوج والحجز العامين
@@ -10,7 +10,8 @@ async function findTenantBySlug(slug: string) {
   const tenant = await prisma.tenant.findUnique({ where: { slug } });
   // الرابط العام يشتغل بس لو مشترك فعليًا في linktree وماكانش انتهى
   // الاشتراك (مش وقت التجربة المجانية)
-  if (!tenant || !isModuleActive(tenant, "linktree")) return null;
+  // شغال = اشتراك (شامل أيام السماح) والحساب مش موقوف
+  if (!tenant || !(await isModuleLive(tenant, "linktree"))) return null;
   return tenant;
 }
 

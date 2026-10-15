@@ -3,6 +3,7 @@ import { prisma } from "../../config/db";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../../utils/jwt";
 import { generateUniqueSlug } from "../../utils/slug";
 import { trackPlatformEvent } from "../analytics/analytics.service";
+import { deniedForTenant } from "../../utils/account-access";
 
 interface RegisterInput {
   companyName: string;
@@ -57,6 +58,13 @@ export async function registerTenant(input: RegisterInput) {
   return issueTokens(owner.id, tenant.id, owner.role, owner.branchId, owner.isSuperAdmin, false);
 }
 
+// الشركة موقوفة أو مؤرشفة؟ رسالة واضحة بدل "Invalid credentials"
+async function assertTenantOpen(tenantId: string) {
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { accountStatus: true, isPlatformOwner: true, statusReason: true } });
+  const denied = deniedForTenant(tenant);
+  if (denied) throw new Error(denied.message);
+}
+
 interface LoginInput {
   email: string;
   password: string;
@@ -75,6 +83,7 @@ export async function login(input: LoginInput) {
 
   const valid = await bcrypt.compare(input.password, user.passwordHash);
   if (!valid) throw new Error("Invalid credentials");
+  await assertTenantOpen(user.tenantId);
 
   await trackPlatformEvent({ type: "LOGIN", tenantId: user.tenantId });
 
@@ -94,6 +103,9 @@ export async function refreshAccessToken(refreshToken: string) {
 
   const user = await prisma.user.findUnique({ where: { id: payload.userId } });
   if (!user) throw new Error("User not found");
+  // مستخدم اتوقف أو شركة اتوقفت: الجلسة ماتتجددش
+  if (!user.isActive) throw new Error("Your user has been disabled. Please contact your company admin.");
+  await assertTenantOpen(user.tenantId);
 
   const accessToken = signAccessToken({
     userId: user.id,
@@ -149,6 +161,8 @@ export async function loginWithGoogle(googleId: string, email: string, name: str
   if (!user) {
     throw new Error("No account found with this Google email — sign up first.");
   }
+  if (!user.isActive) throw new Error("Your user has been disabled. Please contact your company admin.");
+  await assertTenantOpen(user.tenantId);
 
   await trackPlatformEvent({ type: "LOGIN", tenantId: user.tenantId });
 
