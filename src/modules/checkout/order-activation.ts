@@ -2,6 +2,7 @@ import { prisma } from "../../config/db";
 import { computeExpiryDate } from "../../utils/modules";
 import { createLinkedCompany } from "../tenants/company-creation.service";
 import { createNotification } from "../notifications/notifications.service";
+import { checkPlatformInvoice } from "./myfatoorah";
 
 // تفعيل طلب اشتراك: بيتنادى أوتوماتيك أول ما الدفع يتأكد من MyFatoorah، أو
 // يدويًا من السوبر أدمن (طلبات اتدفعت بره البوابة مثلًا). نفس المنطق للاتنين
@@ -50,4 +51,27 @@ export async function activateSubscriptionOrder(orderId: string) {
   if (!done) return { ok: true as const, alreadyActive: true };
   await createNotification({ tenantId: tenant.id, type: "SUBSCRIPTION_ACTIVATED", title: "Your services are active", body: `Activated: ${order.selectedModules.join(", ")}. Thank you!`, link: "/dashboard" }).catch(() => {});
   return { ok: true as const, subscribedModules: merged, moduleExpirations: nextExpirations };
+}
+
+// بنسأل MyFatoorah عن فاتورة الطلب نفسها (برقمها)، ولو اتدفعت: PAID + تفعيل على
+// طول. ده اللي بيشتغل لوحده كل دقيقتين (jobs/payment-sync.ts) ومن زرار
+// "Check payment" في السوبر أدمن - من غير ما يعتمد إن العميل رجع للموقع
+export async function syncOrderPayment(orderId: string) {
+  const order = await prisma.subscriptionOrder.findUnique({ where: { id: orderId } });
+  if (!order) throw new Error("Order not found");
+  if (!order.myFatoorahInvoiceId) return { status: order.status, gateway: "no MyFatoorah invoice on this order" };
+  if (order.status !== "PENDING" && order.status !== "PAID") return { status: order.status, gateway: "already handled" };
+  const check = await checkPlatformInvoice(order.myFatoorahInvoiceId);
+  if (check.error && !check.status) return { status: order.status, gateway: check.error };
+  // الرد لازم يكون عن نفس الفاتورة
+  if (check.invoiceId && check.invoiceId !== String(order.myFatoorahInvoiceId)) return { status: order.status, gateway: "MyFatoorah answered about a different invoice" };
+  if (!check.paid) return { status: order.status, gateway: check.status || "unknown" };
+  if (order.status === "PENDING") {
+    await prisma.subscriptionOrder.updateMany({
+      where: { id: order.id, status: "PENDING" },
+      data: { status: "PAID", ...(check.paymentId ? { myFatoorahPaymentId: check.paymentId } : {}) },
+    });
+  }
+  await activateSubscriptionOrder(order.id);
+  return { status: "ACTIVATED", gateway: check.status };
 }

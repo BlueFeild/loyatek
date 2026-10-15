@@ -88,12 +88,50 @@ async function checkPaymentStatusWithCredentials(
       method: "GET",
       headers: { Authorization: `Bearer ${creds.apiKey}` },
     });
-    const data: any = await res.json();
-    const status = data?.Data?.Invoice?.Status;
-    return { paid: status === "PAID", raw: data };
+    const data: any = await res.json().catch(() => null);
+    // الحالة ممكن تيجي في أكتر من مكان وبأكتر من شكل ("PAID" / "Paid")
+    const status = String(data?.Data?.Invoice?.Status ?? data?.Data?.InvoiceStatus ?? "").toUpperCase();
+    if (res.ok && status) return { paid: status === "PAID", raw: data };
+    // رد v3 مش واضح -> نسأل بالطريقة التانية (GetPaymentStatus برقم الدفع)
+    const v2 = await getPaymentStatusV2(creds, paymentId, "PaymentId");
+    return v2.status ? { paid: v2.paid, raw: v2.raw } : { paid: false, raw: data };
   } catch {
     return { paid: false };
   }
+}
+
+// حالة الفاتورة برقمها (اللي إحنا عاملينها ومتخزن عندنا) - مش محتاجة إن
+// العميل يرجع للموقع بعد الدفع. GetPaymentStatus بيدعم KeyType = InvoiceId
+async function getPaymentStatusV2(creds: Credentials, key: string, keyType: "InvoiceId" | "PaymentId") {
+  try {
+    const res = await fetch(`${baseUrl(creds.isTest)}/v2/GetPaymentStatus`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${creds.apiKey}` },
+      body: JSON.stringify({ Key: key, KeyType: keyType }),
+    });
+    const data: any = await res.json().catch(() => null);
+    const status = String(data?.Data?.InvoiceStatus ?? "");
+    const tx = (data?.Data?.InvoiceTransactions ?? []) as any[];
+    const okTx = tx.find((t) => /succ/i.test(String(t?.TransactionStatus ?? "")));
+    return {
+      status,
+      paid: status.toUpperCase() === "PAID",
+      invoiceId: data?.Data?.InvoiceId != null ? String(data.Data.InvoiceId) : null,
+      paymentId: okTx?.PaymentId != null ? String(okTx.PaymentId) : null,
+      error: !res.ok || data?.IsSuccess === false ? (data?.Message ?? `HTTP ${res.status}`) : null,
+      raw: data,
+    };
+  } catch (err: any) {
+    return { status: "", paid: false, invoiceId: null, paymentId: null, error: `Could not reach MyFatoorah: ${err.message}`, raw: null };
+  }
+}
+
+// للمنصة: الفاتورة دي اتدفعت؟ (بنسأل برقم فاتورتنا نفسها، فمفيش احتمال إن
+// الدفعة تخص طلب تاني)
+export async function checkPlatformInvoice(invoiceId: string) {
+  const settings = await getPlatformSettings();
+  if (!settings.myFatoorahApiKey) return { status: "", paid: false, invoiceId: null, paymentId: null, error: "Payment gateway is not connected", raw: null };
+  return getPaymentStatusV2({ apiKey: settings.myFatoorahApiKey, isTest: settings.myFatoorahIsTest }, invoiceId, "InvoiceId");
 }
 
 // الدفعة دي تخص الفاتورة دي فعلًا؟ (عشان محدش يدفع طلب صغير ويستخدم رقم الدفع

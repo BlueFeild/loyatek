@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../../config/db";
 import { checkMyFatoorahPaymentStatus, paymentAmountMatch, paymentInvoiceMatch } from "./myfatoorah";
-import { activateSubscriptionOrder } from "./order-activation";
+import { activateSubscriptionOrder, syncOrderPayment } from "./order-activation";
 
 // راوتر عام - العميل بيرجع له من صفحة MyFatoorah بعد الدفع، من غير
 // توكن، فمحتاج يكون عام. بنتأكد من حالة الدفع بالسؤال المباشر لـ
@@ -37,6 +37,17 @@ publicCheckoutRouter.get("/orders/:id/status", async (req, res) => {
         console.warn(`[checkout] order ${order.id} paid but not auto-activated (invoice ${match}, amount ${amountOk}) — activate it from super admin`);
       }
       return res.json(await prisma.subscriptionOrder.findUnique({ where: { id: order.id } }));
+    }
+    console.warn(`[checkout] order ${order.id}: paymentId check not paid (status ${check.raw?.Data?.Invoice?.Status ?? check.raw?.Data?.InvoiceStatus ?? "?"}, invoice ${match}) — checking by invoice`);
+  }
+
+  // من غير paymentId (أو الرد مش واضح): نسأل برقم الفاتورة نفسها
+  if (order.status === "PENDING" || order.status === "PAID") {
+    try {
+      await syncOrderPayment(order.id);
+      return res.json(await prisma.subscriptionOrder.findUnique({ where: { id: order.id } }));
+    } catch (err) {
+      console.warn(`[checkout] invoice check failed for order ${order.id}: ${(err as Error).message}`);
     }
   }
 

@@ -13,7 +13,7 @@ import { generateUniqueSlug } from "../../utils/slug";
 import { getPlatformAnalytics } from "../analytics/analytics.service";
 import { createLinkedCompany } from "../tenants/company-creation.service";
 import { buildInvoicePdf } from "./invoice-pdf.service";
-import { activateSubscriptionOrder } from "../checkout/order-activation";
+import { activateSubscriptionOrder, syncOrderPayment } from "../checkout/order-activation";
 
 // كل موظفين الأجنسي (BlueField team) بيتسجلوا كـ Users جوه شركة
 // داخلية واحدة ثابتة (مش شركة عميل حقيقية) - بننشئها أول مرة لو
@@ -395,6 +395,16 @@ superAdminRouter.get("/orders/export.csv", async (req, res) => {
 
 // تفعيل طلب اشتراك - بيضيف الخدمات المطلوبة لقائمة اشتراكات الشركة
 // فعليًا، وميحصلش أوتوماتيك حتى لو الدفع نجح، السوبر أدمن لازم يدوسه بنفسه
+// "Check payment": نسأل MyFatoorah عن فاتورة الطلب دلوقتي - لو اتدفعت بتتفعّل
+superAdminRouter.post("/orders/:id/check-payment", async (req, res) => {
+  try {
+    const r = await syncOrderPayment(req.params.id);
+    res.json(r);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
 superAdminRouter.post("/orders/:id/activate", async (req, res) => {
   // نفس منطق التفعيل الأوتوماتيك بعد الدفع (checkout/order-activation.ts)
   try {
