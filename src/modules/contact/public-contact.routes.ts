@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
+import { zodMessage } from "../../utils/validation";
 
 // راوتر عام بالكامل - زائر الموقع بيبعت رسالة قبل ما يبقى عنده حساب أصلاً
 export const publicContactRouter = Router();
@@ -14,7 +15,7 @@ const contactSchema = z.object({
 
 publicContactRouter.post("/", async (req, res) => {
   const parsed = contactSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
 
   const saved = await prisma.contactMessage.create({ data: parsed.data });
   res.status(201).json({ ok: true, id: saved.id });

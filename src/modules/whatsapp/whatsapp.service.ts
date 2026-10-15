@@ -54,7 +54,7 @@ export async function sendWhatsappTestMessage(
       },
       body: JSON.stringify({
         messaging_product: "whatsapp",
-        to: toPhoneNumber,
+        to: toPhoneNumber.replace(/[^\d]/g, ""),
         type: "template",
         template: { name: templateName, language: { code: languageCode } },
       }),
@@ -90,7 +90,7 @@ export async function sendWhatsappTemplate(
     const res = await fetch(`${graphBase()}/${phoneNumberId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ messaging_product: "whatsapp", to: toPhoneNumber, type: "template", template }),
+      body: JSON.stringify({ messaging_product: "whatsapp", to: toPhoneNumber.replace(/[^\d]/g, ""), type: "template", template }),
     });
     const data = (await res.json()) as MetaGraphResponse;
     if (!res.ok) return { ok: false, error: data?.error?.message || "Meta rejected the template message" };
@@ -194,7 +194,7 @@ export async function sendWhatsappTextMessage(
     const res = await fetch(`${graphBase()}/${phoneNumberId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ messaging_product: "whatsapp", to: toPhoneNumber, type: "text", text: { body } }),
+      body: JSON.stringify({ messaging_product: "whatsapp", to: toPhoneNumber.replace(/[^\d]/g, ""), type: "text", text: { body } }),
     });
     const data = (await res.json()) as MetaGraphResponse;
     if (!res.ok) return { ok: false, error: data?.error?.message || "Meta rejected the text message" };
@@ -249,7 +249,7 @@ export async function sendWhatsappAudioMessage(
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({
         messaging_product: "whatsapp",
-        to: toPhoneNumber,
+        to: toPhoneNumber.replace(/[^\d]/g, ""),
         type: "audio",
         audio: { id: mediaId },
       }),

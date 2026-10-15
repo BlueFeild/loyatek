@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { phoneMatch } from "../../utils/phone";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { getOrCreateSettings, getAvailableSlots, createBooking, confirmBookingPaymentIfPaid } from "./bookings.service";
@@ -8,6 +9,7 @@ import { publicPaymentMethods } from "../payment-settings/payment-methods";
 import { calendarDateKey, parseCalendarDate, todayKeyInTimezone } from "../../utils/calendarDate";
 import { getRates, isCurrencyCode, rateFor } from "../../utils/money";
 import { pricesForServices } from "./service-pricing";
+import { zodMessage } from "../../utils/validation";
 
 // راوتر عام بالكامل - العميل بيحجز موعد من غير حساب ولا تسجيل دخول،
 // بالظبط زي منطق الكتالوج العام، والعزل بين الشركات بيتم عن طريق الـ slug
@@ -82,7 +84,7 @@ publicBookingRouter.post("/:slug/bookings", async (req, res) => {
   if (!branch) return res.status(400).json({ error: "This business has no branch set up yet" });
 
   const parsed = createBookingSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
 
   // العميل مايقدرش يحجز يوم فات (بتوقيت البيزنس)
   const day = parseCalendarDate(parsed.data.date);
@@ -147,7 +149,7 @@ publicBookingRouter.get("/:slug/my-bookings", async (req, res) => {
   if (!phone) return res.status(400).json({ error: "phone is required" });
 
   const bookings = await prisma.booking.findMany({
-    where: { tenantId: tenant.id, customerPhone: phone },
+    where: { tenantId: tenant.id, ...phoneMatch(phone) },
     include: { resource: true },
     orderBy: { date: "desc" },
   });

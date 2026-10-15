@@ -720,7 +720,7 @@ model BookingSettings {
   bufferMin       Int      @default(15)
   peakFlag        Boolean  @default(true)
   waAutomation    Boolean  @default(true)
-  waTemplate      String   @default("Hi! Your slot is confirmed for today. Show this ticket at check-in — no payment needed in advance.")
+  waTemplate      String   @default("Hello {name} 👋\nYour booking at {business} is confirmed ✅\n\n🔹 Service: {services}\n📅 Date: {date}\n⏰ Time: {time}\n👤 With: {resource}\n💳 Payment: {payment}\n🔖 Booking ref: {reference}\n\nNeed to reschedule or cancel? Just reply to this message. We look forward to seeing you!")
   allocationMode  String   @default("staff") // staff | asset
   themeColor      String   @default("#082f49")
   // لو مفعّلة، العميل لازم يدفع (كارت / Apple Pay / Google Pay - أي
@@ -734,10 +734,10 @@ model BookingSettings {
   // والإجمالي بيتحسب على السيرفر (modules/booking/service-pricing.ts)
   servicePrices   Json     @default("{}")
   // إشعار للتاجر نفسه بكل حجز جديد: واتساب على رقمه و/أو إيميل (Resend).
-  // waMerchantTemplate بيقبل {name} {phone} {resource} {date} {time} {payment}
+  // waMerchantTemplate بيقبل {name} {phone} {resource} {date} {time} {payment} {services} {business} {reference}
   merchantWhatsapp   String  @default("")
   merchantEmail      String  @default("")
-  waMerchantTemplate String  @default("🔔 New booking\n{name} · {phone}\n{resource}\n{date} at {time}")
+  waMerchantTemplate String  @default("🔔 New booking — {business}\n\n👤 {name} · {phone}\n🔹 {services}\n🧑‍💼 With: {resource}\n📅 {date} at {time}\n💳 {payment}\n🔖 Ref: {reference}")
   // نطلب إيميل العميل (اختياري) في صفحة الحجز - بيوصله تأكيد بالإيميل
   askCustomerEmail   Boolean @default(false)
   // لغة قوالب واتساب المعتمدة للحجز (en / ar)
@@ -966,8 +966,8 @@ model CatalogSettings {
   posLink         String   @default("")
   // نص رسائل الواتساب بيكتبه التاجر بنفسه - ممكن يستخدم {items} {total}
   // {mode} {prep} {name} أو يسيبهم (مثلاً من غير مبلغ)
-  waMerchantTemplate String @default("🔔 New Order\n{mode}\n\n{items}\n\nTotal: {total}")
-  waCustomerTemplate String @default("✅ Order confirmed!\n{mode}\n\n{items}\n\nTotal: {total}\nEstimated prep time: {prep} minutes.")
+  waMerchantTemplate String @default("🔔 New order — {mode}\n👤 {name}\n\n{items}\n\n💰 Total: {total}")
+  waCustomerTemplate String @default("Hello {name} 👋\nThank you for your order! ✅\n\n🍽️ {mode}\n\n{items}\n\n💰 Total: {total}\n⏱️ Ready in about {prep} minutes.\n\nWe'll let you know if anything changes. Enjoy!")
   // عملة المنيو اللي التاجر بيختارها (QAR / EGP / AED / USD / EUR ...) -
   // الأسعار والإجمالي ({total}) بيظهروا بيها. USD = نفس العرض القديم ($)
   currency        String   @default("USD")
@@ -1308,6 +1308,10 @@ model PlatformSettings {
   yearlyDiscountPct     Int?
   // أيام السماح الافتراضية بعد انتهاء الاشتراك
   defaultGraceDays      Int      @default(3)
+  // خصم شهري لكل خدمة { moduleId: { pct, endsAt } } - بيظهر للعميل السعر قبل وبعد
+  moduleDiscounts       Json     @default("{}")
+  // أسعار حسب الدولة [{ country, name, currency, modulePrices, extraCompanyBasePrice }]
+  pricingRegions        Json     @default("[]")
   updatedAt           DateTime @updatedAt
 
   @@map("platform_settings")
@@ -1331,6 +1335,9 @@ model SubscriptionOrder {
   billingCycle     String                   @default("monthly") // monthly | yearly
   amount           Decimal                  @db.Decimal(18, 6)
   currency         String                   @default("USD")
+  // نفس المبلغ بالدولار (للتقارير والإيرادات) - amount نفسه بعملة الدفع
+  amountUsd        Decimal?                 @db.Decimal(18, 6)
+  country          String?
   status           SubscriptionOrderStatus  @default(PENDING)
   // "MODULES" = اشتراك في موديولات عادي (الافتراضي، زي كل الطلبات
   // القديمة) - "EXTRA_COMPANY" = طلب إضافة شركة تانية لنفس المالك،
@@ -1666,6 +1673,7 @@ model VendorBill {
 enum NotificationType {
   BOOKING_CONFIRMED
   CATALOG_ORDER
+  SUBSCRIPTION_ACTIVATED
 }
 
 model Notification {

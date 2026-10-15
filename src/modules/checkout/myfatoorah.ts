@@ -11,6 +11,8 @@ async function getPlatformSettings() {
 }
 
 function baseUrl(isTest: boolean) {
+  // MYFATOORAH_BASE_URL للاختبار المحلي بس (سيرفر MyFatoorah وهمي)
+  if (process.env.MYFATOORAH_BASE_URL) return process.env.MYFATOORAH_BASE_URL.replace(/\/$/, "");
   return isTest ? "https://apitest.myfatoorah.com" : "https://api.myfatoorah.com";
 }
 
@@ -34,7 +36,7 @@ interface Credentials {
 // لو مفيش مفتاح API متسجّل، بيرجّع خطأ صريح بدل ما يتظاهر إنه نجح
 async function initiatePaymentWithCredentials(
   creds: Credentials,
-  input: { amount: number; redirectionUrl: string }
+  input: { amount: number; redirectionUrl: string; currency?: string }
 ): Promise<InitiatePaymentResult> {
   if (!creds.apiKey) {
     return { ok: false, error: "Payment gateway is not connected yet." };
@@ -49,7 +51,8 @@ async function initiatePaymentWithCredentials(
       },
       body: JSON.stringify({
         PaymentMethod: "CARD",
-        Order: { Amount: input.amount },
+        // العملة بتتبعت عشان المبلغ مايتحسبش بعملة حساب MyFatoorah الافتراضية
+        Order: input.currency ? { Amount: input.amount, Currency: input.currency } : { Amount: input.amount },
         IntegrationUrls: { Redirection: input.redirectionUrl },
       }),
     });
@@ -93,11 +96,33 @@ async function checkPaymentStatusWithCredentials(
   }
 }
 
+// الدفعة دي تخص الفاتورة دي فعلًا؟ (عشان محدش يدفع طلب صغير ويستخدم رقم الدفع
+// ده لتأكيد طلب أكبر). "unknown" = MyFatoorah مارجّعتش رقم فاتورة نقارن بيه
+export function paymentInvoiceMatch(raw: any, invoiceId: string | null | undefined): "match" | "mismatch" | "unknown" {
+  const ids = [raw?.Data?.Invoice?.Id, raw?.Data?.Invoice?.InvoiceId, raw?.Data?.InvoiceId]
+    .filter((v) => v !== undefined && v !== null && v !== "")
+    .map((v) => String(v));
+  if (!invoiceId || ids.length === 0) return "unknown";
+  return ids.includes(String(invoiceId)) ? "match" : "mismatch";
+}
+
+// المبلغ اللي اتدفع = مبلغ الطلب؟ (لو MyFatoorah مارجّعتش رقم الفاتورة،
+// المبلغ بيأكد إن الدفعة دي بتاعة الطلب ده). "unknown" = مفيش مبلغ في الرد
+export function paymentAmountMatch(raw: any, amount: number): "match" | "mismatch" | "unknown" {
+  const values = [raw?.Data?.Amount?.Value, raw?.Data?.Invoice?.Value, raw?.Data?.InvoiceValue, raw?.Data?.Transaction?.Amount?.Value]
+    .map((v) => (v && typeof v === "object" ? v.Value : v))
+    .map(Number)
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (values.length === 0) return "unknown";
+  return values.some((v) => Math.abs(v - amount) < 0.01) ? "match" : "mismatch";
+}
+
 // --- استخدام المنصة (اشتراكات الشركات نفسها - PlatformSettings) ---
 
 export async function initiateMyFatoorahPayment(input: {
   amount: number;
   redirectionUrl: string;
+  currency?: string;
 }): Promise<InitiatePaymentResult> {
   const settings = await getPlatformSettings();
   return initiatePaymentWithCredentials(

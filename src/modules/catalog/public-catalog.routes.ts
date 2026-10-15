@@ -6,6 +6,7 @@ import { isModuleLive } from "../../utils/platform-config";
 import { getTenantPaymentMethods } from "../checkout/myfatoorah";
 import { publicPaymentMethods } from "../payment-settings/payment-methods";
 import { getRates, isCurrencyCode, rateFor } from "../../utils/money";
+import { zodMessage } from "../../utils/validation";
 
 // راوتر عام بالكامل - مفيهوش requireAuth خالص، لأن العميل اللي بيسكان
 // الـ QR على الترابيزة معندوش حساب ولا هيسجّل دخول. العزل هنا بيتم عن
@@ -51,7 +52,8 @@ publicCatalogRouter.get("/:slug/categories", async (req, res) => {
 
 const createOrderSchema = z.object({
   mode: z.enum(["DINE_IN", "PICKUP"]),
-  tableLabel: z.string().min(1).optional(),
+  // فاضي = مااختارش ترابيزة (بنرفض بس لو Dine-in ومافيش ترابيزة، برسالة واضحة)
+  tableLabel: z.string().trim().max(40).optional().transform((v) => v || undefined),
   readyTime: z.number().int().optional(),
   customerName: z.string().min(1),
   customerPhone: z.string().min(1),
@@ -69,7 +71,11 @@ publicCatalogRouter.post("/:slug/orders", async (req, res) => {
   if (!branch) return res.status(400).json({ error: "This store has no branch set up yet" });
 
   const parsed = createOrderSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+  if (parsed.data.mode === "DINE_IN" && !parsed.data.tableLabel) {
+    const cs = await getOrCreateCatalogSettings(tenant.id);
+    if (cs.tableNames.length > 0) return res.status(400).json({ error: "Please choose your table number first." });
+  }
 
   try {
     const frontendBase = process.env.FRONTEND_BASE_URL || "http://localhost:5173";

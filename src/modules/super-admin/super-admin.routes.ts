@@ -7,11 +7,13 @@ import { ACCOUNT_STATUSES, ALL_MODULES, computeExpiryDate, isInGrace, isModuleAc
 import { clearAccessCache } from "../../utils/account-access";
 import { clearPlatformConfigCache, getPlatformConfig } from "../../utils/platform-config";
 import { MODULE_PRICES } from "../checkout/pricing";
+import { isCurrencyCode } from "../../utils/money";
 import { signAccessToken } from "../../utils/jwt";
 import { generateUniqueSlug } from "../../utils/slug";
 import { getPlatformAnalytics } from "../analytics/analytics.service";
 import { createLinkedCompany } from "../tenants/company-creation.service";
 import { buildInvoicePdf } from "./invoice-pdf.service";
+import { activateSubscriptionOrder } from "../checkout/order-activation";
 
 // كل موظفين الأجنسي (BlueField team) بيتسجلوا كـ Users جوه شركة
 // داخلية واحدة ثابتة (مش شركة عميل حقيقية) - بننشئها أول مرة لو
@@ -90,11 +92,11 @@ superAdminRouter.get("/tenants", async (req, res) => {
       by: ["tenantId"],
       where: { status: { in: ["PAID", "ACTIVATED"] } },
       _count: { _all: true },
-      _sum: { amount: true },
+      _sum: { amount: true, amountUsd: true },
     }),
     getPlatformConfig(),
   ]);
-  const paid = new Map(paidByTenant.map((g: any) => [g.tenantId, { count: g._count._all, total: Number(g._sum.amount ?? 0) }]));
+  const paid = new Map(paidByTenant.map((g: any) => [g.tenantId, { count: g._count._all, total: Number(g._sum.amountUsd ?? g._sum.amount ?? 0) }]));
   const now = new Date();
 
   const result = tenants.map((t: any) => {
@@ -219,10 +221,25 @@ const platformConfigSchema = z.object({
   extraCompanyBasePrice: z.number().min(0).max(100000).optional(),
   yearlyDiscountPct: z.number().int().min(0).max(90).optional(),
   defaultGraceDays: z.number().int().min(0).max(365).optional(),
+  // خصم شهري لكل خدمة (pct 0 = مفيش خصم)
+  discounts: z.record(z.enum(ALL_MODULES), z.object({ pct: z.number().min(0).max(90), endsAt: z.string().datetime().nullable().optional() })).optional(),
+  // أسعار كل دولة بعملتها (الجدول كله بيتبعت مرة واحدة)
+  regions: z
+    .array(
+      z.object({
+        country: z.string().regex(/^[A-Za-z]{2}$/),
+        name: z.string().trim().min(1).max(60),
+        currency: z.string().refine(isCurrencyCode, "Unknown currency"),
+        modulePrices: z.record(z.enum(ALL_MODULES), z.number().min(0).max(10000000).nullable()).default({}),
+        extraCompanyBasePrice: z.number().min(0).max(10000000).nullable().optional(),
+      })
+    )
+    .max(50)
+    .optional(),
 });
 superAdminRouter.patch("/platform-config", async (req, res) => {
   const parsed = platformConfigSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Prices must be 0 or more, discount 0 – 90%, grace 0 – 365 days" });
+  if (!parsed.success) return res.status(400).json({ error: "Prices must be 0 or more, discount 0 – 90%, grace 0 – 365 days, each country a 2-letter code with a known currency" });
   const d = parsed.data;
   const current = await getPlatformConfig();
   await prisma.platformSettings.upsert({
@@ -237,6 +254,24 @@ superAdminRouter.patch("/platform-config", async (req, res) => {
       ...(d.extraCompanyBasePrice !== undefined ? { extraCompanyBasePrice: d.extraCompanyBasePrice } : {}),
       ...(d.yearlyDiscountPct !== undefined ? { yearlyDiscountPct: d.yearlyDiscountPct } : {}),
       ...(d.defaultGraceDays !== undefined ? { defaultGraceDays: d.defaultGraceDays } : {}),
+      ...(d.discounts
+        ? {
+            moduleDiscounts: Object.fromEntries(
+              Object.entries({ ...current.discounts, ...d.discounts }).filter(([, v]) => v.pct > 0).map(([k, v]) => [k, { pct: v.pct, endsAt: v.endsAt ?? null }])
+            ),
+          }
+        : {}),
+      ...(d.regions
+        ? {
+            pricingRegions: d.regions.map((r) => ({
+              country: r.country.toUpperCase(),
+              name: r.name,
+              currency: r.currency,
+              modulePrices: Object.fromEntries(Object.entries(r.modulePrices).filter(([, v]) => v != null)),
+              extraCompanyBasePrice: r.extraCompanyBasePrice ?? null,
+            })),
+          }
+        : {}),
     },
   });
   clearPlatformConfigCache();
@@ -336,7 +371,7 @@ superAdminRouter.get("/orders/export.csv", async (req, res) => {
     return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
   };
   const rows = [
-    ["Date", "Invoice", "Client", "Type", "Items", "Billing", "Amount (USD)", "Status", "MyFatoorah #"],
+    ["Date", "Invoice", "Client", "Type", "Items", "Billing", "Amount", "Currency", "Amount (USD)", "Status", "MyFatoorah #"],
     ...orders.map((o: any) => [
       o.createdAt.toISOString().slice(0, 10),
       o.id.slice(0, 8).toUpperCase(),
@@ -345,6 +380,8 @@ superAdminRouter.get("/orders/export.csv", async (req, res) => {
       o.orderType === "EXTRA_COMPANY" ? `${o.extraCompanyName ?? ""} (${o.selectedModules.join(" + ")})` : o.selectedModules.join(" + "),
       o.billingCycle,
       Number(o.amount).toFixed(2),
+      o.currency,
+      Number(o.amountUsd ?? o.amount).toFixed(2),
       o.status,
       o.myFatoorahInvoiceId ?? "",
     ]),
@@ -359,63 +396,14 @@ superAdminRouter.get("/orders/export.csv", async (req, res) => {
 // تفعيل طلب اشتراك - بيضيف الخدمات المطلوبة لقائمة اشتراكات الشركة
 // فعليًا، وميحصلش أوتوماتيك حتى لو الدفع نجح، السوبر أدمن لازم يدوسه بنفسه
 superAdminRouter.post("/orders/:id/activate", async (req, res) => {
-  const order = await prisma.subscriptionOrder.findUnique({ where: { id: req.params.id }, include: { tenant: { include: { users: true } } } });
-  if (!order) return res.status(404).json({ error: "Order not found" });
-  if (order.status === "CANCELLED") return res.status(400).json({ error: "This order was cancelled" });
-  if (order.status === "ACTIVATED") return res.status(400).json({ error: "This order is already activated" });
-
-  // طلب "شركة إضافية" - الشركة الجديدة نفسها بتتعمل هنا بس، أول ما
-  // السوبر أدمن يتأكد من الدفع ويدوس تفعيل، مش وقت ما العميل يطلبها -
-  // كده مفيش شركة بتتعمل من غير دفع فعلي
-  if (order.orderType === "EXTRA_COMPANY") {
-    if (!order.extraCompanyName || !order.extraCompanyIndustry) {
-      return res.status(400).json({ error: "This order is missing the new company's name/industry" });
-    }
-    const owner = order.tenant.users.find((u: (typeof order.tenant.users)[number]) => u.role === "OWNER" && !u.isLinkedCompany);
-    if (!owner) return res.status(400).json({ error: "Couldn't find the account owner to link the new company to" });
-
-    const newTenant = await createLinkedCompany(owner.id, order.extraCompanyName, order.extraCompanyIndustry);
-
-    // الخدمات اللي العميل اختارها للشركة الجديدة بتتفعّل عليها فعليًا هنا،
-    // بنفس مدة دورة الفوترة المدفوعة
-    if (order.selectedModules.length > 0) {
-      const expiry = computeExpiryDate(order.billingCycle).toISOString();
-      await prisma.tenant.update({
-        where: { id: newTenant.id },
-        data: {
-          subscribedModules: order.selectedModules,
-          moduleExpirations: Object.fromEntries(order.selectedModules.map((m: string) => [m, expiry])),
-        },
-      });
-    }
-    await prisma.subscriptionOrder.update({ where: { id: order.id }, data: { status: "ACTIVATED" } });
-
-    return res.json({ ok: true, createdTenantId: newTenant.id, createdTenantName: newTenant.name });
+  // نفس منطق التفعيل الأوتوماتيك بعد الدفع (checkout/order-activation.ts)
+  try {
+    const result = await activateSubscriptionOrder(req.params.id);
+    if ("alreadyActive" in result && result.alreadyActive) return res.status(400).json({ error: "This order is already activated" });
+    res.json(result);
+  } catch (err: any) {
+    res.status(err.message === "Order not found" ? 404 : 400).json({ error: err.message });
   }
-
-  const tenant = order.tenant;
-
-  const merged = Array.from(new Set([...tenant.subscribedModules, ...order.selectedModules]));
-
-  // لو الموديول عنده اشتراك سابق لسه شغال، بنمدّ من تاريخ انتهائه (مش
-  // من دلوقتي) عشان مالوش ضياع مدة؛ لو منتهي أو مفيش، بنبدأ من دلوقتي
-  const existingExpirations = (tenant.moduleExpirations as Record<string, string>) ?? {};
-  const nextExpirations: Record<string, string> = { ...existingExpirations };
-  for (const moduleId of order.selectedModules) {
-    const currentExpiry = existingExpirations[moduleId] ? new Date(existingExpirations[moduleId]) : null;
-    const startFrom = currentExpiry && currentExpiry > new Date() ? currentExpiry : new Date();
-    nextExpirations[moduleId] = computeExpiryDate(order.billingCycle, startFrom).toISOString();
-  }
-
-  await prisma.$transaction([
-    prisma.tenant.update({
-      where: { id: tenant.id },
-      data: { subscribedModules: merged, moduleExpirations: nextExpirations },
-    }),
-    prisma.subscriptionOrder.update({ where: { id: order.id }, data: { status: "ACTIVATED" } }),
-  ]);
-
-  res.json({ ok: true, subscribedModules: merged, moduleExpirations: nextExpirations });
 });
 
 // تنزيل فاتورة PDF لطلب واحد - للسوبر أدمن بس، ده مش متاح للعميل

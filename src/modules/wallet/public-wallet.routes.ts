@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { phoneMatch } from "../../utils/phone";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { getOrCreateWalletSettings } from "./wallet.service";
@@ -6,10 +7,17 @@ import { isModuleLive } from "../../utils/platform-config";
 import { loadGoogleWalletConfig } from "./google-wallet.service";
 import { createGooglePassLink, publicBaseUrl } from "./wallet-pass.service";
 import { solidColorPng } from "./png";
+import { zodMessage } from "../../utils/validation";
 
 // راوتر عام بالكامل - العميل بينضم لبرنامج الولاء بنفسه من غير حساب،
 // بالظبط زي منطق الكتالوج والحجز العامين
 export const publicWalletRouter = Router();
+
+// نفس بحث الحجوزات بس على عمود phone
+function walletPhoneMatch(phone: string) {
+  const m: any = phoneMatch(phone);
+  return m.OR ? { OR: m.OR.map((x: any) => ({ phone: x.customerPhone })) } : { phone: m.customerPhone };
+}
 
 async function findTenantBySlug(slug: string) {
   const tenant = await prisma.tenant.findUnique({ where: { slug } });
@@ -38,7 +46,11 @@ publicWalletRouter.post("/:slug/join", async (req, res) => {
   if (!tenant) return res.status(404).json({ error: "Loyalty program not found" });
 
   const parsed = joinSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+
+  // نفس الرقم متسجل قبل كده (حتى لو من غير كود الدولة)
+  const already = await prisma.walletCustomer.findFirst({ where: { tenantId: tenant.id, ...walletPhoneMatch(parsed.data.phone) } });
+  if (already) return res.status(400).json({ error: "This phone number is already registered in the loyalty program" });
 
   try {
     const customer = await prisma.walletCustomer.create({
@@ -89,8 +101,8 @@ publicWalletRouter.get("/:slug/lookup", async (req, res) => {
   const phone = req.query.phone as string | undefined;
   if (!phone) return res.status(400).json({ error: "phone is required" });
 
-  const customer = await prisma.walletCustomer.findUnique({
-    where: { tenantId_phone: { tenantId: tenant.id, phone } },
+  const customer = await prisma.walletCustomer.findFirst({
+    where: { tenantId: tenant.id, ...walletPhoneMatch(phone) },
   });
   if (!customer) return res.status(404).json({ error: "No membership found for this number" });
 

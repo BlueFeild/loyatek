@@ -22,34 +22,82 @@ interface TemplateDef {
   example: string[];
 }
 
-// Meta بترفض متغير في أول أو آخر النص - كل قالب بيبدأ وبيخلص بكلام
+// Meta بترفض متغير في أول أو آخر النص - كل قالب بيبدأ وبيخلص بكلام.
+// رسايل احترافية فيها كل التفاصيل (الخدمة، الميعاد، مع مين، رقم الحجز).
+// الأسماء اتغيرت (نسخة 2) عشان Meta مابتسمحش بتعديل قالب اتبعت قبل كده
 export const BOOKING_TEMPLATES: Record<BookingTemplatePurpose, TemplateDef> = {
   BOOKING_CONFIRMATION: {
-    name: "bf_booking_confirmation",
-    params: ["name", "business", "date", "time"],
+    name: "bf_booking_confirmed",
+    params: ["name", "business", "services", "date", "time", "resource", "reference"],
     body: {
-      en: "Hello {{1}}, your booking at {{2}} is confirmed for {{3}} at {{4}}. Reply to this message if you need to change it.",
-      ar: "مرحبًا {{1}}، تم تأكيد حجزك في {{2}} يوم {{3}} الساعة {{4}}. للتعديل رد على هذه الرسالة.",
+      en: `Hello {{1}}, your booking at {{2}} is confirmed ✅
+
+🔹 Service: {{3}}
+📅 Date: {{4}}
+⏰ Time: {{5}}
+👤 With: {{6}}
+🔖 Booking ref: {{7}}
+
+Need to reschedule or cancel? Simply reply to this message. We look forward to seeing you!`,
+      ar: `مرحبًا {{1}}، تم تأكيد حجزك في {{2}} ✅
+
+🔹 الخدمة: {{3}}
+📅 التاريخ: {{4}}
+⏰ الوقت: {{5}}
+👤 مع: {{6}}
+🔖 رقم الحجز: {{7}}
+
+لو حابب تغيّر الميعاد أو تلغيه، رد على هذه الرسالة. في انتظارك!`,
     },
-    example: ["Fatima", "Glow Salon", "17/10/2026", "16:00"],
+    example: ["Fatima", "Glow Salon", "Haircut & Styling", "17/10/2026", "16:00", "Sara", "A1B2C3D4"],
   },
   BOOKING_MERCHANT_ALERT: {
-    name: "bf_booking_alert",
-    params: ["business", "name", "phone", "resource", "date", "time"],
+    name: "bf_new_booking_alert",
+    params: ["business", "name", "phone", "services", "resource", "date", "time", "reference"],
     body: {
-      en: "New booking at {{1}}: {{2}} ({{3}}) booked {{4}} on {{5}} at {{6}}. Open your dashboard for details.",
-      ar: "حجز جديد في {{1}}: {{2}} ({{3}}) حجز {{4}} يوم {{5}} الساعة {{6}}. التفاصيل في لوحة التحكم.",
+      en: `New booking at {{1}} 🔔
+
+👤 Customer: {{2}} ({{3}})
+🔹 Service: {{4}}
+🧑‍💼 With: {{5}}
+📅 {{6}} at {{7}}
+🔖 Ref: {{8}}
+
+Open your dashboard for full details.`,
+      ar: `حجز جديد في {{1}} 🔔
+
+👤 العميل: {{2}} ({{3}})
+🔹 الخدمة: {{4}}
+🧑‍💼 مع: {{5}}
+📅 {{6}} الساعة {{7}}
+🔖 رقم الحجز: {{8}}
+
+كل التفاصيل في لوحة التحكم.`,
     },
-    example: ["Glow Salon", "Fatima", "97455512345", "Sara", "17/10/2026", "16:00"],
+    example: ["Glow Salon", "Fatima", "97455512345", "Haircut & Styling", "Sara", "17/10/2026", "16:00", "A1B2C3D4"],
   },
   BOOKING_REMINDER: {
-    name: "bf_booking_reminder",
-    params: ["name", "business", "date", "time"],
+    name: "bf_appointment_reminder",
+    params: ["name", "business", "services", "date", "time", "resource"],
     body: {
-      en: "Reminder: hi {{1}}, your appointment at {{2}} is on {{3}} at {{4}}. Reply to this message if you need to change it.",
-      ar: "تذكير: أهلًا {{1}}، موعدك في {{2}} يوم {{3}} الساعة {{4}}. للتعديل رد على هذه الرسالة.",
+      en: `Reminder ⏰ Hi {{1}}, this is a friendly reminder of your appointment at {{2}}.
+
+🔹 Service: {{3}}
+📅 Date: {{4}}
+⏰ Time: {{5}}
+👤 With: {{6}}
+
+Need to change it? Simply reply to this message. See you soon!`,
+      ar: `تذكير ⏰ أهلًا {{1}}، بنفكّرك بموعدك في {{2}}.
+
+🔹 الخدمة: {{3}}
+📅 التاريخ: {{4}}
+⏰ الوقت: {{5}}
+👤 مع: {{6}}
+
+لو حابب تغيّره، رد على هذه الرسالة. في انتظارك!`,
     },
-    example: ["Fatima", "Glow Salon", "17/10/2026", "16:00"],
+    example: ["Fatima", "Glow Salon", "Haircut & Styling", "17/10/2026", "16:00", "Sara"],
   },
 };
 

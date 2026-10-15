@@ -2,7 +2,7 @@ import { prisma } from "../../config/db";
 import { getOrCreateWhatsappSettings, sendWhatsappTextMessage } from "../whatsapp/whatsapp.service";
 import { renderMessageTemplate } from "../../utils/messageTemplate";
 import { createNotification } from "../notifications/notifications.service";
-import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus } from "../checkout/myfatoorah";
+import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus, paymentInvoiceMatch } from "../checkout/myfatoorah";
 import { confirmsOnOrder, pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
 import { formatUsdAs, getTenantMoney, payableAmount } from "../../utils/money";
 import { isValidEmail, sendEmail } from "../../utils/email";
@@ -210,6 +210,10 @@ export async function confirmOrderPaymentIfPaid(orderId: string, paymentId: stri
 
   const check = await checkTenantMyFatoorahPaymentStatus(order.tenantId, paymentId);
   if (!check.paid) return order;
+  // الدفعة لازم تخص فاتورة الأوردر ده، ومتكونش اتستخدمت لأوردر تاني قبل كده
+  if (paymentInvoiceMatch(check.raw, order.myFatoorahInvoiceId) === "mismatch") return order;
+  const reused = await prisma.catalogOrder.findFirst({ where: { myFatoorahPaymentId: paymentId, id: { not: order.id } } });
+  if (reused) return order;
 
   const updated = await prisma.catalogOrder.update({
     where: { id: order.id },

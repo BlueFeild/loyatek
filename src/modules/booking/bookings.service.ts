@@ -3,7 +3,7 @@ import { getOrCreateWhatsappSettings, recordWhatsappMessage, sendWhatsappTestMes
 import { sendBookingTemplate, type TemplateLang } from "../whatsapp/booking-templates";
 import { renderMessageTemplate } from "../../utils/messageTemplate";
 import { createNotification } from "../notifications/notifications.service";
-import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus } from "../checkout/myfatoorah";
+import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus, paymentInvoiceMatch } from "../checkout/myfatoorah";
 import { confirmsOnOrder, pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
 import { formatCalendarDate, parseCalendarDate, todayCalendarDate } from "../../utils/calendarDate";
 import { isValidEmail, sendEmail } from "../../utils/email";
@@ -110,12 +110,15 @@ async function runBookingConfirmationSideEffects(
     resource: resourceName,
     date: formatCalendarDate(booking.date),
     time: `${String(booking.hour).padStart(2, "0")}:00`,
-    payment: booking.paymentMethodLabel ?? "",
-    services: (booking.services ?? []).join(", "),
+    payment: booking.paymentMethodLabel ?? "—",
+    // Meta مابتقبلش متغير فاضي في القالب
+    services: (booking.services ?? []).join(", ") || "Appointment",
+    business: bookingSettings.brandName,
+    reference: shortReference(booking.id),
   };
   const digits = (v: string) => v.replace(/[^\d]/g, "");
   const lang: TemplateLang = bookingSettings.waTemplateLang === "ar" ? "ar" : "en";
-  const templateValues = { ...vars, business: bookingSettings.brandName };
+  const templateValues = { ...vars };
   // نص حر + تسجيله في Team Inbox
   async function sendText(to: string, text: string, contactName?: string) {
     const r = await sendWhatsappTextMessage(waSettings.metaAccessToken!, waSettings.metaPhoneNumberId!, to, text);
@@ -153,13 +156,13 @@ async function runBookingConfirmationSideEffects(
       await sendEmail(
         bookingSettings.merchantEmail,
         `New booking — ${booking.customerName}, ${when}`,
-        renderMessageTemplate(bookingSettings.waMerchantTemplate, vars) || `New booking: ${booking.customerName} (${booking.customerPhone}) — ${resourceName}, ${when}`
+        renderMessageTemplate(bookingSettings.waMerchantTemplate, vars) || `New booking: ${booking.customerName} (${booking.customerPhone}) — ${vars.services} with ${resourceName}, ${when} (ref ${vars.reference})`
       );
     }
     if (isValidEmail(booking.customerEmail)) {
       await sendEmail(
         booking.customerEmail,
-        `Booking confirmed — ${bookingSettings.brandName}, ${when}`,
+        `Booking confirmed — ${vars.services} at ${bookingSettings.brandName}, ${when}`,
         renderMessageTemplate(bookingSettings.waTemplate, vars) || `Your booking at ${bookingSettings.brandName} is confirmed for ${when}.`
       );
     }
@@ -292,6 +295,10 @@ export async function confirmBookingPaymentIfPaid(bookingId: string, paymentId: 
 
   const check = await checkTenantMyFatoorahPaymentStatus(booking.tenantId, paymentId);
   if (!check.paid) return { ...booking, whatsappConfirmationSent: false };
+  // الدفعة لازم تخص فاتورة الحجز ده، ومتكونش اتستخدمت لحجز تاني قبل كده
+  if (paymentInvoiceMatch(check.raw, booking.myFatoorahInvoiceId) === "mismatch") return { ...booking, whatsappConfirmationSent: false };
+  const reused = await prisma.booking.findFirst({ where: { myFatoorahPaymentId: paymentId, id: { not: booking.id } } });
+  if (reused) return { ...booking, whatsappConfirmationSent: false };
 
   const updated = await prisma.booking.update({
     where: { id: booking.id },

@@ -59,7 +59,7 @@ export async function runBookingReminders(now: Date = new Date()) {
         "BOOKING_REMINDER",
         lang,
         b.customerPhone,
-        { name: b.customerName, business: settings.brandName, resource: b.resource.name, date: formatCalendarDate(b.date), time: `${String(b.hour).padStart(2, "0")}:00` },
+        { name: b.customerName, business: settings.brandName, resource: b.resource.name, services: (b.services ?? []).join(", ") || "Appointment", date: formatCalendarDate(b.date), time: `${String(b.hour).padStart(2, "0")}:00` },
         b.customerName
       );
       if (result?.ok) sent++;

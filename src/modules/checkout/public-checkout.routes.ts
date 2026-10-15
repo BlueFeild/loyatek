@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../../config/db";
-import { checkMyFatoorahPaymentStatus } from "./myfatoorah";
+import { checkMyFatoorahPaymentStatus, paymentAmountMatch, paymentInvoiceMatch } from "./myfatoorah";
+import { activateSubscriptionOrder } from "./order-activation";
 
 // راوتر عام - العميل بيرجع له من صفحة MyFatoorah بعد الدفع، من غير
 // توكن، فمحتاج يكون عام. بنتأكد من حالة الدفع بالسؤال المباشر لـ
@@ -17,12 +18,25 @@ publicCheckoutRouter.get("/orders/:id/status", async (req, res) => {
 
   if (order.status === "PENDING" && paymentId) {
     const check = await checkMyFatoorahPaymentStatus(paymentId);
-    if (check.paid) {
-      const updated = await prisma.subscriptionOrder.update({
-        where: { id: order.id },
-        data: { status: "PAID", myFatoorahPaymentId: paymentId },
-      });
-      return res.json(updated);
+    // الدفعة لازم تخص فاتورة الطلب ده ومتكونش اتستخدمت لطلب تاني
+    const match = paymentInvoiceMatch(check.raw, order.myFatoorahInvoiceId);
+    const reused = check.paid ? await prisma.subscriptionOrder.findFirst({ where: { myFatoorahPaymentId: paymentId, id: { not: order.id } } }) : null;
+    if (check.paid && match !== "mismatch" && !reused) {
+      await prisma.subscriptionOrder.update({ where: { id: order.id }, data: { status: "PAID", myFatoorahPaymentId: paymentId } });
+      // الدفع اتأكد فعلًا -> الخدمة بتتفعّل على طول (من غير انتظار السوبر أدمن).
+      // لو MyFatoorah مارجّعتش رقم فاتورة نقارن بيه، المبلغ لازم يطابق؛ لو
+      // مفيش ده ولا ده بيفضل PAID والسوبر أدمن يفعّل
+      const amountOk = paymentAmountMatch(check.raw, Number(order.amount));
+      if (match === "match" || (match === "unknown" && amountOk === "match")) {
+        try {
+          await activateSubscriptionOrder(order.id);
+        } catch (err) {
+          console.warn(`[checkout] auto-activation failed for order ${order.id}: ${(err as Error).message}`);
+        }
+      } else {
+        console.warn(`[checkout] order ${order.id} paid but not auto-activated (invoice ${match}, amount ${amountOk}) — activate it from super admin`);
+      }
+      return res.json(await prisma.subscriptionOrder.findUnique({ where: { id: order.id } }));
     }
   }
 

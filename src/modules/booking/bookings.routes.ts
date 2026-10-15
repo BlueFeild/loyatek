@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { phoneMatch } from "../../utils/phone";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
@@ -83,7 +84,7 @@ bookingsRouter.get("/slots", async (req, res) => {
 bookingsRouter.get("/", async (req, res) => {
   const phone = req.query.phone as string | undefined;
   const bookings = await prisma.booking.findMany({
-    where: { tenantId: req.auth!.tenantId, ...(phone ? { customerPhone: phone } : {}) },
+    where: { tenantId: req.auth!.tenantId, ...(phone ? phoneMatch(phone) : {}) },
     include: { resource: true },
     orderBy: { date: "desc" },
   });

@@ -114,11 +114,12 @@ describe("قوالب الحجز المعتمدة", () => {
     }
   });
   it("المتغيرات بتتملي بالترتيب الصح، والاسم حروف صغيرة", () => {
-    const params = templateParams("BOOKING_CONFIRMATION", { name: "Fatima", business: "Glow", date: "17/10/2026", time: "16:00" });
-    expect(params).toEqual(["Fatima", "Glow", "17/10/2026", "16:00"]);
-    expect(renderTemplateBody("BOOKING_CONFIRMATION", "en", params)).toBe(
-      "Hello Fatima, your booking at Glow is confirmed for 17/10/2026 at 16:00. Reply to this message if you need to change it."
-    );
+    const params = templateParams("BOOKING_CONFIRMATION", { name: "Fatima", business: "Glow", services: "Haircut", date: "17/10/2026", time: "16:00", resource: "Sara", reference: "A1B2C3D4" });
+    expect(params).toEqual(["Fatima", "Glow", "Haircut", "17/10/2026", "16:00", "Sara", "A1B2C3D4"]);
+    const body = renderTemplateBody("BOOKING_CONFIRMATION", "en", params);
+    // رسالة احترافية فيها الخدمة والميعاد ومع مين ورقم الحجز
+    expect(body).toMatch(/^Hello Fatima, your booking at Glow is confirmed/);
+    for (const part of ["Service: Haircut", "Date: 17/10/2026", "Time: 16:00", "With: Sara", "Booking ref: A1B2C3D4"]) expect(body).toContain(part);
     expect(templateName("BOOKING_REMINDER", "ar")).toMatch(/^[a-z0-9_]+$/);
   });
 });

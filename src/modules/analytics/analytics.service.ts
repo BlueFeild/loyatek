@@ -64,13 +64,13 @@ export async function getPlatformAnalytics() {
   const revenueByDay: Record<string, number> = Object.fromEntries(days.map((d) => [d, 0]));
   for (const o of revenueOrders) {
     const k = dayKey(o.createdAt);
-    if (k in revenueByDay) revenueByDay[k] += Number(o.amount);
+    if (k in revenueByDay) revenueByDay[k] += Number(o.amountUsd ?? o.amount);
   }
 
-  const totalRevenue = revenueOrders.reduce((sum: number, o: any) => sum + Number(o.amount), 0);
+  const totalRevenue = revenueOrders.reduce((sum: number, o: any) => sum + Number(o.amountUsd ?? o.amount), 0);
   const activatedRevenue = orders
     .filter((o: any) => o.status === "ACTIVATED")
-    .reduce((sum: number, o: any) => sum + Number(o.amount), 0);
+    .reduce((sum: number, o: any) => sum + Number(o.amountUsd ?? o.amount), 0);
 
   const visitEvents = events.filter((e: any) => e.type === "PAGE_VIEW");
   const signupEvents = events.filter((e: any) => e.type === "SIGNUP");

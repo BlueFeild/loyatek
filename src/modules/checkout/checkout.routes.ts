@@ -4,7 +4,15 @@ import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { initiateMyFatoorahPayment } from "./myfatoorah";
 import { modulesOrderAmount, extraCompanyAmount } from "./pricing";
-import { getPlatformConfig } from "../../utils/platform-config";
+import { getRegionalPricing } from "../../utils/platform-config";
+
+// المبلغ بخانات العملة (KWD/BHD/OMR/JOD = 3) + نفس المبلغ بالدولار للتقارير
+function orderMoney(amount: number, pricing: { currency: string; usdRate: number }) {
+  const digits = ["KWD", "BHD", "OMR", "JOD"].includes(pricing.currency) ? 3 : 2;
+  const f = 10 ** digits;
+  const rounded = Math.round(amount * f) / f;
+  return { amount: rounded, currency: pricing.currency, amountUsd: Math.round((rounded / (pricing.usdRate || 1)) * 1e6) / 1e6 };
+}
 
 const MODULE_IDS = ["erp", "booking", "wallet", "whatsapp", "catalog", "linktree"] as const;
 
@@ -15,7 +23,8 @@ checkoutRouter.use(requireAuth);
 const createOrderSchema = z.object({
   selectedModules: z.array(z.enum(["erp", "booking", "wallet", "whatsapp", "catalog", "linktree"])).min(1),
   billingCycle: z.enum(["monthly", "yearly"]).default("monthly"),
-  currency: z.string().default("USD"),
+  // الدولة اللي العميل شايف أسعارها (العملة والسعر بيتحسبوا هنا مش من الفرونت)
+  country: z.string().regex(/^[A-Za-z]{2}$/).optional(),
 });
 
 // إنشاء طلب اشتراك حقيقي وفاتورة دفع حقيقية على MyFatoorah - الطلب
@@ -24,14 +33,16 @@ checkoutRouter.post("/orders", requireRole("OWNER", "ADMIN"), async (req, res) =
   const parsed = createOrderSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { selectedModules, billingCycle, currency } = parsed.data;
-  const amount = modulesOrderAmount(selectedModules, billingCycle, (await getPlatformConfig()).pricing);
+  const { selectedModules, billingCycle, country } = parsed.data;
+  const pricing = await getRegionalPricing(country);
+  const money = orderMoney(modulesOrderAmount(selectedModules, billingCycle, pricing), pricing);
+  const amount = money.amount;
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   if (!tenant) return res.status(404).json({ error: "Tenant not found" });
 
   const order = await prisma.subscriptionOrder.create({
-    data: { tenantId: tenant.id, selectedModules, billingCycle, amount, currency },
+    data: { tenantId: tenant.id, selectedModules, billingCycle, ...money, country: pricing.country },
   });
 
   const frontendBase = process.env.FRONTEND_BASE_URL || "http://localhost:5173";
@@ -40,6 +51,7 @@ checkoutRouter.post("/orders", requireRole("OWNER", "ADMIN"), async (req, res) =
   // الحالة الحقيقية بنداء GetPaymentDetails بعد كده
   const payment = await initiateMyFatoorahPayment({
     amount,
+    currency: money.currency,
     redirectionUrl: `${frontendBase}/checkout/success?orderId=${order.id}`,
   });
 
@@ -64,7 +76,7 @@ const createExtraCompanyOrderSchema = z.object({
   // تبقى فاضية = بروفايل بس من غير خدمات
   selectedModules: z.array(z.enum(MODULE_IDS)).default([]),
   billingCycle: z.enum(["monthly", "yearly"]).default("monthly"),
-  currency: z.string().default("USD"),
+  country: z.string().regex(/^[A-Za-z]{2}$/).optional(),
 });
 
 // طلب شراء شركة إضافية لنفس المالك - بيعدّي بنفس خط الدفع الحقيقي
@@ -75,9 +87,11 @@ checkoutRouter.post("/extra-company-orders", requireRole("OWNER"), async (req, r
   const parsed = createExtraCompanyOrderSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { name, industry, billingCycle, currency } = parsed.data;
+  const { name, industry, billingCycle, country } = parsed.data;
   const selectedModules = Array.from(new Set(parsed.data.selectedModules));
-  const amount = extraCompanyAmount(selectedModules, billingCycle, (await getPlatformConfig()).pricing);
+  const pricing = await getRegionalPricing(country);
+  const money = orderMoney(extraCompanyAmount(selectedModules, billingCycle, pricing), pricing);
+  const amount = money.amount;
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   if (!tenant) return res.status(404).json({ error: "Tenant not found" });
@@ -87,8 +101,8 @@ checkoutRouter.post("/extra-company-orders", requireRole("OWNER"), async (req, r
       tenantId: tenant.id,
       selectedModules,
       billingCycle,
-      amount,
-      currency,
+      ...money,
+      country: pricing.country,
       orderType: "EXTRA_COMPANY",
       extraCompanyName: name,
       extraCompanyIndustry: industry,
@@ -98,6 +112,7 @@ checkoutRouter.post("/extra-company-orders", requireRole("OWNER"), async (req, r
   const frontendBase = process.env.FRONTEND_BASE_URL || "http://localhost:5173";
   const payment = await initiateMyFatoorahPayment({
     amount,
+    currency: money.currency,
     redirectionUrl: `${frontendBase}/checkout/success?orderId=${order.id}`,
   });
 
@@ -114,9 +129,9 @@ checkoutRouter.post("/extra-company-orders", requireRole("OWNER"), async (req, r
 });
 
 // الأسعار الفعلية اللي الباك إند بيحاسب بيها - الفرونت بيعرض منها بس
-checkoutRouter.get("/pricing", async (_req, res) => {
-  // نفس الأسعار اللي السوبر أدمن حاطها (أو الافتراضي)
-  res.json((await getPlatformConfig()).pricing);
+checkoutRouter.get("/pricing", async (req, res) => {
+  // نفس الأسعار اللي السوبر أدمن حاطها (أو الافتراضي) - بعملة الدولة وبعد الخصم
+  res.json(await getRegionalPricing(typeof req.query.country === "string" ? req.query.country : null));
 });
 
 checkoutRouter.get("/orders", async (req, res) => {
