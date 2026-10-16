@@ -50,7 +50,8 @@ export async function subscribeAppToWaba(token: string, wabaId: string) {
 
 // تفعيل الرقم على Cloud API (PIN للتحقق بخطوتين). لو الرقم متفعّل قبل كده
 // Meta ممكن ترجّع خطأ - مش بنوقف الربط عليه
-export async function registerPhoneNumber(token: string, phoneNumberId: string) {
-  const pin = String(crypto.randomInt(100000, 1000000));
+// pin: لو الرقم عليه تحقق بخطوتين قبل كده لازم نفس الـ PIN، وإلا أي 6 أرقام
+export async function registerPhoneNumber(token: string, phoneNumberId: string, pinInput?: string) {
+  const pin = pinInput && /^\d{6}$/.test(pinInput) ? pinInput : String(crypto.randomInt(100000, 1000000));
   return graph(`/${phoneNumberId}/register`, { method: "POST", token, body: JSON.stringify({ messaging_product: "whatsapp", pin }) });
 }

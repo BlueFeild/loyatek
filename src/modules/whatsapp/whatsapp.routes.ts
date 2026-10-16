@@ -152,6 +152,20 @@ whatsappRouter.post("/embedded-signup/complete", requireRole("OWNER", "ADMIN"), 
   res.json({ ...settingsView(updated, req), warnings });
 });
 
+// تفعيل الرقم على Cloud API (register) - مطلوب مرة واحدة للرقم الحقيقي اللي
+// اتضاف من لوحة Meta. الـ PIN = التحقق بخطوتين للرقم (6 أرقام)
+const registerSchema = z.object({ pin: z.string().regex(/^\d{6}$/, "The PIN must be exactly 6 digits") });
+whatsappRouter.post("/register-number", requireRole("OWNER", "ADMIN"), async (req, res) => {
+  const parsed = registerSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid PIN" });
+  const s = await getOrCreateWhatsappSettings(req.auth!.tenantId);
+  if (!s.metaAccessToken || !s.metaPhoneNumberId) return res.status(400).json({ error: "Save the access token and phone number ID first." });
+  const r = await registerPhoneNumber(s.metaAccessToken, s.metaPhoneNumberId, parsed.data.pin);
+  if (!r.ok) return res.status(400).json({ error: `Meta says: ${r.error}` });
+  const updated = await runVerify(req.auth!.tenantId);
+  res.json(settingsView(updated, req));
+});
+
 whatsappRouter.post("/verify", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   await ensureWebhookKeys(req.auth!.tenantId);
   const updated = await runVerify(req.auth!.tenantId);
