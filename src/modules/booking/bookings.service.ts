@@ -104,6 +104,10 @@ async function runBookingConfirmationSideEffects(
 ) {
   let whatsappConfirmationSent = false;
   const bookingSettings = await getOrCreateSettings(tenantId);
+  const waSettings = await getOrCreateWhatsappSettings(tenantId);
+  const digits = (v: string) => v.replace(/[^\d]/g, "");
+  // رقم مقدم الخدمة اللي العميل يكلمه: رقم التاجر، وإلا رقم واتساب البيزنس نفسه
+  const providerPhoneDigits = digits(bookingSettings.merchantWhatsapp ?? "") || digits(waSettings.displayPhoneNumber ?? "");
   const vars = {
     name: booking.customerName,
     phone: booking.customerPhone,
@@ -115,17 +119,18 @@ async function runBookingConfirmationSideEffects(
     services: (booking.services ?? []).join(", ") || "Appointment",
     business: bookingSettings.brandName,
     reference: shortReference(booking.id),
+    provider_phone: providerPhoneDigits ? `+${providerPhoneDigits}` : "—",
   };
-  const digits = (v: string) => v.replace(/[^\d]/g, "");
+  // نفس القيم بالأسامي اللي ممكن التاجر يكتبها في رسالته
+  const allVars = { ...vars, customer_name: vars.name, provider_name: vars.business, service_type: vars.services, specialist: vars.resource };
   const lang: TemplateLang = bookingSettings.waTemplateLang === "ar" ? "ar" : "en";
-  const templateValues = { ...vars };
+  const templateValues = { ...allVars };
   // نص حر + تسجيله في Team Inbox
   async function sendText(to: string, text: string, contactName?: string) {
     const r = await sendWhatsappTextMessage(waSettings.metaAccessToken!, waSettings.metaPhoneNumberId!, to, text);
     await recordWhatsappMessage({ tenantId, direction: "OUT", contactPhone: to, contactName, body: text, kind: "text", waMessageId: r.messageId, status: r.ok ? "sent" : "failed", error: r.ok ? null : r.error });
     return r;
   }
-  const waSettings = await getOrCreateWhatsappSettings(tenantId);
   try {
     const waReady = waSettings.isConnected && waSettings.metaAccessToken && waSettings.metaPhoneNumberId;
     if (bookingSettings.waAutomation && waReady) {
@@ -133,7 +138,7 @@ async function runBookingConfirmationSideEffects(
       // 1) القالب المعتمد (بيوصل لأي رقم). 2) لو لسه مش معتمد: رسالة التاجر
       // كنص حر (بتوصل بس جوه نافذة الـ24 ساعة). 3) آخر حل: hello_world
       let result = await sendBookingTemplate(tenantId, "BOOKING_CONFIRMATION", lang, phone, templateValues, booking.customerName);
-      if (!result?.ok) result = await sendText(phone, renderMessageTemplate(bookingSettings.waTemplate, vars), booking.customerName);
+      if (!result?.ok) result = await sendText(phone, renderMessageTemplate(bookingSettings.waTemplate, allVars), booking.customerName);
       if (!result.ok) result = await sendWhatsappTestMessage(waSettings.metaAccessToken!, waSettings.metaPhoneNumberId!, phone);
       whatsappConfirmationSent = result.ok;
     }
@@ -142,7 +147,7 @@ async function runBookingConfirmationSideEffects(
     if (waReady && digits(bookingSettings.merchantWhatsapp)) {
       const to = digits(bookingSettings.merchantWhatsapp);
       let result = await sendBookingTemplate(tenantId, "BOOKING_MERCHANT_ALERT", lang, to, templateValues);
-      if (!result?.ok && bookingSettings.waMerchantTemplate.trim()) result = await sendText(to, renderMessageTemplate(bookingSettings.waMerchantTemplate, vars));
+      if (!result?.ok && bookingSettings.waMerchantTemplate.trim()) result = await sendText(to, renderMessageTemplate(bookingSettings.waMerchantTemplate, allVars));
       if (result && !result.ok) console.warn(`[booking] merchant WhatsApp notification not delivered for tenant ${tenantId}: ${result.error}`);
     }
   } catch {
@@ -156,14 +161,14 @@ async function runBookingConfirmationSideEffects(
       await sendEmail(
         bookingSettings.merchantEmail,
         `New booking — ${booking.customerName}, ${when}`,
-        renderMessageTemplate(bookingSettings.waMerchantTemplate, vars) || `New booking: ${booking.customerName} (${booking.customerPhone}) — ${vars.services} with ${resourceName}, ${when} (ref ${vars.reference})`
+        renderMessageTemplate(bookingSettings.waMerchantTemplate, allVars) || `New booking: ${booking.customerName} (${booking.customerPhone}) — ${vars.services} with ${resourceName}, ${when} (ref ${vars.reference})`
       );
     }
     if (isValidEmail(booking.customerEmail)) {
       await sendEmail(
         booking.customerEmail,
-        `Booking confirmed — ${vars.services} at ${bookingSettings.brandName}, ${when}`,
-        renderMessageTemplate(bookingSettings.waTemplate, vars) || `Your booking at ${bookingSettings.brandName} is confirmed for ${when}.`
+        `Booking request received — ${vars.services} at ${bookingSettings.brandName}, ${when}`,
+        renderMessageTemplate(bookingSettings.waTemplate, allVars) || `Your booking at ${bookingSettings.brandName} is confirmed for ${when}.`
       );
     }
   } catch {

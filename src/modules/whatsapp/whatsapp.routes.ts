@@ -17,6 +17,7 @@ import {
   verifyWhatsappConnection,
   recordWhatsappMessage,
 } from "./whatsapp.service";
+import { embeddedSignupConfig, exchangeSignupCode, registerPhoneNumber, subscribeAppToWaba } from "./embedded-signup";
 import { BOOKING_TEMPLATE_PURPOSES, ensureBookingTemplates, getApprovedBookingTemplate, type BookingTemplatePurpose } from "./booking-templates";
 
 export const whatsappRouter = Router();
@@ -107,6 +108,48 @@ whatsappRouter.patch("/settings", requireRole("OWNER", "ADMIN"), async (req, res
   const touchedCredentials = ["metaAccessToken", "metaPhoneNumberId", "metaWabaId"].some((k) => k in parsed.data);
   const updated = touchedCredentials ? await runVerify(req.auth!.tenantId) : await getOrCreateWhatsappSettings(req.auth!.tenantId);
   res.json(settingsView(updated, req));
+});
+
+// --- Embedded Signup (ربط الواتساب من نافذة Meta من غير نسخ IDs وتوكن) ---
+
+// القيم العامة اللي الصفحة محتاجاها عشان تفتح نافذة Meta (من غير أي سر)
+whatsappRouter.get("/embedded-signup/config", (_req, res) => {
+  res.json(embeddedSignupConfig());
+});
+
+const embeddedCompleteSchema = z.object({
+  code: z.string().trim().min(10).max(2000),
+  wabaId: z.string().trim().regex(/^\d{5,30}$/, "Meta didn't send a valid WhatsApp Business Account ID"),
+  phoneNumberId: z.string().trim().regex(/^\d{5,30}$/, "Meta didn't send a valid phone number ID"),
+});
+
+// بعد ما التاجر يخلص في نافذة Meta: نبدّل الكود بتوكن، نشترك في رسايل الحساب،
+// نفعّل الرقم، ونحفظ ونتأكد من الربط - كل ده من غير ما التاجر ينسخ حاجة
+whatsappRouter.post("/embedded-signup/complete", requireRole("OWNER", "ADMIN"), async (req, res) => {
+  if (!embeddedSignupConfig().enabled) return res.status(400).json({ error: "Connecting with Facebook isn't set up yet — use the manual setup below." });
+  const parsed = embeddedCompleteSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid data from Meta" });
+  const { code, wabaId, phoneNumberId } = parsed.data;
+  const tenantId = req.auth!.tenantId;
+
+  const exchanged = await exchangeSignupCode(code);
+  if (!exchanged.ok || !exchanged.token) return res.status(400).json({ error: `Meta didn't accept the sign-in: ${exchanged.error}` });
+  const token = exchanged.token;
+
+  const warnings: string[] = [];
+  const sub = await subscribeAppToWaba(token, wabaId);
+  if (!sub.ok) warnings.push(`Incoming messages: ${sub.error}`);
+  const reg = await registerPhoneNumber(token, phoneNumberId);
+  if (!reg.ok && !/already|registered/i.test(reg.error ?? "")) warnings.push(`Number activation: ${reg.error}`);
+
+  await ensureWebhookKeys(tenantId);
+  await prisma.whatsappSettings.update({
+    where: { tenantId },
+    data: { metaAccessToken: token, metaPhoneNumberId: phoneNumberId, metaWabaId: wabaId, metaAppId: process.env.META_APP_ID?.trim() || null },
+  });
+  const updated = await runVerify(tenantId);
+  if (!updated.isConnected) return res.status(400).json({ error: updated.lastVerifyError ?? "Meta rejected the connection", warnings });
+  res.json({ ...settingsView(updated, req), warnings });
 });
 
 whatsappRouter.post("/verify", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {

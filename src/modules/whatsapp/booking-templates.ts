@@ -24,57 +24,81 @@ interface TemplateDef {
 
 // Meta بترفض متغير في أول أو آخر النص - كل قالب بيبدأ وبيخلص بكلام.
 // رسايل احترافية فيها كل التفاصيل (الخدمة، الميعاد، مع مين، رقم الحجز).
-// الأسماء اتغيرت (نسخة 2) عشان Meta مابتسمحش بتعديل قالب اتبعت قبل كده
+// الأسماء اتغيرت (نسخة 3 - نص العميل) عشان Meta مابتسمحش بتعديل قالب اتبعت قبل كده
 export const BOOKING_TEMPLATES: Record<BookingTemplatePurpose, TemplateDef> = {
   BOOKING_CONFIRMATION: {
-    name: "bf_booking_confirmed",
-    params: ["name", "business", "services", "date", "time", "resource", "reference"],
+    name: "bf_booking_request_received",
+    params: ["customer_name", "provider_name", "service_type", "date", "time", "provider_name", "provider_phone"],
     body: {
-      en: `Hello {{1}}, your booking at {{2}} is confirmed ✅
+      en: `🔔 Booking Request Received!
 
-🔹 Service: {{3}}
-📅 Date: {{4}}
-⏰ Time: {{5}}
-👤 With: {{6}}
-🔖 Booking ref: {{7}}
+Hi {{1}},
+Thank you for booking with us! Your request has been sent to {{2}}.
 
-Need to reschedule or cancel? Simply reply to this message. We look forward to seeing you!`,
-      ar: `مرحبًا {{1}}، تم تأكيد حجزك في {{2}} ✅
+📋 Booking Details:
+• Service: {{3}}
+• Date: {{4}}
+• Time: {{5}}
+• Provider: {{6}}
 
-🔹 الخدمة: {{3}}
-📅 التاريخ: {{4}}
-⏰ الوقت: {{5}}
-👤 مع: {{6}}
-🔖 رقم الحجز: {{7}}
+📞 Need assistance? Contact the provider directly at: {{7}}
 
-لو حابب تغيّر الميعاد أو تلغيه، رد على هذه الرسالة. في انتظارك!`,
+We look forward to serving you! ✨`,
+      ar: `🔔 تم استلام طلب الحجز!
+
+أهلًا {{1}}،
+شكرًا لحجزك معنا! تم إرسال طلبك إلى {{2}}.
+
+📋 تفاصيل الحجز:
+• الخدمة: {{3}}
+• التاريخ: {{4}}
+• الوقت: {{5}}
+• مقدم الخدمة: {{6}}
+
+📞 محتاج مساعدة؟ تواصل مع مقدم الخدمة مباشرة على: {{7}}
+
+في انتظارك! ✨`,
     },
-    example: ["Fatima", "Glow Salon", "Haircut & Styling", "17/10/2026", "16:00", "Sara", "A1B2C3D4"],
+    example: ["Fatima", "Glow Salon", "Haircut & Styling", "17/10/2026", "16:00", "Glow Salon", "+97455512345"],
   },
   BOOKING_MERCHANT_ALERT: {
-    name: "bf_new_booking_alert",
-    params: ["business", "name", "phone", "services", "resource", "date", "time", "reference"],
+    name: "bf_new_booking_notification",
+    params: ["provider_name", "customer_name", "phone", "service_type", "date", "time"],
     body: {
-      en: `New booking at {{1}} 🔔
+      en: `🔔 New Booking Notification
 
-👤 Customer: {{2}} ({{3}})
-🔹 Service: {{4}}
-🧑‍💼 With: {{5}}
-📅 {{6}} at {{7}}
-🔖 Ref: {{8}}
+Hi {{1}},
+You have received a new booking through the platform. Here are the details:
 
-Open your dashboard for full details.`,
-      ar: `حجز جديد في {{1}} 🔔
+👤 Customer Name: {{2}}
 
-👤 العميل: {{2}} ({{3}})
-🔹 الخدمة: {{4}}
-🧑‍💼 مع: {{5}}
-📅 {{6}} الساعة {{7}}
-🔖 رقم الحجز: {{8}}
+📞 Contact Number: {{3}}
 
-كل التفاصيل في لوحة التحكم.`,
+🛠️ Requested Service: {{4}}
+
+📅 Date: {{5}}
+
+⏰ Time: {{6}}
+
+📌 Please review your dashboard to manage or confirm this request`,
+      ar: `🔔 إشعار حجز جديد
+
+أهلًا {{1}}،
+وصلك حجز جديد من خلال المنصة. دي التفاصيل:
+
+👤 اسم العميل: {{2}}
+
+📞 رقم التواصل: {{3}}
+
+🛠️ الخدمة المطلوبة: {{4}}
+
+📅 التاريخ: {{5}}
+
+⏰ الوقت: {{6}}
+
+📌 راجع لوحة التحكم عشان تدير الطلب أو تأكده`,
     },
-    example: ["Glow Salon", "Fatima", "97455512345", "Haircut & Styling", "Sara", "17/10/2026", "16:00", "A1B2C3D4"],
+    example: ["Glow Salon", "Fatima", "+97455512345", "Haircut & Styling", "17/10/2026", "16:00"],
   },
   BOOKING_REMINDER: {
     name: "bf_appointment_reminder",

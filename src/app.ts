@@ -22,7 +22,7 @@ import { agencyRouter } from "./modules/agency/agency.routes";
 import { catalogRouter } from "./modules/catalog/catalog.routes";
 import { publicCatalogRouter } from "./modules/catalog/public-catalog.routes";
 import { publicBookingRouter } from "./modules/booking/public-booking.routes";
-import { publicWhatsappWebhookRouter } from "./modules/whatsapp/webhook";
+import { platformWhatsappWebhookRouter, publicWhatsappWebhookRouter } from "./modules/whatsapp/webhook";
 import { adminExchangeRatesRouter, publicExchangeRatesRouter } from "./modules/exchange-rates/exchange-rates.routes";
 import { publicWalletRouter } from "./modules/wallet/public-wallet.routes";
 import { publicContactRouter } from "./modules/contact/public-contact.routes";
@@ -108,6 +108,8 @@ app.use("/api/public/menu", publicCatalogRouter);
 app.use("/api/public/booking", publicBookingRouter);
 // Meta بتبعت رسايل الواتساب الجاية هنا (موقّعة بالـ App Secret بتاع التاجر)
 app.use("/api/public/whatsapp/webhook", publicWhatsappWebhookRouter);
+// webhook واحد للمنصة (التجار اللي ربطوا بـ Embedded Signup) - موقّع بـ META_APP_SECRET
+app.use("/api/public/whatsapp/platform-webhook", platformWhatsappWebhookRouter);
 // أسعار الصرف (الدولار عملة أساسية) - عامة للقراءة، وإدارتها للسوبر أدمن
 app.use("/api/public/exchange-rates", publicExchangeRatesRouter);
 // أسعار الخدمات الحالية (اللي السوبر أدمن حاطها) - لصفحة الأسعار العامة

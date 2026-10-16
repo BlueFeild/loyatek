@@ -93,6 +93,42 @@ publicWhatsappWebhookRouter.post("/:key", async (req: Request & { rawBody?: Buff
   }
 });
 
+// Webhook المنصة نفسها (للتجار اللي ربطوا بـ Embedded Signup): لينك واحد بيتحط
+// مرة واحدة في تطبيق Meta بتاع المنصة، موقّع بـ META_APP_SECRET، وكل رسالة
+// بتروح للتاجر صاحب الرقم (phone_number_id)
+export const platformWhatsappWebhookRouter = Router();
+
+platformWhatsappWebhookRouter.get("/", (req, res) => {
+  const expected = process.env.META_WEBHOOK_VERIFY_TOKEN?.trim();
+  if (!expected || req.query["hub.mode"] !== "subscribe" || req.query["hub.verify_token"] !== expected) return res.status(403).send("Forbidden");
+  res.status(200).type("text/plain").send(String(req.query["hub.challenge"] ?? ""));
+});
+
+platformWhatsappWebhookRouter.post("/", async (req: Request & { rawBody?: Buffer }, res) => {
+  const secret = process.env.META_APP_SECRET?.trim();
+  if (!secret || !verifyMetaSignature(req.rawBody, req.header("x-hub-signature-256"), secret)) return res.sendStatus(401);
+  res.sendStatus(200);
+  const phoneIds = Array.from(new Set(parseWebhookPayload(req.body).map((b) => b.phoneNumberId).filter((x): x is string => Boolean(x))));
+  for (const phoneNumberId of phoneIds) {
+    // الرقم بيبقى تبع حساب واحد عند Meta - لو اتربط بأكتر من شركة عندنا، آخر
+    // شركة ربطته (واتأكد من Meta) هي صاحبته
+    const owners = await prisma.whatsappSettings.findMany({
+      where: { metaPhoneNumberId: phoneNumberId, isConnected: true },
+      orderBy: { lastVerifiedAt: "desc" },
+      take: 1,
+      select: { tenantId: true },
+    });
+    for (const o of owners) {
+      try {
+        // handleWebhook بيتجاهل أي رقم غير رقم التاجر ده
+        await handleWebhook(o.tenantId, req.body);
+      } catch (err) {
+        console.warn(`[whatsapp-webhook] platform processing failed for tenant ${o.tenantId}: ${(err as Error)?.message}`);
+      }
+    }
+  }
+});
+
 export async function handleWebhook(tenantId: string, body: any) {
   const settings = await prisma.whatsappSettings.findUnique({ where: { tenantId } });
   if (!settings) return;

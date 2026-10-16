@@ -39,3 +39,29 @@ describe("payment belongs to the invoice", () => {
     expect(paymentInvoiceMatch({ Data: {} }, "123")).toBe("unknown");
   });
 });
+
+import { bestDiscount, readDiscounts } from "../utils/platform-config";
+
+describe("discount rules (services + monthly/yearly + countries)", () => {
+  const now = new Date("2026-10-16T12:00:00Z");
+  const rules = readDiscounts([
+    { id: "a", modules: [], pct: 10, cycle: "both", countries: [] }, // كل الخدمات، كل الدول
+    { id: "b", modules: ["erp"], pct: 30, cycle: "yearly", countries: ["EG"] }, // ERP سنوي مصر بس
+    { id: "c", modules: ["booking"], pct: 25, cycle: "monthly", countries: ["QA", "SA"], endsAt: "2026-12-31T23:59:59Z" },
+    { id: "d", modules: ["booking"], pct: 50, cycle: "both", countries: [], endsAt: "2026-10-01T00:00:00Z" }, // خلص
+  ]);
+  it("picks the biggest discount that applies", () => {
+    expect(bestDiscount(rules, "erp", "EG", "yearly", now)?.pct).toBe(30);
+    expect(bestDiscount(rules, "erp", "EG", "monthly", now)?.pct).toBe(10);
+    expect(bestDiscount(rules, "erp", "QA", "yearly", now)?.pct).toBe(10);
+    expect(bestDiscount(rules, "booking", "QA", "monthly", now)?.pct).toBe(25);
+    expect(bestDiscount(rules, "booking", "QA", "yearly", now)?.pct).toBe(10);
+    expect(bestDiscount(rules, "booking", null, "monthly", now)?.pct).toBe(10);
+  });
+  it("old saved format still works (one discount per service, monthly + yearly, all countries)", () => {
+    const legacy = readDiscounts({ wallet: { pct: 15, endsAt: null } });
+    expect(legacy).toHaveLength(1);
+    expect(bestDiscount(legacy, "wallet", "EG", "yearly", now)?.pct).toBe(15);
+    expect(bestDiscount(legacy, "erp", "EG", "yearly", now)).toBeNull();
+  });
+});

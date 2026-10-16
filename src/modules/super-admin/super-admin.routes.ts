@@ -221,8 +221,26 @@ const platformConfigSchema = z.object({
   extraCompanyBasePrice: z.number().min(0).max(100000).optional(),
   yearlyDiscountPct: z.number().int().min(0).max(90).optional(),
   defaultGraceDays: z.number().int().min(0).max(365).optional(),
-  // خصم شهري لكل خدمة (pct 0 = مفيش خصم)
-  discounts: z.record(z.enum(ALL_MODULES), z.object({ pct: z.number().min(0).max(90), endsAt: z.string().datetime().nullable().optional() })).optional(),
+  // قواعد الخصم (اللستة كلها بتتبعت مرة واحدة): خدمات (فاضية = الكل) + نسبة +
+  // شهري/سنوي/الاتنين + دول (فاضية = كل الدول) + تاريخ انتهاء. الشكل القديم
+  // { erp: { pct, endsAt } } لسه مقبول (خصم لخدمة على الشهري والسنوي لكل الدول)
+  discounts: z
+    .union([
+      z
+        .array(
+          z.object({
+            id: z.string().max(40).optional(),
+            modules: z.array(z.enum(ALL_MODULES)).max(10).default([]),
+            pct: z.number().min(0).max(90),
+            endsAt: z.string().datetime().nullable().optional(),
+            cycle: z.enum(["both", "monthly", "yearly"]).default("both"),
+            countries: z.array(z.string().regex(/^[A-Za-z]{2}$/)).max(250).default([]),
+          })
+        )
+        .max(50),
+      z.record(z.enum(ALL_MODULES), z.object({ pct: z.number().min(0).max(90), endsAt: z.string().datetime().nullable().optional() })),
+    ])
+    .optional(),
   // أسعار كل دولة بعملتها (الجدول كله بيتبعت مرة واحدة)
   regions: z
     .array(
@@ -232,6 +250,7 @@ const platformConfigSchema = z.object({
         currency: z.string().refine(isCurrencyCode, "Unknown currency"),
         modulePrices: z.record(z.enum(ALL_MODULES), z.number().min(0).max(10000000).nullable()).default({}),
         extraCompanyBasePrice: z.number().min(0).max(10000000).nullable().optional(),
+        yearlyDiscountPct: z.number().min(0).max(90).nullable().optional(),
       })
     )
     .max(50)
@@ -256,9 +275,16 @@ superAdminRouter.patch("/platform-config", async (req, res) => {
       ...(d.defaultGraceDays !== undefined ? { defaultGraceDays: d.defaultGraceDays } : {}),
       ...(d.discounts
         ? {
-            moduleDiscounts: Object.fromEntries(
-              Object.entries({ ...current.discounts, ...d.discounts }).filter(([, v]) => v.pct > 0).map(([k, v]) => [k, { pct: v.pct, endsAt: v.endsAt ?? null }])
-            ),
+            moduleDiscounts: (Array.isArray(d.discounts)
+              ? d.discounts.map((r, i) => ({ ...r, id: r.id || `rule-${Date.now()}-${i}` }))
+              : // الشكل القديم: بيعدّل قواعد الخدمات دي بس ويسيب الباقي
+                [
+                  ...current.discounts.filter((r) => !(r.modules.length === 1 && r.modules[0] in (d.discounts as object))),
+                  ...Object.entries(d.discounts).map(([k, v]) => ({ id: `legacy-${k}`, modules: [k], pct: v.pct, endsAt: v.endsAt ?? null, cycle: "both" as const, countries: [] as string[] })),
+                ]
+            )
+              .filter((r) => r.pct > 0)
+              .map((r) => ({ id: r.id, modules: r.modules, pct: r.pct, endsAt: r.endsAt ?? null, cycle: r.cycle, countries: r.countries.map((c) => c.toUpperCase()) })),
           }
         : {}),
       ...(d.regions
@@ -269,6 +295,7 @@ superAdminRouter.patch("/platform-config", async (req, res) => {
               currency: r.currency,
               modulePrices: Object.fromEntries(Object.entries(r.modulePrices).filter(([, v]) => v != null)),
               extraCompanyBasePrice: r.extraCompanyBasePrice ?? null,
+              yearlyDiscountPct: r.yearlyDiscountPct ?? null,
             })),
           }
         : {}),

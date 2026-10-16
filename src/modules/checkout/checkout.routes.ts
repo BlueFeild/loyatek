@@ -4,7 +4,7 @@ import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { initiateMyFatoorahPayment } from "./myfatoorah";
 import { modulesOrderAmount, extraCompanyAmount } from "./pricing";
-import { getRegionalPricing } from "../../utils/platform-config";
+import { getRegionalPricing, pricingForCycle } from "../../utils/platform-config";
 
 // المبلغ بخانات العملة (KWD/BHD/OMR/JOD = 3) + نفس المبلغ بالدولار للتقارير
 function orderMoney(amount: number, pricing: { currency: string; usdRate: number }) {
@@ -35,7 +35,7 @@ checkoutRouter.post("/orders", requireRole("OWNER", "ADMIN"), async (req, res) =
 
   const { selectedModules, billingCycle, country } = parsed.data;
   const pricing = await getRegionalPricing(country);
-  const money = orderMoney(modulesOrderAmount(selectedModules, billingCycle, pricing), pricing);
+  const money = orderMoney(modulesOrderAmount(selectedModules, billingCycle, pricingForCycle(pricing, billingCycle)), pricing);
   const amount = money.amount;
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
@@ -90,7 +90,7 @@ checkoutRouter.post("/extra-company-orders", requireRole("OWNER"), async (req, r
   const { name, industry, billingCycle, country } = parsed.data;
   const selectedModules = Array.from(new Set(parsed.data.selectedModules));
   const pricing = await getRegionalPricing(country);
-  const money = orderMoney(extraCompanyAmount(selectedModules, billingCycle, pricing), pricing);
+  const money = orderMoney(extraCompanyAmount(selectedModules, billingCycle, pricingForCycle(pricing, billingCycle)), pricing);
   const amount = money.amount;
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });

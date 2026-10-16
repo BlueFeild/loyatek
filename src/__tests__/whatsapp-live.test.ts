@@ -114,12 +114,15 @@ describe("قوالب الحجز المعتمدة", () => {
     }
   });
   it("المتغيرات بتتملي بالترتيب الصح، والاسم حروف صغيرة", () => {
-    const params = templateParams("BOOKING_CONFIRMATION", { name: "Fatima", business: "Glow", services: "Haircut", date: "17/10/2026", time: "16:00", resource: "Sara", reference: "A1B2C3D4" });
-    expect(params).toEqual(["Fatima", "Glow", "Haircut", "17/10/2026", "16:00", "Sara", "A1B2C3D4"]);
+    const v = { customer_name: "Fatima", provider_name: "Glow", service_type: "Haircut", date: "17/10/2026", time: "16:00", provider_phone: "+97455512345", phone: "+97455519999" };
+    const params = templateParams("BOOKING_CONFIRMATION", v);
+    expect(params).toEqual(["Fatima", "Glow", "Haircut", "17/10/2026", "16:00", "Glow", "+97455512345"]);
     const body = renderTemplateBody("BOOKING_CONFIRMATION", "en", params);
-    // رسالة احترافية فيها الخدمة والميعاد ومع مين ورقم الحجز
-    expect(body).toMatch(/^Hello Fatima, your booking at Glow is confirmed/);
-    for (const part of ["Service: Haircut", "Date: 17/10/2026", "Time: 16:00", "With: Sara", "Booking ref: A1B2C3D4"]) expect(body).toContain(part);
+    // نص العميل اللي هبة طلبته: طلب الحجز وصل + التفاصيل + رقم مقدم الخدمة
+    expect(body.startsWith("🔔 Booking Request Received!\n\nHi Fatima,")).toBe(true);
+    for (const part of ["sent to Glow.", "Service: Haircut", "Date: 17/10/2026", "Time: 16:00", "Provider: Glow", "directly at: +97455512345"]) expect(body).toContain(part);
+    const alert = renderTemplateBody("BOOKING_MERCHANT_ALERT", "en", templateParams("BOOKING_MERCHANT_ALERT", v));
+    for (const part of ["New Booking Notification", "Hi Glow,", "Customer Name: Fatima", "Contact Number: +97455519999", "Requested Service: Haircut", "Date: 17/10/2026", "Time: 16:00"]) expect(alert).toContain(part);
     expect(templateName("BOOKING_REMINDER", "ar")).toMatch(/^[a-z0-9_]+$/);
   });
 });
