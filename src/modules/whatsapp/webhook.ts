@@ -33,8 +33,18 @@ export interface StatusUpdate {
 }
 
 // استخراج الرسايل والحالات من شكل payload بتاع Meta
-export function parseWebhookPayload(body: any): { phoneNumberId?: string; messages: IncomingMessage[]; statuses: StatusUpdate[] }[] {
-  const out: { phoneNumberId?: string; messages: IncomingMessage[]; statuses: StatusUpdate[] }[] = [];
+// رسالة التاجر بعتها بنفسه من تطبيق واتساب Business على الموبايل (Coexistence -
+// Meta بتبعتها في smb_message_echoes) - بتتسجل في المحادثة كرسالة صادرة
+export interface EchoMessage {
+  to: string;
+  id: string;
+  text: string;
+  type: string;
+}
+
+type WebhookBatch = { phoneNumberId?: string; messages: IncomingMessage[]; statuses: StatusUpdate[]; echoes: EchoMessage[] };
+export function parseWebhookPayload(body: any): WebhookBatch[] {
+  const out: WebhookBatch[] = [];
   if (!body || body.object !== "whatsapp_business_account" || !Array.isArray(body.entry)) return out;
   for (const entry of body.entry) {
     for (const change of entry?.changes ?? []) {
@@ -55,12 +65,17 @@ export function parseWebhookPayload(body: any): { phoneNumberId?: string; messag
                 : `[${m.type}]`;
         messages.push({ from: String(m.from), id: String(m.id), name: names.get(String(m.from)) || undefined, text: String(text), type: String(m.type) });
       }
+      const echoes: EchoMessage[] = [];
+      for (const m of value.message_echoes ?? []) {
+        if (!m?.to || !m?.id) continue;
+        echoes.push({ to: String(m.to), id: String(m.id), text: String(m.type === "text" ? m.text?.body ?? "" : `[${m.type}]`), type: String(m.type ?? "text") });
+      }
       const statuses: StatusUpdate[] = [];
       for (const s of value.statuses ?? []) {
         if (!s?.id || !s?.status) continue;
         statuses.push({ id: String(s.id), status: String(s.status), error: s.errors?.[0]?.title || s.errors?.[0]?.message });
       }
-      out.push({ phoneNumberId: value.metadata?.phone_number_id ? String(value.metadata.phone_number_id) : undefined, messages, statuses });
+      out.push({ phoneNumberId: value.metadata?.phone_number_id ? String(value.metadata.phone_number_id) : undefined, messages, statuses, echoes });
     }
   }
   return out;
@@ -147,6 +162,13 @@ export async function handleWebhook(tenantId: string, body: any) {
       if (already) continue; // Meta بتعيد بعت نفس الرسالة أحيانًا
       await recordWhatsappMessage({ tenantId, direction: "IN", contactPhone: m.from, contactName: m.name, body: m.text, kind: m.type, waMessageId: m.id });
       await runBot(tenantId, m);
+    }
+
+    // اللي التاجر بعته من الموبايل - بيتسجل بس (البوت مابيردش عليه)
+    for (const e of batch.echoes) {
+      const already = await prisma.whatsappMessage.findUnique({ where: { waMessageId: e.id } });
+      if (already) continue;
+      await recordWhatsappMessage({ tenantId, direction: "OUT", contactPhone: e.to, body: e.text, kind: "app", waMessageId: e.id, status: "sent" });
     }
   }
 }

@@ -121,6 +121,8 @@ const embeddedCompleteSchema = z.object({
   code: z.string().trim().min(10).max(2000),
   wabaId: z.string().trim().regex(/^\d{5,30}$/, "Meta didn't send a valid WhatsApp Business Account ID"),
   phoneNumberId: z.string().trim().regex(/^\d{5,30}$/, "Meta didn't send a valid phone number ID"),
+  // الرقم شغال على تطبيق واتساب Business وهيفضل شغال عليه (Coexistence)
+  coexistence: z.boolean().optional(),
 });
 
 // بعد ما التاجر يخلص في نافذة Meta: نبدّل الكود بتوكن، نشترك في رسايل الحساب،
@@ -129,7 +131,7 @@ whatsappRouter.post("/embedded-signup/complete", requireRole("OWNER", "ADMIN"), 
   if (!embeddedSignupConfig().enabled) return res.status(400).json({ error: "Connecting with Facebook isn't set up yet — use the manual setup below." });
   const parsed = embeddedCompleteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid data from Meta" });
-  const { code, wabaId, phoneNumberId } = parsed.data;
+  const { code, wabaId, phoneNumberId, coexistence } = parsed.data;
   const tenantId = req.auth!.tenantId;
 
   const exchanged = await exchangeSignupCode(code);
@@ -139,8 +141,11 @@ whatsappRouter.post("/embedded-signup/complete", requireRole("OWNER", "ADMIN"), 
   const warnings: string[] = [];
   const sub = await subscribeAppToWaba(token, wabaId);
   if (!sub.ok) warnings.push(`Incoming messages: ${sub.error}`);
-  const reg = await registerPhoneNumber(token, phoneNumberId);
-  if (!reg.ok && !/already|registered/i.test(reg.error ?? "")) warnings.push(`Number activation: ${reg.error}`);
+  // في Coexistence الرقم متسجّل على التطبيق - التفعيل (register) كان هيفصله من الموبايل
+  if (!coexistence) {
+    const reg = await registerPhoneNumber(token, phoneNumberId);
+    if (!reg.ok && !/already|registered/i.test(reg.error ?? "")) warnings.push(`Number activation: ${reg.error}`);
+  }
 
   await ensureWebhookKeys(tenantId);
   await prisma.whatsappSettings.update({
