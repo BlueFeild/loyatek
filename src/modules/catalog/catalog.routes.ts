@@ -109,6 +109,8 @@ const createItemSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   price: z.number().min(0),
+  // صورة الصنف ممكن تتبعت مع الإضافة نفسها (التاجر بيختارها قبل ما يدوس Add)
+  photoDataUrl: z.string().regex(/^data:image\/(png|jpeg|webp|gif);base64,/, "Use a PNG, JPG, WebP or GIF photo").max(6_000_000).optional(),
 });
 
 catalogRouter.post("/items", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
