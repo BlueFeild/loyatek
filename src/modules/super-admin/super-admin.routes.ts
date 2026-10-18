@@ -14,6 +14,8 @@ import { getPlatformAnalytics } from "../analytics/analytics.service";
 import { createLinkedCompany } from "../tenants/company-creation.service";
 import { buildInvoicePdf } from "./invoice-pdf.service";
 import { activateSubscriptionOrder, syncOrderPayment } from "../checkout/order-activation";
+import { createPasswordLink, emailTaken, generateTempPassword, sendEmailChangedNotice, sendOwnerInviteEmail, sendWelcomeEmail } from "../auth/account-links";
+import { transferOwnership } from "../account/account.routes";
 
 // كل موظفين الأجنسي (BlueField team) بيتسجلوا كـ Users جوه شركة
 // داخلية واحدة ثابتة (مش شركة عميل حقيقية) - بننشئها أول مرة لو
@@ -494,6 +496,80 @@ const createAgencyStaffSchema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
   password: z.string().min(8),
+});
+
+// --- حسابات العملاء ---
+
+const createClientSchema = z.object({
+  companyName: z.string().trim().min(2, "Company name is too short").max(120),
+  industry: z.enum(["RETAIL", "SERVICES", "HOSPITALITY", "REAL_ESTATE", "SALONS"]),
+  ownerName: z.string().trim().min(2, "Owner name is too short").max(80),
+  email: z.string().trim().toLowerCase().email("Enter a valid email"),
+  // فاضي = السيستم بيعمل باسورد مؤقت
+  password: z.string().min(8, "The password must be at least 8 characters").max(200).optional().or(z.literal("")),
+  sendEmail: z.boolean().default(true),
+});
+
+// السوبر أدمن بيعمل حساب لعميل: شركة + صاحبها (OWNER) بإيميل وباسورد، والبيانات
+// بتتبعت للعميل على إيميله (لينك الدخول + الباسورد المؤقت + لينك يختار باسورد بنفسه)
+superAdminRouter.post("/clients", async (req, res) => {
+  const parsed = createClientSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid data" });
+  const d = parsed.data;
+  if (await emailTaken(d.email)) return res.status(400).json({ error: "This email already has a BlueField account" });
+  const password = d.password || generateTempPassword();
+  const tenant = await prisma.tenant.create({
+    data: {
+      name: d.companyName,
+      industry: d.industry,
+      slug: await generateUniqueSlug(d.companyName),
+      // نفس تجربة التسجيل العادي (٢٤ ساعة) - الاشتراك بيتفعّل من السوبر أدمن
+      trialExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      users: { create: { name: d.ownerName, email: d.email, passwordHash: await bcrypt.hash(password, 10), role: "OWNER" } },
+    },
+    include: { users: true },
+  });
+  const owner = tenant.users[0];
+  let emailSent = false;
+  if (d.sendEmail) {
+    const link = await createPasswordLink(owner.id, "INVITE");
+    emailSent = (await sendWelcomeEmail({ to: owner.email, name: owner.name, companyName: tenant.name, tempPassword: password, setPasswordLink: link })).ok;
+  }
+  // الباسورد بيرجع مرة واحدة بس (لو الإيميل ماوصلش، السوبر أدمن يبعته بنفسه)
+  res.status(201).json({ tenantId: tenant.id, companyName: tenant.name, email: owner.email, password, emailSent });
+});
+
+const changeOwnerSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Enter a valid email"),
+  name: z.string().trim().min(2).max(80).optional(),
+  // "edit" = نفس الشخص بإيميل جديد، "transfer" = صاحب تاني (الصاحب القديم بيبقى ADMIN)
+  mode: z.enum(["edit", "transfer"]).default("edit"),
+});
+
+superAdminRouter.patch("/tenants/:id/owner", async (req, res) => {
+  const parsed = changeOwnerSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid data" });
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id }, include: { users: { where: { role: "OWNER", isLinkedCompany: false } } } });
+  if (!tenant) return res.status(404).json({ error: "Company not found" });
+  const owner = tenant.users[0] ?? null;
+
+  if (parsed.data.mode === "transfer" || !owner) {
+    const r = await transferOwnership(tenant.id, owner?.id ?? null, parsed.data.email, parsed.data.name);
+    if (!r.ok) return res.status(400).json({ error: r.error });
+    return res.json(r);
+  }
+  // نفس الصاحب، إيميل جديد: بنقفل جلساته ونبعتله لينك يختار باسورد على الإيميل الجديد
+  if (parsed.data.email === owner.email.toLowerCase()) return res.status(400).json({ error: "That's already the owner's email" });
+  if (await emailTaken(parsed.data.email, owner.id)) return res.status(400).json({ error: "This email already has a BlueField account" });
+  const oldEmail = owner.email;
+  await prisma.$transaction([
+    prisma.user.update({ where: { id: owner.id }, data: { email: parsed.data.email, googleId: null, ...(parsed.data.name ? { name: parsed.data.name } : {}) } }),
+    prisma.refreshToken.deleteMany({ where: { userId: owner.id } }),
+  ]);
+  const link = await createPasswordLink(owner.id, "INVITE");
+  const sent = await sendOwnerInviteEmail({ to: parsed.data.email, name: parsed.data.name || owner.name, companyName: tenant.name, setPasswordLink: link });
+  await sendEmailChangedNotice(oldEmail, owner.name, parsed.data.email).catch(() => {});
+  res.json({ ok: true, ownerEmail: parsed.data.email, emailSent: sent.ok, newAccount: false });
 });
 
 superAdminRouter.post("/agency-staff", async (req, res) => {

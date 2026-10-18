@@ -20,6 +20,12 @@ function escapeHtml(s: string) {
 // النص بيتبعت زي ما هو (text) + نسخة HTML بسيطة بنفس الكلام (من غير أي
 // HTML من المستخدم - كله escaped)
 export async function sendEmail(to: string, subject: string, text: string): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {
+  // للاختبار المحلي بس: الإيميلات بتتكتب في ملف بدل ما تتبعت (مش متظبط على Railway)
+  if (process.env.EMAIL_OUTBOX_FILE) {
+    const { appendFileSync } = await import("fs");
+    appendFileSync(process.env.EMAIL_OUTBOX_FILE, JSON.stringify({ to, subject, text }) + "\n");
+    return { ok: true };
+  }
   if (!isEmailConfigured()) return { ok: false, skipped: true };
   if (!isValidEmail(to)) return { ok: false, error: "invalid recipient" };
   const html = `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#0f172a;white-space:pre-wrap">${escapeHtml(text)}</div>`;

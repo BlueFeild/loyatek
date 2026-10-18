@@ -5,6 +5,7 @@ import { authRouter } from "./modules/auth/auth.routes";
 import { tenantsRouter } from "./modules/tenants/tenants.routes";
 import { companiesRouter } from "./modules/tenants/companies.routes";
 import { usersRouter } from "./modules/users/users.routes";
+import { accountRouter } from "./modules/account/account.routes";
 import { inventoryRouter } from "./modules/inventory/inventory.routes";
 import { suppliersRouter } from "./modules/procurement/suppliers.routes";
 import { purchaseOrdersRouter } from "./modules/procurement/purchase-orders.routes";
@@ -89,6 +90,8 @@ app.use("/api/auth", authRouter);
 app.use("/api/tenants", tenantsRouter);
 app.use("/api/tenants/companies", companiesRouter);
 app.use("/api/users", usersRouter);
+// حسابي: تغيير الإيميل/الباسورد ونقل الملكية
+app.use("/api/account", accountRouter);
 app.use("/api/inventory", inventoryRouter);
 app.use("/api/suppliers", suppliersRouter);
 app.use("/api/purchase-orders", purchaseOrdersRouter);

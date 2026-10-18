@@ -186,6 +186,7 @@ model User {
   updatedAt    DateTime @updatedAt
 
   refreshTokens RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
   employee      Employee?
   agencyAssignments AgencyAssignment[]
   ownedCompanyMemberships CompanyMembership[] @relation("CompanyMembershipOwner")
@@ -231,6 +232,23 @@ model AgencyAssignment {
   @@unique([staffUserId, clientTenantId])
   @@index([clientTenantId])
   @@map("agency_assignments")
+}
+
+// لينك تعيين/تغيير الباسورد اللي بيتبعت على الإيميل ("نسيت الباسورد"، أو حساب
+// اتعمل للعميل من السوبر أدمن، أو صاحب جديد للشركة). بنخزن hash التوكن بس -
+// التوكن نفسه في الإيميل بس. بيتستخدم مرة واحدة وليه تاريخ انتهاء
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  purpose   String    @default("RESET") // RESET | INVITE
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 model RefreshToken {

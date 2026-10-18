@@ -15,7 +15,7 @@ interface RegisterInput {
 
 // عند تسجيل عميل جديد: بيتعمل Tenant (شركة) + أول مستخدم بدور OWNER
 export async function registerTenant(input: RegisterInput) {
-  const existing = await prisma.user.findFirst({ where: { email: input.email } });
+  const existing = await prisma.user.findFirst({ where: { email: { equals: input.email.trim(), mode: "insensitive" } } });
   if (existing) throw new Error("Email already in use");
 
   const passwordHash = await bcrypt.hash(input.password, 10);
@@ -74,7 +74,8 @@ export async function login(input: LoginInput) {
   // isLinkedCompany: false - عشان لو الشخص ده مالك أكتر من شركة، بنسجّله
   // دايمًا في حساب "الهوم" بتاعه بالإيميل/الباسورد، مش في أي شركة
   // إضافية عنده نفس الإيميل بالظبط (السويتش بينهم بيتم من واجهة منفصلة)
-  const user = await prisma.user.findFirst({ where: { email: input.email, isActive: true, isLinkedCompany: false } });
+  // الإيميل مش حساس لحروف كبيرة/صغيرة (Info@ = info@)
+  const user = await prisma.user.findFirst({ where: { email: { equals: input.email.trim(), mode: "insensitive" }, isActive: true, isLinkedCompany: false } });
   if (!user) throw new Error("Invalid credentials");
 
   if (!user.passwordHash) {
