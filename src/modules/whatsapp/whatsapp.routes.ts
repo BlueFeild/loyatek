@@ -113,6 +113,26 @@ whatsappRouter.patch("/settings", requireRole("OWNER", "ADMIN"), async (req, res
   res.json(settingsView(updated, req));
 });
 
+// فك ربط رقم الواتساب: بيشيل المفتاح والرقم من الشركة (المنصة تبطّل تبعت أو تستقبل عليه).
+// المحادثات والقوالب والبوت بيفضلوا محفوظين، ويتربط رقم تاني وقت ما تحبي
+whatsappRouter.post("/disconnect", requireRole("OWNER", "ADMIN"), async (req, res) => {
+  await getOrCreateWhatsappSettings(req.auth!.tenantId);
+  await prisma.whatsappSettings.update({
+    where: { tenantId: req.auth!.tenantId },
+    data: {
+      metaAccessToken: null,
+      metaPhoneNumberId: null,
+      metaWabaId: null,
+      isConnected: false,
+      displayPhoneNumber: null,
+      verifiedName: null,
+      lastVerifiedAt: null,
+      lastVerifyError: null,
+    },
+  });
+  res.json(settingsView(await getOrCreateWhatsappSettings(req.auth!.tenantId), req));
+});
+
 // --- Embedded Signup (ربط الواتساب من نافذة Meta من غير نسخ IDs وتوكن) ---
 
 // القيم العامة اللي الصفحة محتاجاها عشان تفتح نافذة Meta (من غير أي سر)
