@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
+import { assertTenantOwns } from "../../utils/tenant-owned";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 
 export const rfqRouter = Router();
 
-rfqRouter.use(requireAuth);
+rfqRouter.use(requireAuth, requireModule("erp"));
 
 rfqRouter.get("/", async (req, res) => {
   const rfqs = await prisma.rfqRequest.findMany({
@@ -35,6 +37,15 @@ const createRfqSchema = z.object({
 rfqRouter.post("/", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   const parsed = createRfqSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  try {
+    await assertTenantOwns(req.auth!.tenantId, {
+      branchIds: [parsed.data.branchId],
+      itemIds: [parsed.data.itemId],
+      supplierIds: parsed.data.quotes.map((q) => q.supplierId),
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
 
   const rfq = await prisma.rfqRequest.create({
     data: {
@@ -54,6 +65,9 @@ rfqRouter.post("/:id/quotes/:quoteId/select", requireRole("OWNER", "ADMIN", "MAN
     where: { id: req.params.id, tenantId: req.auth!.tenantId },
   });
   if (!rfq) return res.status(404).json({ error: "RFQ not found" });
+  // العرض لازم يكون جوه نفس الطلب (مش أي عرض بأي ID)
+  const quote = await prisma.rfqQuote.findFirst({ where: { id: req.params.quoteId, rfqRequestId: rfq.id } });
+  if (!quote) return res.status(404).json({ error: "Quote not found" });
 
   await prisma.$transaction([
     prisma.rfqQuote.updateMany({ where: { rfqRequestId: rfq.id }, data: { selected: false } }),

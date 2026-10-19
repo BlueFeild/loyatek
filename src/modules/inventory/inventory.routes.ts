@@ -2,10 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 
 export const inventoryRouter = Router();
 
-inventoryRouter.use(requireAuth);
+inventoryRouter.use(requireAuth, requireModule("erp"));
 
 // عرض كل أصناف المخزون الخاصة بالشركة (وممكن تفلتر بفرع معين)
 inventoryRouter.get("/", async (req, res) => {

@@ -2,10 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 
 export const accountsRouter = Router();
 
-accountsRouter.use(requireAuth);
+accountsRouter.use(requireAuth, requireModule("erp"));
 
 accountsRouter.get("/", async (req, res) => {
   const accounts = await prisma.account.findMany({
@@ -46,6 +47,8 @@ accountsRouter.post("/seed-defaults", requireRole("OWNER", "ADMIN"), async (req,
     { code: "3000", name: "Owner's Equity", type: "EQUITY" },
     { code: "4000", name: "Sales Revenue", type: "REVENUE" },
     { code: "5000", name: "Cost of Goods Sold", type: "EXPENSE" },
+    // فواتير الموردين/المصروفات بتتسجل هنا (مش على تكلفة البضاعة)
+    { code: "5100", name: "General Expenses", type: "EXPENSE" },
   ];
 
   const created = await prisma.$transaction(

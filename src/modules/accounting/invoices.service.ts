@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db";
 import { generateZatcaQrPayload } from "./zatca-qr";
 import { getTenantMoney, payableAmount } from "../../utils/money";
+import { assertTenantOwns } from "../../utils/tenant-owned";
 
 export const VAT_RATE = 0.05; // 5% - نفس المعيار المستخدم في دول الخليج
 
@@ -25,6 +26,8 @@ async function nextInvoiceNumber(tenantId: string): Promise<string> {
 
 // إنشاء فاتورة مسودة - لسه ما اتصدرتش، مفيش قيد محاسبي ولا QR لسه
 export async function createInvoice(input: CreateInvoiceInput) {
+  // العميل والفرع لازم يكونوا تبع نفس الشركة
+  await assertTenantOwns(input.tenantId, { branchIds: [input.branchId], customerIds: [input.customerId] });
   const subtotal = input.items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
   const vatAmount = Math.round(subtotal * VAT_RATE * 100) / 100;
   const total = subtotal + vatAmount;

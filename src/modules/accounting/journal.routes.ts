@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
+import { assertTenantOwns } from "../../utils/tenant-owned";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 import { createJournalEntry, getProfitAndLoss, getTrialBalance, type LedgerFilter } from "./journal.service";
 import { periodFilter } from "../../utils/period";
 
@@ -12,7 +14,7 @@ function ledgerFilter(query: Record<string, unknown>): LedgerFilter {
 
 export const journalRouter = Router();
 
-journalRouter.use(requireAuth);
+journalRouter.use(requireAuth, requireModule("erp"));
 
 journalRouter.get("/", async (req, res) => {
   const f = ledgerFilter(req.query as Record<string, unknown>);
@@ -47,6 +49,12 @@ journalRouter.post("/", requireRole("OWNER", "ADMIN"), async (req, res) => {
   // الفرع لازم يكون تبع نفس الشركة
   if (parsed.data.branchId && !(await prisma.branch.findFirst({ where: { id: parsed.data.branchId, tenantId: req.auth!.tenantId } }))) {
     return res.status(400).json({ error: "Branch not found" });
+  }
+  // كل حساب في القيد لازم يكون من دليل حسابات نفس الشركة
+  try {
+    await assertTenantOwns(req.auth!.tenantId, { accountIds: parsed.data.lines.map((l) => l.accountId) });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
   }
   try {
     const entry = await createJournalEntry({

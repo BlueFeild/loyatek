@@ -1,4 +1,5 @@
 import { prisma } from "../../config/db";
+import { assertTenantOwns } from "../../utils/tenant-owned";
 
 interface CreatePOInput {
   tenantId: string;
@@ -9,6 +10,12 @@ interface CreatePOInput {
 
 // إنشاء أمر شراء بحالة DRAFT - لسه ما اتحدثش المخزون
 export async function createPurchaseOrder(input: CreatePOInput) {
+  // الفرع والمورد وكل الأصناف لازم يكونوا تبع نفس الشركة
+  await assertTenantOwns(input.tenantId, {
+    branchIds: [input.branchId],
+    supplierIds: [input.supplierId],
+    itemIds: input.items.map((i) => i.itemId),
+  });
   return prisma.purchaseOrder.create({
     data: {
       tenantId: input.tenantId,
@@ -57,6 +64,8 @@ export async function receivePurchaseOrder(tenantId: string, purchaseOrderId: st
   if (!po) throw new Error("Purchase order not found");
   if (po.status === "RECEIVED") throw new Error("Purchase order already received");
   if (po.status === "CANCELLED") throw new Error("Cannot receive a cancelled purchase order");
+  // أوامر قديمة (قبل التحقق) ممكن يكون فيها صنف من شركة تانية - منزوّدش مخزون حد تاني
+  await assertTenantOwns(tenantId, { itemIds: po.items.map((i: { itemId: string }) => i.itemId) });
 
   const operations = po.items.flatMap((item: { itemId: string; quantity: number }) => [
     prisma.inventoryItem.update({

@@ -2,9 +2,10 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 
 export const manufacturingRouter = Router();
-manufacturingRouter.use(requireAuth);
+manufacturingRouter.use(requireAuth, requireModule("erp"));
 
 manufacturingRouter.get("/boms", async (req, res) => {
   const boms = await prisma.billOfMaterials.findMany({

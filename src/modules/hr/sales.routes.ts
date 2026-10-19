@@ -2,11 +2,12 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 import { recordSale } from "./sales.service";
 
 export const salesRouter = Router();
 
-salesRouter.use(requireAuth);
+salesRouter.use(requireAuth, requireModule("erp"));
 
 salesRouter.get("/", async (req, res) => {
   const sales = await prisma.sale.findMany({

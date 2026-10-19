@@ -1,12 +1,14 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
+import { assertTenantOwns } from "../../utils/tenant-owned";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 import { enrichEmployee, upsertShift, upsertAttendance, getWeekDates, computeGratuity } from "./hr.service";
 
 export const employeesRouter = Router();
 
-employeesRouter.use(requireAuth);
+employeesRouter.use(requireAuth, requireModule("erp"));
 
 // قائمة الموظفين + بيانات الحضور والهدف/الفعلي المحسوبة فعليًا لكل واحد
 employeesRouter.get("/", async (req, res) => {
@@ -38,6 +40,11 @@ const createEmployeeSchema = z.object({
 employeesRouter.post("/", requireRole("OWNER", "ADMIN"), async (req, res) => {
   const parsed = createEmployeeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  try {
+    await assertTenantOwns(req.auth!.tenantId, { branchIds: [parsed.data.branchId] });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
 
   const employee = await prisma.employee.create({
     data: {
@@ -58,6 +65,10 @@ employeesRouter.get("/:id/gratuity", async (req, res) => {
 });
 
 const updateEmployeeSchema = z.object({
+  name: z.string().min(2).optional(),
+  position: z.string().min(2).optional(),
+  commissionRate: z.number().min(0).max(1).optional(),
+  monthlyTarget: z.number().min(0).optional(),
   hireDate: z.string().optional(),
   terminationDate: z.string().nullable().optional(),
   baseSalary: z.number().min(0).optional(),
@@ -73,6 +84,10 @@ employeesRouter.patch("/:id", requireRole("OWNER", "ADMIN"), async (req, res) =>
   const updated = await prisma.employee.update({
     where: { id: employee.id },
     data: {
+      name: parsed.data.name,
+      position: parsed.data.position,
+      commissionRate: parsed.data.commissionRate,
+      monthlyTarget: parsed.data.monthlyTarget,
       baseSalary: parsed.data.baseSalary,
       hireDate: parsed.data.hireDate ? new Date(parsed.data.hireDate) : undefined,
       terminationDate: parsed.data.terminationDate !== undefined ? (parsed.data.terminationDate ? new Date(parsed.data.terminationDate) : null) : undefined,

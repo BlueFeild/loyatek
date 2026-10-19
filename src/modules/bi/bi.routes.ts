@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { requireAuth } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 import { getRevenueTrend, getBranchPerformance } from "./bi.service";
 
 export const biRouter = Router();
 
-biRouter.use(requireAuth);
+biRouter.use(requireAuth, requireModule("erp"));
 
 biRouter.get("/revenue-trend", async (req, res) => {
   const days = req.query.days ? Number(req.query.days) : 30;

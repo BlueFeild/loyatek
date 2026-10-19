@@ -2,11 +2,12 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 import { createInvoice, issueInvoice, getVatReport } from "./invoices.service";
 
 export const invoicesRouter = Router();
 
-invoicesRouter.use(requireAuth);
+invoicesRouter.use(requireAuth, requireModule("erp"));
 
 invoicesRouter.get("/", async (req, res) => {
   const invoices = await prisma.invoice.findMany({
@@ -35,8 +36,12 @@ invoicesRouter.post("/", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, r
   const parsed = createInvoiceSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const invoice = await createInvoice({ tenantId: req.auth!.tenantId, ...parsed.data });
-  res.status(201).json(invoice);
+  try {
+    const invoice = await createInvoice({ tenantId: req.auth!.tenantId, ...parsed.data });
+    res.status(201).json(invoice);
+  } catch (err: any) {
+    res.status(err.status ?? 400).json({ error: err.message });
+  }
 });
 
 // إصدار الفاتورة - بيحسب الضريبة، يولّد الـ QR، وينشئ القيد المحاسبي تلقائيًا

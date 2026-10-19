@@ -2,9 +2,10 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 
 export const assetsRouter = Router();
-assetsRouter.use(requireAuth);
+assetsRouter.use(requireAuth, requireModule("erp"));
 
 // إهلاك خطي حقيقي: (سعر الشراء - قيمة الخردة) / سنين العمر الافتراضي،
 // مضروبة في عدد السنين اللي عدّت فعليًا من تاريخ الشراء لحد دلوقتي

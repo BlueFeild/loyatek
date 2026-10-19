@@ -2,10 +2,11 @@ import express, { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 import { periodFilter } from "../../utils/period";
 
 export const vendorBillsRouter = Router();
-vendorBillsRouter.use(requireAuth);
+vendorBillsRouter.use(requireAuth, requireModule("erp"));
 
 // بيدوّر على الحسابات الأساسية في دليل حسابات الشركة، ولو مش موجودة بيعملها
 // تلقائيًا - عشان كل فاتورة مصروف وكل سداد يتسجّلوا كقيود محاسبية حقيقية من غير
@@ -15,7 +16,10 @@ async function getOrCreateAccount(tx: any, tenantId: string, code: string, name:
   if (found) return found;
   return tx.account.create({ data: { tenantId, code, name, type } });
 }
-const expenseAccount = (tx: any, t: string) => getOrCreateAccount(tx, t, "5000", "General Expenses", "EXPENSE");
+// 5000 = تكلفة البضاعة المباعة (دليل الحسابات المبدئي) - فواتير المصروفات ليها حساب لوحدها 5100
+// (قبل كده كانت بتتسجل على 5000 باسم "General Expenses" فبتختلط بتكلفة البضاعة)
+export const BILL_EXPENSE_CODE = "5100";
+const expenseAccount = (tx: any, t: string) => getOrCreateAccount(tx, t, BILL_EXPENSE_CODE, "General Expenses", "EXPENSE");
 const payableAccount = (tx: any, t: string) => getOrCreateAccount(tx, t, "2000", "Accounts Payable", "LIABILITY");
 const cashAccount = (tx: any, t: string) => getOrCreateAccount(tx, t, "1000", "Cash", "ASSET");
 

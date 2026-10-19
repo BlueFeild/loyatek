@@ -2,33 +2,28 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
+import { computeActual } from "./budget-actuals";
 
 export const budgetRouter = Router();
-budgetRouter.use(requireAuth);
+budgetRouter.use(requireAuth, requireModule("erp"));
 
-// الفعلي بيتحسب من مبيعات الشهر الحقيقية (Sale.total) لنفس الفرع
-// والفئة - مش رقم مدخل يدوي، فعلاً بيتقارن ببيانات حقيقية مسجّلة
-async function computeActual(tenantId: string, branchId: string, month: number, year: number) {
-  const start = new Date(year, month - 1, 1);
-  const end = new Date(year, month, 1);
-  const sales = await prisma.sale.aggregate({
-    where: { tenantId, branchId, createdAt: { gte: start, lt: end } },
-    _sum: { totalAmount: true },
-  });
-  return Number(sales._sum.totalAmount ?? 0);
-}
-
+// الفعلي بيتحسب حسب نوع البند (مبيعات / حساب في الدليل / فواتير بنفس الفئة) - budget-actuals.ts
 budgetRouter.get("/", async (req, res) => {
   const lines = await prisma.budgetLine.findMany({
     where: { tenantId: req.auth!.tenantId },
     orderBy: [{ periodYear: "desc" }, { periodMonth: "desc" }],
   });
 
+  const accounts = await prisma.account.findMany({
+    where: { tenantId: req.auth!.tenantId },
+    select: { id: true, code: true, name: true, type: true },
+  });
   const withActuals = await Promise.all(
-    lines.map(async (l: any) => ({
-      ...l,
-      actualAmount: await computeActual(l.tenantId, l.branchId, l.periodMonth, l.periodYear),
-    }))
+    lines.map(async (l: any) => {
+      const { actual, source } = await computeActual(l, accounts);
+      return { ...l, actualAmount: actual, actualSource: source };
+    })
   );
 
   res.json(withActuals);
@@ -39,18 +34,24 @@ const createBudgetSchema = z.object({
   periodMonth: z.number().int().min(1).max(12),
   periodYear: z.number().int().min(2020),
   budgetedAmount: z.number().min(0),
+  // اختياري: فرع معيّن (غير كده أول فرع)
+  branchId: z.string().uuid().optional(),
 });
 
 budgetRouter.post("/", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   const parsed = createBudgetSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const branch = await prisma.branch.findFirst({ where: { tenantId: req.auth!.tenantId } });
-  if (!branch) return res.status(400).json({ error: "No branch found for this company" });
+  const { branchId, ...data } = parsed.data;
+  const branch = await prisma.branch.findFirst({
+    where: { tenantId: req.auth!.tenantId, ...(branchId ? { id: branchId } : {}) },
+    orderBy: { createdAt: "asc" },
+  });
+  if (!branch) return res.status(400).json({ error: branchId ? "Branch not found" : "No branch found for this company" });
 
   try {
     const line = await prisma.budgetLine.create({
-      data: { tenantId: req.auth!.tenantId, branchId: branch.id, ...parsed.data },
+      data: { tenantId: req.auth!.tenantId, branchId: branch.id, ...data, category: data.category.trim() },
     });
     res.status(201).json(line);
   } catch (err: any) {
