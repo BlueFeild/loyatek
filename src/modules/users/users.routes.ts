@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { assertTenantOwns } from "../../utils/tenant-owned";
 
 export const usersRouter = Router();
 
@@ -29,6 +30,11 @@ const inviteSchema = z.object({
 usersRouter.post("/", requireRole("OWNER", "ADMIN"), async (req, res) => {
   const parsed = inviteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  try {
+    await assertTenantOwns(req.auth!.tenantId, { branchIds: [parsed.data.branchId] });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
 
   const passwordHash = await bcrypt.hash(parsed.data.password, 10);
 

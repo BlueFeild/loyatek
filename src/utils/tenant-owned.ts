@@ -10,6 +10,9 @@ export interface OwnedRefs {
   itemIds?: (string | null | undefined)[];
   accountIds?: (string | null | undefined)[];
   employeeIds?: (string | null | undefined)[];
+  resourceIds?: (string | null | undefined)[];
+  userIds?: (string | null | undefined)[];
+  whatsappTemplateIds?: (string | null | undefined)[];
 }
 
 export class NotOwnedError extends Error {
@@ -35,4 +38,7 @@ export async function assertTenantOwns(tenantId: string, refs: OwnedRefs, db: an
   await check(refs.itemIds, (ids) => db.inventoryItem.count({ where: { tenantId, id: { in: ids } } }), "Inventory item");
   await check(refs.accountIds, (ids) => db.account.count({ where: { tenantId, id: { in: ids } } }), "Account");
   await check(refs.employeeIds, (ids) => db.employee.count({ where: { tenantId, id: { in: ids } } }), "Employee");
+  await check(refs.resourceIds, (ids) => db.resource.count({ where: { tenantId, id: { in: ids } } }), "Resource");
+  await check(refs.userIds, (ids) => db.user.count({ where: { tenantId, id: { in: ids } } }), "User");
+  await check(refs.whatsappTemplateIds, (ids) => db.whatsappTemplate.count({ where: { tenantId, id: { in: ids } } }), "Template");
 }

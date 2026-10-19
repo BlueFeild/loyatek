@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { requireModule } from "../../middleware/module-access";
+import { assertTenantOwns } from "../../utils/tenant-owned";
 
 export const opsRouter = Router();
 opsRouter.use(requireAuth, requireModule("erp"));
@@ -27,6 +28,12 @@ const createTaskSchema = z.object({
 opsRouter.post("/tasks", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   const parsed = createTaskSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  // المسؤول عن المهمة لازم يكون موظف في نفس الشركة
+  try {
+    await assertTenantOwns(req.auth!.tenantId, { employeeIds: [parsed.data.assigneeId] });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
 
   const branch = await prisma.branch.findFirst({ where: { tenantId: req.auth!.tenantId } });
   if (!branch) return res.status(400).json({ error: "No branch found for this company" });
@@ -64,6 +71,11 @@ opsRouter.patch("/tasks/:id", async (req, res) => {
 
   const task = await prisma.opsTask.findFirst({ where: { id: req.params.id, tenantId: req.auth!.tenantId } });
   if (!task) return res.status(404).json({ error: "Task not found" });
+  try {
+    await assertTenantOwns(req.auth!.tenantId, { employeeIds: [parsed.data.assigneeId] });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
 
   const updated = await prisma.opsTask.update({
     where: { id: task.id },

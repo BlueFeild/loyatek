@@ -9,6 +9,7 @@ import { formatCalendarDate, parseCalendarDate, todayCalendarDate } from "../../
 import { isValidEmail, sendEmail } from "../../utils/email";
 import { getTenantMoney, payableAmount } from "../../utils/money";
 import { computeBookingAmount, hasPricedServices } from "./service-pricing";
+import { assertTenantOwns } from "../../utils/tenant-owned";
 
 // إعدادات الحجز لكل شركة - بتتنشئ تلقائيًا بقيم افتراضية أول مرة
 export async function getOrCreateSettings(tenantId: string) {
@@ -192,6 +193,9 @@ async function runBookingConfirmationSideEffects(
 // الحجز يتحفظ فعليًا ونعرف الـ id بتاعه
 export async function createBooking(input: CreateBookingInput & { redirectionUrlBase?: string; paymentMethodId?: string }) {
   const dayStart = requireCalendarDate(input.date);
+  // المورد (والفرع) لازم يكونوا تبع نفس الشركة - غير كده أي حد (حتى من
+  // صفحة الحجز العامة) يقدر يحجز/يقفل ميعاد على مورد شركة تانية
+  await assertTenantOwns(input.tenantId, { branchIds: [input.branchId], resourceIds: [input.resourceId] });
 
   const settings = await getOrCreateSettings(input.tenantId);
   // المبلغ = مجموع أسعار الخدمات اللي اختارها (من الأسعار المحفوظة)، أو

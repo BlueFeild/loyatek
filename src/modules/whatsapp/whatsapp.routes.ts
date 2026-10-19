@@ -4,6 +4,7 @@ import { z } from "zod";
 import * as XLSX from "xlsx";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { assertTenantOwns } from "../../utils/tenant-owned";
 import {
   getOrCreateWhatsappSettings,
   getUnifiedContacts,
@@ -400,6 +401,12 @@ const createCampaignSchema = z.object({
 whatsappRouter.post("/campaigns", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   const parsed = createCampaignSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  // القالب لازم يكون من قوالب نفس الشركة
+  try {
+    await assertTenantOwns(req.auth!.tenantId, { whatsappTemplateIds: [parsed.data.templateId] });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
 
   const campaign = await prisma.whatsappCampaign.create({
     data: { tenantId: req.auth!.tenantId, ...parsed.data },

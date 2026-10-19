@@ -4,6 +4,7 @@ import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { requireModule } from "../../middleware/module-access";
 import { advanceDeal, markDealLost } from "./deals.service";
+import { assertTenantOwns } from "../../utils/tenant-owned";
 
 export const dealsRouter = Router();
 
@@ -27,6 +28,11 @@ const createDealSchema = z.object({
 dealsRouter.post("/", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   const parsed = createDealSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  try {
+    await assertTenantOwns(req.auth!.tenantId, { customerIds: [parsed.data.customerId] });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
 
   const [deal] = await prisma.$transaction([
     prisma.deal.create({ data: { tenantId: req.auth!.tenantId, ...parsed.data }, include: { customer: true } }),

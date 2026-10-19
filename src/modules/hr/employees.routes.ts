@@ -41,7 +41,7 @@ employeesRouter.post("/", requireRole("OWNER", "ADMIN"), async (req, res) => {
   const parsed = createEmployeeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   try {
-    await assertTenantOwns(req.auth!.tenantId, { branchIds: [parsed.data.branchId] });
+    await assertTenantOwns(req.auth!.tenantId, { branchIds: [parsed.data.branchId], userIds: [parsed.data.userId] });
   } catch (err: any) {
     return res.status(400).json({ error: err.message });
   }

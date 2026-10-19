@@ -1,4 +1,5 @@
 import { prisma } from "../../config/db";
+import { assertTenantOwns } from "../../utils/tenant-owned";
 
 interface RecordSaleInput {
   tenantId: string;
@@ -15,6 +16,9 @@ interface RecordSaleInput {
 // 2. يسجّل حركة مخزون (OUT) حقيقية - نفس منطق الـ Inventory module
 // 3. يحسب العمولة تلقائيًا حسب نسبة الموظف، ويسجّل عملية البيع كسجل قابل للتدقيق
 export async function recordSale(input: RecordSaleInput) {
+  // الفرع والعميل لازم يكونوا تبع نفس الشركة (الصنف والموظف متشيّكين تحت)
+  await assertTenantOwns(input.tenantId, { branchIds: [input.branchId], customerIds: [input.customerId] });
+
   const item = await prisma.inventoryItem.findFirst({
     where: { id: input.itemId, tenantId: input.tenantId },
   });

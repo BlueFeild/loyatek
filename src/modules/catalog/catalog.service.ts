@@ -6,6 +6,7 @@ import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPayme
 import { confirmsOnOrder, pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
 import { formatUsdAs, getTenantMoney, payableAmount } from "../../utils/money";
 import { isValidEmail, sendEmail } from "../../utils/email";
+import { assertTenantOwns } from "../../utils/tenant-owned";
 
 export async function getOrCreateCatalogSettings(tenantId: string) {
   const existing = await prisma.catalogSettings.findUnique({ where: { tenantId } });
@@ -110,6 +111,9 @@ async function notifyNewOrder(order: { id: string; customerName: string; custome
 // إنشاء طلب حقيقي - بياخد أسعار الأصناف الحقيقية من قاعدة البيانات وقت
 // الطلب (مش من الفرونت إند)، عشان محدش يقدر يغيّر السعر من عنده
 export async function createOrder(input: CreateOrderInput) {
+  // الفرع لازم يكون تبع نفس الشركة (الأصناف متفلترة بالـ tenantId تحت)
+  await assertTenantOwns(input.tenantId, { branchIds: [input.branchId] });
+
   const [menuItems, settings] = await Promise.all([
     prisma.menuItem.findMany({
       where: { tenantId: input.tenantId, id: { in: input.items.map((i) => i.menuItemId) } },

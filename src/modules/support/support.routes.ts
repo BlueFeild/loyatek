@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth } from "../../middleware/auth";
 import { requireModule } from "../../middleware/module-access";
+import { assertTenantOwns } from "../../utils/tenant-owned";
 
 export const supportRouter = Router();
 supportRouter.use(requireAuth, requireModule("erp"));
@@ -25,6 +26,11 @@ const createTicketSchema = z.object({
 supportRouter.post("/tickets", async (req, res) => {
   const parsed = createTicketSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  try {
+    await assertTenantOwns(req.auth!.tenantId, { customerIds: [parsed.data.customerId] });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
 
   const ticket = await prisma.supportTicket.create({
     data: {
