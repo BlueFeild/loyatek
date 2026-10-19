@@ -16,7 +16,8 @@ export function embeddedSignupConfig() {
     // دول عامين (بيتحطوا في الصفحة) - السر نفسه مابيطلعش من السيرفر أبدًا
     appId: appId || null,
     configId: configId || null,
-    graphVersion: (process.env.META_GRAPH_VERSION || "v21.0").trim(),
+    // نسخة مكتبة فيسبوك (FB.init) - Embedded Signup v4 بيستخدم v26.0 في كود Meta نفسه
+    graphVersion: (process.env.META_GRAPH_VERSION || "v26.0").trim(),
   };
 }
 
@@ -54,4 +55,14 @@ export async function subscribeAppToWaba(token: string, wabaId: string) {
 export async function registerPhoneNumber(token: string, phoneNumberId: string, pinInput?: string) {
   const pin = pinInput && /^\d{6}$/.test(pinInput) ? pinInput : String(crypto.randomInt(100000, 1000000));
   return graph(`/${phoneNumberId}/register`, { method: "POST", token, body: JSON.stringify({ messaging_product: "whatsapp", pin }) });
+}
+
+// في ربط تطبيق الموبايل (Coexistence) Meta ممكن ماتبعتش phone_number_id في رسالة
+// الانتهاء - بنسأل Meta عن أرقام حساب البيزنس ونختار الرقم اللي على التطبيق
+export async function findWabaPhoneNumber(token: string, wabaId: string): Promise<{ ok: boolean; phoneNumberId?: string; error?: string }> {
+  const r = await graph(`/${wabaId}/phone_numbers?fields=id,display_phone_number,is_on_biz_app,platform_type`, { token });
+  if (!r.ok) return { ok: false, error: r.error ?? "Couldn't read the phone numbers from Meta" };
+  const list: { id: string; is_on_biz_app?: boolean; platform_type?: string }[] = Array.isArray(r.data.data) ? r.data.data : [];
+  const pick = list.find((n) => n.is_on_biz_app) ?? (list.length === 1 ? list[0] : undefined);
+  return pick ? { ok: true, phoneNumberId: String(pick.id) } : { ok: false, error: list.length ? "This WhatsApp account has more than one number — pick it again in the Meta window." : "No phone number found on this WhatsApp account." };
 }

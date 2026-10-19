@@ -20,7 +20,7 @@ import {
   sendWhatsappTemplate,
 } from "./whatsapp.service";
 import { HELLO_WORLD_ID, HELLO_WORLD_TEXT, listInboxTemplates, renderTemplateText, templateParamCount } from "./inbox-templates";
-import { embeddedSignupConfig, exchangeSignupCode, registerPhoneNumber, subscribeAppToWaba } from "./embedded-signup";
+import { embeddedSignupConfig, exchangeSignupCode, findWabaPhoneNumber, registerPhoneNumber, subscribeAppToWaba } from "./embedded-signup";
 import { BOOKING_TEMPLATE_PURPOSES, ensureBookingTemplates, getApprovedBookingTemplate, type BookingTemplatePurpose } from "./booking-templates";
 
 export const whatsappRouter = Router();
@@ -143,7 +143,8 @@ whatsappRouter.get("/embedded-signup/config", (_req, res) => {
 const embeddedCompleteSchema = z.object({
   code: z.string().trim().min(10).max(2000),
   wabaId: z.string().trim().regex(/^\d{5,30}$/, "Meta didn't send a valid WhatsApp Business Account ID"),
-  phoneNumberId: z.string().trim().regex(/^\d{5,30}$/, "Meta didn't send a valid phone number ID"),
+  // في ربط تطبيق الموبايل ممكن يجي فاضي - بنجيبه من Meta
+  phoneNumberId: z.string().trim().regex(/^\d{5,30}$/, "Meta didn't send a valid phone number ID").optional(),
   // الرقم شغال على تطبيق واتساب Business وهيفضل شغال عليه (Coexistence)
   coexistence: z.boolean().optional(),
 });
@@ -154,12 +155,18 @@ whatsappRouter.post("/embedded-signup/complete", requireRole("OWNER", "ADMIN"), 
   if (!embeddedSignupConfig().enabled) return res.status(400).json({ error: "Connecting with Facebook isn't set up yet — use the manual setup below." });
   const parsed = embeddedCompleteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid data from Meta" });
-  const { code, wabaId, phoneNumberId, coexistence } = parsed.data;
+  const { code, wabaId, coexistence } = parsed.data;
+  let phoneNumberId = parsed.data.phoneNumberId;
   const tenantId = req.auth!.tenantId;
 
   const exchanged = await exchangeSignupCode(code);
   if (!exchanged.ok || !exchanged.token) return res.status(400).json({ error: `Meta didn't accept the sign-in: ${exchanged.error}` });
   const token = exchanged.token;
+  if (!phoneNumberId) {
+    const found = await findWabaPhoneNumber(token, wabaId);
+    if (!found.ok || !found.phoneNumberId) return res.status(400).json({ error: found.error ?? "Meta didn't send the phone number" });
+    phoneNumberId = found.phoneNumberId;
+  }
 
   const warnings: string[] = [];
   const sub = await subscribeAppToWaba(token, wabaId);
