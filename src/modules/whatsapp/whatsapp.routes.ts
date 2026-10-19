@@ -17,7 +17,9 @@ import {
   uploadTemplateHeaderImage,
   verifyWhatsappConnection,
   recordWhatsappMessage,
+  sendWhatsappTemplate,
 } from "./whatsapp.service";
+import { HELLO_WORLD_ID, HELLO_WORLD_TEXT, listInboxTemplates, renderTemplateText, templateParamCount } from "./inbox-templates";
 import { embeddedSignupConfig, exchangeSignupCode, registerPhoneNumber, subscribeAppToWaba } from "./embedded-signup";
 import { BOOKING_TEMPLATE_PURPOSES, ensureBookingTemplates, getApprovedBookingTemplate, type BookingTemplatePurpose } from "./booking-templates";
 
@@ -310,6 +312,59 @@ whatsappRouter.post("/conversations/:phone/reply", requireRole("OWNER", "ADMIN",
     contactPhone: phone,
     body: text,
     kind: "text",
+    waMessageId: result.messageId,
+    status: result.ok ? "sent" : "failed",
+    error: result.ok ? null : result.error,
+  });
+  if (!result.ok) return res.status(400).json({ error: result.error, message: row });
+  res.json(row);
+});
+
+// --- قوالب من شاشة المحادثات: بعد الـ24 ساعة أو محادثة جديدة مع أي رقم ---
+
+whatsappRouter.get("/inbox-templates", async (req, res) => {
+  res.json(await listInboxTemplates(req.auth!.tenantId));
+});
+
+const inboxTemplateSchema = z.object({
+  templateId: z.string().min(1),
+  params: z.array(z.string().trim().max(500)).max(20).default([]),
+  // اسم العميل (اختياري) - بيظهر في قايمة المحادثات بداله الرقم
+  contactName: z.string().trim().max(120).optional(),
+});
+
+whatsappRouter.post("/conversations/:phone/template", requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async (req, res) => {
+  const parsed = inboxTemplateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid template" });
+  const phone = req.params.phone.replace(/[^\d]/g, "");
+  if (phone.length < 7 || phone.length > 15) return res.status(400).json({ error: "Enter the number with country code, e.g. 97455551234" });
+  const tenantId = req.auth!.tenantId;
+  const s = await getOrCreateWhatsappSettings(tenantId);
+  if (!s.isConnected || !s.metaAccessToken || !s.metaPhoneNumberId) return res.status(400).json({ error: "Connect WhatsApp first." });
+
+  const d = parsed.data;
+  let name = "hello_world", language = "en_US", body = HELLO_WORLD_TEXT, params: string[] = [];
+  if (d.templateId !== HELLO_WORLD_ID) {
+    // القالب لازم يكون تبع نفس الشركة ومعتمد من Meta
+    const tpl = await prisma.whatsappTemplate.findFirst({ where: { id: d.templateId, tenantId } });
+    if (!tpl) return res.status(404).json({ error: "Template not found" });
+    if (tpl.status !== "APPROVED") return res.status(400).json({ error: `This template isn't approved by Meta yet (status: ${tpl.status}).` });
+    if (tpl.headerImageDataUrl) return res.status(400).json({ error: "This template has a photo header — send it from Campaigns." });
+    const count = templateParamCount(tpl.bodyText);
+    params = Array.from({ length: count }, (_, i) => d.params[i] ?? "");
+    if (params.some((v) => !v.trim())) return res.status(400).json({ error: `Fill in all ${count} blanks of the template.` });
+    name = tpl.name;
+    language = tpl.language;
+    body = renderTemplateText(tpl.bodyText, params);
+  }
+  const result = await sendWhatsappTemplate(s.metaAccessToken, s.metaPhoneNumberId, phone, name, language, params);
+  const row = await recordWhatsappMessage({
+    tenantId,
+    direction: "OUT",
+    contactPhone: phone,
+    contactName: d.contactName || null,
+    body,
+    kind: "template",
     waMessageId: result.messageId,
     status: result.ok ? "sent" : "failed",
     error: result.ok ? null : result.error,
