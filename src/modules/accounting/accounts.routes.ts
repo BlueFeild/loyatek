@@ -38,21 +38,22 @@ accountsRouter.post("/", requireRole("OWNER", "ADMIN"), async (req, res) => {
   }
 });
 
+// دليل الحسابات المبدئي (بيستخدمه كمان زرار "بيانات تجريبية")
+export const DEFAULT_ACCOUNTS: { code: string; name: string; type: "ASSET" | "LIABILITY" | "EQUITY" | "REVENUE" | "EXPENSE" }[] = [
+  { code: "1000", name: "Cash", type: "ASSET" },
+  { code: "1200", name: "Inventory", type: "ASSET" },
+  { code: "2000", name: "Accounts Payable", type: "LIABILITY" },
+  { code: "3000", name: "Owner's Equity", type: "EQUITY" },
+  { code: "4000", name: "Sales Revenue", type: "REVENUE" },
+  { code: "5000", name: "Cost of Goods Sold", type: "EXPENSE" },
+  // فواتير الموردين/المصروفات بتتسجل هنا (مش على تكلفة البضاعة)
+  { code: "5100", name: "General Expenses", type: "EXPENSE" },
+];
+
 // إعداد سريع لدليل حسابات مبدئي (بدل ما العميل يضيف كل حساب يدوي)
 accountsRouter.post("/seed-defaults", requireRole("OWNER", "ADMIN"), async (req, res) => {
-  const defaults: { code: string; name: string; type: "ASSET" | "LIABILITY" | "EQUITY" | "REVENUE" | "EXPENSE" }[] = [
-    { code: "1000", name: "Cash", type: "ASSET" },
-    { code: "1200", name: "Inventory", type: "ASSET" },
-    { code: "2000", name: "Accounts Payable", type: "LIABILITY" },
-    { code: "3000", name: "Owner's Equity", type: "EQUITY" },
-    { code: "4000", name: "Sales Revenue", type: "REVENUE" },
-    { code: "5000", name: "Cost of Goods Sold", type: "EXPENSE" },
-    // فواتير الموردين/المصروفات بتتسجل هنا (مش على تكلفة البضاعة)
-    { code: "5100", name: "General Expenses", type: "EXPENSE" },
-  ];
-
   const created = await prisma.$transaction(
-    defaults.map((acc) =>
+    DEFAULT_ACCOUNTS.map((acc) =>
       prisma.account.upsert({
         where: { tenantId_code: { tenantId: req.auth!.tenantId, code: acc.code } },
         update: {},

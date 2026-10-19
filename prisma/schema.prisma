@@ -669,6 +669,8 @@ model Sale {
   unitPrice        Decimal       @db.Decimal(18, 6)
   totalAmount      Decimal       @db.Decimal(18, 6)
   commissionAmount Decimal       @db.Decimal(18, 6)
+  // قيد البيع (مدين الخزنة / دائن المبيعات) - فاضي = بيع قديم قبل ما المبيعات تدخل الدفاتر
+  journalEntryId   String?
   createdAt        DateTime      @default(now())
 
   @@index([tenantId, branchId])

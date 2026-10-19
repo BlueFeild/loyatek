@@ -47,6 +47,7 @@ import { dealsRouter } from "./modules/crm/deals.routes";
 import { notificationsRouter } from "./modules/notifications/notifications.routes";
 import { analyticsRouter } from "./modules/analytics/analytics.routes";
 import { paymentSettingsRouter } from "./modules/payment-settings/payment-settings.routes";
+import { erpDemoRouter } from "./modules/erp-demo/erp-demo.routes";
 import { getPlatformConfig, getRegionalPricing } from "./utils/platform-config";
 
 export const app = express();
@@ -145,6 +146,7 @@ app.use("/api/deals", dealsRouter);
 app.use("/api/notifications", notificationsRouter);
 app.use("/api/analytics", analyticsRouter);
 app.use("/api/payment-settings", paymentSettingsRouter);
+app.use("/api/erp/demo-data", erpDemoRouter);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Route not found" });

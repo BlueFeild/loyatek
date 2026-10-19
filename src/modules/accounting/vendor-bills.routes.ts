@@ -85,7 +85,7 @@ const createBillSchema = z.object({
 const toDate = (s?: string | null) => (s ? new Date(s.length === 10 ? `${s}T00:00:00Z` : s) : undefined);
 
 // قيد الفاتورة: مدين المصروفات / دائن الموردين
-async function postBillEntry(tx: any, tenantId: string, bill: { vendorName: string; billNumber?: string | null; amount: number; issueDate: Date; branchId: string | null }) {
+export async function postBillEntry(tx: any, tenantId: string, bill: { vendorName: string; billNumber?: string | null; amount: number; issueDate: Date; branchId: string | null }) {
   const [exp, ap] = await Promise.all([expenseAccount(tx, tenantId), payableAccount(tx, tenantId)]);
   return tx.journalEntry.create({
     data: {
@@ -99,7 +99,7 @@ async function postBillEntry(tx: any, tenantId: string, bill: { vendorName: stri
 }
 
 // قيد السداد: مدين الموردين / دائن الخزنة
-async function postPaymentEntry(tx: any, tenantId: string, bill: { vendorName: string; amount: number; paidAt: Date; branchId: string | null }) {
+export async function postPaymentEntry(tx: any, tenantId: string, bill: { vendorName: string; amount: number; paidAt: Date; branchId: string | null }) {
   const [ap, cash] = await Promise.all([payableAccount(tx, tenantId), cashAccount(tx, tenantId)]);
   return tx.journalEntry.create({
     data: {

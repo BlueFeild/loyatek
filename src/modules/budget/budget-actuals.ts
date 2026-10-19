@@ -2,8 +2,8 @@ import { prisma } from "../../config/db";
 
 // "الفعلي" في الميزانية بيتحسب من بيانات حقيقية حسب نوع البند (قبل كده كان دايمًا
 // = المبيعات، حتى لبند زي "Rent"):
-//  - "sales"   : بند إيرادات (Sales / Revenue / Income / مبيعات / إيرادات) = مبيعات الشهر
-//                + صافي الإيرادات في القيود (فواتير العملاء والقيود اليدوية)
+//  - "sales"   : بند إيرادات (Sales / Revenue / Income / مبيعات / إيرادات) = صافي الإيرادات في
+//                القيود (مبيعات المحل + فواتير العملاء + قيود يدوية) + المبيعات القديمة اللي مالهاش قيد
 //  - "account" : اسم البند (أو كوده) = حساب في دليل الحسابات = صافي حركة الحساب ده في القيود
 //  - "bills"   : غير كده = فواتير المصروفات اللي ليها نفس الفئة (Rent, Utilities, ...)
 // الشهر بتوقيت UTC، والفرع = فرع البند + الحاجات المسجّلة على "الشركة كلها" (من غير فرع)
@@ -77,9 +77,10 @@ export async function computeActual(line: LineLike, accounts: AccountRef[]): Pro
   }
 
   if (source === "sales") {
-    // المبيعات (Record a Sale) مش بتعمل قيود، فبنجمعها مع إيرادات القيود من غير تكرار
+    // المبيعات الجديدة بقت بتعمل قيد (فهي جوه إيرادات القيود). المبيعات القديمة من غير
+    // قيد بتتجمع لوحدها - كده مفيش بيع بيتحسب مرتين
     const sales = await prisma.sale.aggregate({
-      where: { tenantId, branchId, createdAt: period },
+      where: { tenantId, branchId, createdAt: period, journalEntryId: null },
       _sum: { totalAmount: true },
     });
     const revenueIds = accounts.filter((a) => a.type === "REVENUE").map((a) => a.id);
