@@ -17,6 +17,8 @@ interface CreateInvoiceInput {
   branchId: string;
   customerId: string;
   items: InvoiceItemInput[];
+  dueDate?: Date | null;
+  notes?: string | null;
 }
 
 async function nextInvoiceNumber(tenantId: string): Promise<string> {
@@ -37,6 +39,8 @@ export async function createInvoice(input: CreateInvoiceInput) {
       tenantId: input.tenantId,
       branchId: input.branchId,
       customerId: input.customerId,
+      dueDate: input.dueDate ?? null,
+      notes: input.notes ?? null,
       invoiceNumber: await nextInvoiceNumber(input.tenantId),
       subtotal,
       vatAmount,

@@ -4,7 +4,7 @@ import { prisma } from "../../config/db";
 import { assertTenantOwns } from "../../utils/tenant-owned";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { requireModule } from "../../middleware/module-access";
-import { createJournalEntry, getProfitAndLoss, getTrialBalance, type LedgerFilter } from "./journal.service";
+import { createJournalEntry, getBalanceSheet, getProfitAndLoss, getTrialBalance, type LedgerFilter } from "./journal.service";
 import { periodFilter } from "../../utils/period";
 
 // ?month=2026-10 و/أو ?branchId= (فلاتر القيود والتقارير)
@@ -79,4 +79,12 @@ journalRouter.get("/trial-balance", async (req, res) => {
 // الأرباح والخسائر (شهر/فرع)
 journalRouter.get("/profit-loss", async (req, res) => {
   res.json(await getProfitAndLoss(req.auth!.tenantId, ledgerFilter(req.query as Record<string, unknown>)));
+});
+
+// الميزانية العمومية: ?asOf=YYYY-MM-DD (لحد آخر اليوم ده، فاضي = لحد دلوقتي) و ?branchId=
+journalRouter.get("/balance-sheet", async (req, res) => {
+  const asOfStr = typeof req.query.asOf === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.asOf) ? req.query.asOf : null;
+  const asOf = asOfStr ? new Date(new Date(`${asOfStr}T00:00:00Z`).getTime() + 86400000) : null;
+  const branchId = typeof req.query.branchId === "string" && req.query.branchId ? req.query.branchId : null;
+  res.json(await getBalanceSheet(req.auth!.tenantId, { asOf, branchId }));
 });

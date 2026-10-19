@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { requireModule } from "../../middleware/module-access";
+import { customerStatement } from "../accounting/invoice-payments";
 
 export const customersRouter = Router();
 
@@ -88,4 +89,16 @@ customersRouter.post("/:id/activities", requireRole("OWNER", "ADMIN", "MANAGER",
     data: { tenantId: req.auth!.tenantId, customerId: customer.id, ...parsed.data },
   });
   res.status(201).json(activity);
+});
+
+// كشف حساب العميل: ?from=YYYY-MM-DD&to=YYYY-MM-DD (الاتنين اختياري، "إلى" بيشمل اليوم نفسه)
+customersRouter.get("/:id/statement", async (req, res) => {
+  const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(`${v}T00:00:00Z`) : null);
+  const from = day(req.query.from);
+  const toDay = day(req.query.to);
+  const to = toDay ? new Date(toDay.getTime() + 86400000) : null;
+  const st = await customerStatement(req.auth!.tenantId, req.params.id, from, to);
+  if (!st) return res.status(404).json({ error: "Customer not found" });
+  const company = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId }, select: { name: true, vatNumber: true } });
+  res.json({ ...st, to: toDay, company });
 });

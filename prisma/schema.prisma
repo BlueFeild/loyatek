@@ -115,6 +115,7 @@ model Tenant {
   linktreeLinks   LinktreeLink[]
   paymentSettings TenantPaymentSettings?
   vendorBills     VendorBill[]
+  invoicePayments InvoicePayment[]
   whatsappTemplates WhatsappTemplate[]
   whatsappSettings WhatsappSettings?
   whatsappMessages WhatsappMessage[]
@@ -518,13 +519,40 @@ model Invoice {
   qrPayload      String?
   journalEntryId String? // القيد المحاسبي اللي اتعمل تلقائي وقت الإصدار
   issuedAt       DateTime?
+  // ميعاد السداد (اختياري) + ملاحظات بتظهر في الفاتورة المطبوعة
+  dueDate        DateTime?
+  notes          String?
   createdAt      DateTime      @default(now())
 
-  items InvoiceItem[]
+  items    InvoiceItem[]
+  // الدفعات اللي العميل دفعها على الفاتورة (كاملة أو على أجزاء)
+  payments InvoicePayment[]
 
   @@unique([tenantId, invoiceNumber])
   @@index([tenantId, branchId])
   @@map("invoices")
+}
+
+// دفعة من العميل على فاتورة: كل دفعة ليها قيد (مدين الخزنة/البنك، دائن العملاء).
+// الفاتورة بتبقى PAID لوحدها لما المدفوع يغطي الإجمالي، ومسح الدفعة بيشيل قيدها
+model InvoicePayment {
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoiceId      String
+  invoice        Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount         Decimal  @db.Decimal(18, 6)
+  paidAt         DateTime @default(now())
+  // CASH (الخزنة 1000) | BANK / CARD (البنك 1010) | OTHER (الخزنة)
+  method         String   @default("CASH")
+  reference      String?
+  notes          String?
+  journalEntryId String?
+  createdAt      DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([invoiceId])
+  @@map("invoice_payments")
 }
 
 model InvoiceItem {

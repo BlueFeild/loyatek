@@ -91,3 +91,38 @@ export async function getProfitAndLoss(tenantId: string, filter: LedgerFilter = 
   const totalExpenses = expenses.reduce((s, r) => s + r.amount, 0);
   return { revenue: revenue.filter((r) => Math.abs(r.amount) > 0.000001), expenses: expenses.filter((r) => Math.abs(r.amount) > 0.000001), totalRevenue, totalExpenses, net: totalRevenue - totalExpenses };
 }
+
+// الميزانية العمومية في تاريخ معيّن (لحد آخر اليوم ده): الأصول = الخصوم + حقوق الملكية.
+// أرباح الفترة (الإيرادات - المصروفات لحد التاريخ ده) بتتحسب ضمن حقوق الملكية كـ
+// "Retained earnings"، فالمعادلة بتقفل لوحدها لأن كل قيد متوازن. فرع واحد = قيوده بس
+export async function getBalanceSheet(tenantId: string, opts: { asOf?: Date | null; branchId?: string | null } = {}) {
+  const period = opts.asOf ? { gte: new Date(0), lt: opts.asOf } : null;
+  const rows = await getTrialBalance(tenantId, { period, branchId: opts.branchId ?? null });
+  const pick = (type: string, sign: 1 | -1) =>
+    rows
+      .filter((r) => r.type === type)
+      .map((r) => ({ code: r.code, name: r.name, amount: sign * (r.totalDebit - r.totalCredit) }))
+      .filter((r) => Math.abs(r.amount) > 0.000001);
+  const assets = pick("ASSET", 1);
+  const liabilities = pick("LIABILITY", -1);
+  const equity = pick("EQUITY", -1);
+  const revenue = rows.filter((r) => r.type === "REVENUE").reduce((s, r) => s + r.totalCredit - r.totalDebit, 0);
+  const expenses = rows.filter((r) => r.type === "EXPENSE").reduce((s, r) => s + r.totalDebit - r.totalCredit, 0);
+  const retainedEarnings = revenue - expenses;
+  const sum = (xs: { amount: number }[]) => xs.reduce((s, x) => s + x.amount, 0);
+  const totalAssets = sum(assets);
+  const totalLiabilities = sum(liabilities);
+  const totalEquity = sum(equity) + retainedEarnings;
+  return {
+    asOf: opts.asOf ? new Date(opts.asOf.getTime() - 1) : null,
+    assets,
+    liabilities,
+    equity,
+    retainedEarnings,
+    totalAssets,
+    totalLiabilities,
+    totalEquity,
+    totalLiabilitiesAndEquity: totalLiabilities + totalEquity,
+    balanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.005,
+  };
+}
