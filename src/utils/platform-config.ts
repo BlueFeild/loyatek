@@ -32,6 +32,8 @@ export interface PricingRegion {
 export interface PlatformConfig {
   pricing: Pricing;
   defaultGraceDays: number;
+  // مدة التجربة المجانية لأي شركة جديدة (أيام)
+  defaultTrialDays: number;
   discounts: DiscountRule[];
   regions: PricingRegion[];
 }
@@ -108,6 +110,7 @@ export async function getPlatformConfig(): Promise<PlatformConfig> {
       yearlyDiscount: row?.yearlyDiscountPct != null ? row.yearlyDiscountPct / 100 : YEARLY_DISCOUNT,
     },
     defaultGraceDays: row?.defaultGraceDays ?? 3,
+    defaultTrialDays: row?.defaultTrialDays ?? 1,
     discounts: readDiscounts(row?.moduleDiscounts),
     regions: readRegions(row?.pricingRegions),
   };
@@ -220,4 +223,10 @@ export async function isModuleLive(
   moduleId: string
 ): Promise<boolean> {
   return isModuleActive(tenant, moduleId, new Date(), await tenantGraceDays(tenant));
+}
+
+// نهاية التجربة المجانية لشركة جديدة دلوقتي (حسب الإعداد) - 0 أيام = من غير تجربة
+export async function newTrialExpiry(): Promise<Date | null> {
+  const days = (await getPlatformConfig()).defaultTrialDays;
+  return days > 0 ? new Date(Date.now() + days * 24 * 60 * 60 * 1000) : null;
 }

@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
+import { periodFilter } from "../../utils/period";
+import { getProfitAndLoss } from "../accounting/journal.service";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { generateUniqueSlug } from "../../utils/slug";
 import { ALL_MODULES, getEffectiveModules, isInGrace, isTrialActive, moduleExpiry } from "../../utils/modules";
@@ -103,15 +105,21 @@ tenantsRouter.get("/branches", async (req, res) => {
 // ملخص حقيقي لكل فرع - مبيعات، عدد موظفين، وقيمة مخزون فعلية، كل واحد
 // بعملة فرعه الخاصة (مفيش تحويل عملة تلقائي هنا لأنه محتاج سعر صرف
 // حقيقي مباشر مش متوفر عندنا - كل رقم بيتعرض بعملة فرعه الأصلية)
+// حسابات كل فرع لوحدها: مبيعات، إيرادات ومصروفات من القيود (أرباح وخسائر الفرع)،
+// وفواتير الموردين اللي لسه مش مدفوعة. ?month=2026-10 = الشهر ده بس
 tenantsRouter.get("/branches/summary", async (req, res) => {
-  const branches = await prisma.branch.findMany({ where: { tenantId: req.auth!.tenantId } });
+  const tenantId = req.auth!.tenantId;
+  const branches = await prisma.branch.findMany({ where: { tenantId } });
+  const period = periodFilter(req.query as Record<string, unknown>);
 
   const summary = await Promise.all(
     branches.map(async (b: any) => {
-      const [salesAgg, employeeCount, inventoryItems] = await Promise.all([
-        prisma.sale.aggregate({ where: { branchId: b.id }, _sum: { totalAmount: true }, _count: true }),
+      const [salesAgg, employeeCount, inventoryItems, pl, unpaidBills] = await Promise.all([
+        prisma.sale.aggregate({ where: { tenantId, branchId: b.id, ...(period ? { createdAt: period } : {}) }, _sum: { totalAmount: true }, _count: true }),
         prisma.employee.count({ where: { branchId: b.id } }),
         prisma.inventoryItem.findMany({ where: { branchId: b.id }, select: { quantity: true, costPrice: true } }),
+        getProfitAndLoss(tenantId, { period, branchId: b.id }),
+        prisma.vendorBill.aggregate({ where: { tenantId, branchId: b.id, status: { not: "PAID" }, ...(period ? { issueDate: period } : {}) }, _sum: { amount: true }, _count: true }),
       ]);
 
       const inventoryValue = inventoryItems.reduce((sum: number, i: any) => sum + i.quantity * Number(i.costPrice), 0);
@@ -125,6 +133,11 @@ tenantsRouter.get("/branches/summary", async (req, res) => {
         saleCount: salesAgg._count,
         employeeCount,
         inventoryValue,
+        revenue: pl.totalRevenue,
+        expenses: pl.totalExpenses,
+        net: pl.net,
+        unpaidBills: Number(unpaidBills._sum.amount ?? 0),
+        unpaidBillCount: unpaidBills._count,
       };
     })
   );

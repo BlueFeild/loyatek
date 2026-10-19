@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { newTrialExpiry } from "../../utils/platform-config";
 import { prisma } from "../../config/db";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../../utils/jwt";
 import { generateUniqueSlug } from "../../utils/slug";
@@ -22,7 +23,7 @@ export async function registerTenant(input: RegisterInput) {
   const slug = await generateUniqueSlug(input.companyName);
   // كل شركة جديدة بتاخد تجربة مجانية 24 ساعة لكل الخدمات - الاشتراك
   // الحقيقي (subscribedModules) بيفضل فاضي لحد ما السوبر أدمن يفعّله
-  const trialExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const trialExpiresAt = await newTrialExpiry();
 
   const tenant = await prisma.tenant.create({
     data: {
@@ -185,7 +186,7 @@ export async function registerTenantWithGoogle(input: GoogleSignupInput) {
   if (existing) throw new Error("Email already in use");
 
   const slug = await generateUniqueSlug(input.companyName);
-  const trialExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const trialExpiresAt = await newTrialExpiry();
 
   const tenant = await prisma.tenant.create({
     data: {

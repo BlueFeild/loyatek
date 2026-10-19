@@ -151,6 +151,8 @@ model Branch {
   fixedAssets    FixedAsset[]
   budgetLines    BudgetLine[]
   vehicles       Vehicle[]
+  journalEntries JournalEntry[]
+  vendorBills    VendorBill[]
 
   createdAt DateTime @default(now())
 
@@ -458,6 +460,9 @@ model JournalEntry {
   id          String   @id @default(uuid())
   tenantId    String
   tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // الفرع اللي القيد ده تبعه (حسابات كل فرع لوحدها) - فاضي = الشركة كلها
+  branchId    String?
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   date        DateTime @default(now())
   description String
   createdAt   DateTime @default(now())
@@ -465,6 +470,7 @@ model JournalEntry {
   lines JournalEntryLine[]
 
   @@index([tenantId])
+  @@index([tenantId, date])
   @@map("journal_entries")
 }
 
@@ -1326,6 +1332,8 @@ model PlatformSettings {
   yearlyDiscountPct     Int?
   // أيام السماح الافتراضية بعد انتهاء الاشتراك
   defaultGraceDays      Int      @default(3)
+  // مدة التجربة المجانية لأي شركة جديدة (بالأيام) - السوبر أدمن بيغيّرها
+  defaultTrialDays      Int      @default(1)
   // خصم شهري لكل خدمة { moduleId: { pct, endsAt } } - بيظهر للعميل السعر قبل وبعد
   moduleDiscounts       Json     @default("{}")
   // أسعار حسب الدولة [{ country, name, currency, modulePrices, extraCompanyBasePrice }]
@@ -1676,10 +1684,35 @@ model VendorBill {
   dueDate       DateTime?
   status        BillStatus @default(UNPAID)
   journalEntryId String?
+  // الفرع اللي الفاتورة عليه (فاضي = الشركة كلها)
+  branchId      String?
+  branch        Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  notes         String?
+  // السداد: تاريخه وقيده (مدين الموردين / دائن الخزنة) - بيتشال لو رجعت "مش مدفوعة"
+  paidAt        DateTime?
+  paymentJournalEntryId String?
+  attachment    VendorBillAttachment?
   createdAt     DateTime   @default(now())
 
   @@index([tenantId])
+  @@index([tenantId, issueDate])
   @@map("vendor_bills")
+}
+
+// صورة/PDF الفاتورة الأصلية (جدول منفصل عشان لستة الفواتير متحملش الملفات)
+model VendorBillAttachment {
+  id        String     @id @default(uuid())
+  billId    String     @unique
+  bill      VendorBill @relation(fields: [billId], references: [id], onDelete: Cascade)
+  tenantId  String
+  fileName  String
+  mimeType  String
+  size      Int
+  data      Bytes
+  createdAt DateTime   @default(now())
+
+  @@index([tenantId])
+  @@map("vendor_bill_attachments")
 }
 
 // ------------------------------------------------------------

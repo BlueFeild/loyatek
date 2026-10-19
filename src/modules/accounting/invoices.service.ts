@@ -100,6 +100,8 @@ export async function issueInvoice(tenantId: string, invoiceId: string) {
     const journalEntry = await tx.journalEntry.create({
       data: {
         tenantId,
+        // قيد الفاتورة تبع فرعها (حسابات كل فرع لوحدها)
+        branchId: invoice.branchId,
         description: `Invoice ${invoice.invoiceNumber} issued to ${invoice.customer.name}`,
         date: issuedAt,
         lines: {

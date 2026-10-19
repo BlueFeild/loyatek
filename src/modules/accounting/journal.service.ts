@@ -10,6 +10,7 @@ interface CreateJournalEntryInput {
   tenantId: string;
   description: string;
   date?: Date;
+  branchId?: string | null;
   lines: JournalLineInput[];
 }
 
@@ -32,6 +33,7 @@ export async function createJournalEntry(input: CreateJournalEntryInput) {
   return prisma.journalEntry.create({
     data: {
       tenantId: input.tenantId,
+      branchId: input.branchId ?? null,
       description: input.description,
       date: input.date ?? new Date(),
       lines: {
@@ -46,13 +48,21 @@ export async function createJournalEntry(input: CreateJournalEntryInput) {
   });
 }
 
+export interface LedgerFilter {
+  // كل شهر لوحده (أو من/إلى) - فاضي = كل الفترات
+  period?: { gte: Date; lt: Date } | null;
+  // فرع واحد بس - فاضي = الشركة كلها
+  branchId?: string | null;
+}
+
 // ميزان المراجعة (Trial Balance): إجمالي مدين ودائن لكل حساب، مبني
-// على القيود الفعلية المسجلة - مش أرقام مجمّعة يدويًا
-export async function getTrialBalance(tenantId: string) {
+// على القيود الفعلية المسجلة - مش أرقام مجمّعة يدويًا. ممكن لشهر واحد أو لفرع واحد
+export async function getTrialBalance(tenantId: string, filter: LedgerFilter = {}) {
+  const entryWhere = { ...(filter.period ? { date: filter.period } : {}), ...(filter.branchId ? { branchId: filter.branchId } : {}) };
   const accounts = await prisma.account.findMany({
     where: { tenantId },
     include: {
-      lines: true,
+      lines: Object.keys(entryWhere).length ? { where: { journalEntry: entryWhere } } : true,
     },
     orderBy: { code: "asc" },
   });
@@ -70,4 +80,14 @@ export async function getTrialBalance(tenantId: string) {
       balance: totalDebit - totalCredit,
     };
   });
+}
+
+// الأرباح والخسائر للفترة: الإيرادات - المصروفات (لشهر/فرع)
+export async function getProfitAndLoss(tenantId: string, filter: LedgerFilter = {}) {
+  const rows = await getTrialBalance(tenantId, filter);
+  const revenue = rows.filter((r) => r.type === "REVENUE").map((r) => ({ code: r.code, name: r.name, amount: r.totalCredit - r.totalDebit }));
+  const expenses = rows.filter((r) => r.type === "EXPENSE").map((r) => ({ code: r.code, name: r.name, amount: r.totalDebit - r.totalCredit }));
+  const totalRevenue = revenue.reduce((s, r) => s + r.amount, 0);
+  const totalExpenses = expenses.reduce((s, r) => s + r.amount, 0);
+  return { revenue: revenue.filter((r) => Math.abs(r.amount) > 0.000001), expenses: expenses.filter((r) => Math.abs(r.amount) > 0.000001), totalRevenue, totalExpenses, net: totalRevenue - totalExpenses };
 }

@@ -5,7 +5,7 @@ import { prisma } from "../../config/db";
 import { requireAuth, requireSuperAdmin } from "../../middleware/auth";
 import { ACCOUNT_STATUSES, ALL_MODULES, computeExpiryDate, isInGrace, isModuleActive, moduleExpiry } from "../../utils/modules";
 import { clearAccessCache } from "../../utils/account-access";
-import { clearPlatformConfigCache, getPlatformConfig } from "../../utils/platform-config";
+import { clearPlatformConfigCache, getPlatformConfig, newTrialExpiry } from "../../utils/platform-config";
 import { MODULE_PRICES } from "../checkout/pricing";
 import { isCurrencyCode } from "../../utils/money";
 import { signAccessToken } from "../../utils/jwt";
@@ -223,6 +223,8 @@ const platformConfigSchema = z.object({
   extraCompanyBasePrice: z.number().min(0).max(100000).optional(),
   yearlyDiscountPct: z.number().int().min(0).max(90).optional(),
   defaultGraceDays: z.number().int().min(0).max(365).optional(),
+  // مدة التجربة المجانية لأي شركة جديدة (أيام) - 0 = من غير تجربة
+  defaultTrialDays: z.number().int().min(0).max(365).optional(),
   // قواعد الخصم (اللستة كلها بتتبعت مرة واحدة): خدمات (فاضية = الكل) + نسبة +
   // شهري/سنوي/الاتنين + دول (فاضية = كل الدول) + تاريخ انتهاء. الشكل القديم
   // { erp: { pct, endsAt } } لسه مقبول (خصم لخدمة على الشهري والسنوي لكل الدول)
@@ -275,6 +277,7 @@ superAdminRouter.patch("/platform-config", async (req, res) => {
       ...(d.extraCompanyBasePrice !== undefined ? { extraCompanyBasePrice: d.extraCompanyBasePrice } : {}),
       ...(d.yearlyDiscountPct !== undefined ? { yearlyDiscountPct: d.yearlyDiscountPct } : {}),
       ...(d.defaultGraceDays !== undefined ? { defaultGraceDays: d.defaultGraceDays } : {}),
+      ...(d.defaultTrialDays !== undefined ? { defaultTrialDays: d.defaultTrialDays } : {}),
       ...(d.discounts
         ? {
             moduleDiscounts: (Array.isArray(d.discounts)
@@ -523,8 +526,8 @@ superAdminRouter.post("/clients", async (req, res) => {
       name: d.companyName,
       industry: d.industry,
       slug: await generateUniqueSlug(d.companyName),
-      // نفس تجربة التسجيل العادي (٢٤ ساعة) - الاشتراك بيتفعّل من السوبر أدمن
-      trialExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      // نفس مدة التجربة الافتراضية (من إعدادات المنصة) - الاشتراك بيتفعّل من السوبر أدمن
+      trialExpiresAt: await newTrialExpiry(),
       users: { create: { name: d.ownerName, email: d.email, passwordHash: await bcrypt.hash(password, 10), role: "OWNER" } },
     },
     include: { users: true },
@@ -570,6 +573,31 @@ superAdminRouter.patch("/tenants/:id/owner", async (req, res) => {
   const sent = await sendOwnerInviteEmail({ to: parsed.data.email, name: parsed.data.name || owner.name, companyName: tenant.name, setPasswordLink: link });
   await sendEmailChangedNotice(oldEmail, owner.name, parsed.data.email).catch(() => {});
   res.json({ ok: true, ownerEmail: parsed.data.email, emailSent: sent.ok, newAccount: false });
+});
+
+// التجربة المجانية لشركة: كام يوم من النهارده، أو لحد تاريخ معيّن، أو تقفل دلوقتي
+const trialSchema = z.union([
+  z.object({ days: z.number().int().min(1, "At least 1 day").max(365, "Max 365 days") }),
+  z.object({ endsAt: z.string().regex(/^\d{4}-\d{2}-\d{2}/, "Use a valid date") }),
+  z.object({ end: z.literal(true) }),
+]);
+superAdminRouter.patch("/tenants/:id/trial", async (req, res) => {
+  const parsed = trialSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Choose how long the trial lasts" });
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id }, select: { id: true, isPlatformOwner: true } });
+  if (!tenant) return res.status(404).json({ error: "Company not found" });
+  if (tenant.isPlatformOwner) return res.status(400).json({ error: "The platform owner account is always free — no trial needed" });
+  const p = parsed.data as { days?: number; endsAt?: string; end?: true };
+  let trialExpiresAt: Date | null;
+  if (p.end) trialExpiresAt = null;
+  else if (p.days) trialExpiresAt = new Date(Date.now() + p.days * 24 * 60 * 60 * 1000);
+  else {
+    // آخر اليوم المختار
+    trialExpiresAt = new Date(`${p.endsAt!.slice(0, 10)}T23:59:59Z`);
+    if (trialExpiresAt < new Date()) return res.status(400).json({ error: "Pick a date in the future (or end the trial)" });
+  }
+  const updated = await prisma.tenant.update({ where: { id: tenant.id }, data: { trialExpiresAt }, select: { id: true, trialExpiresAt: true } });
+  res.json(updated);
 });
 
 superAdminRouter.post("/agency-staff", async (req, res) => {

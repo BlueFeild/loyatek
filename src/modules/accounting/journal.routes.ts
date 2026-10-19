@@ -2,16 +2,23 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
-import { createJournalEntry, getTrialBalance } from "./journal.service";
+import { createJournalEntry, getProfitAndLoss, getTrialBalance, type LedgerFilter } from "./journal.service";
+import { periodFilter } from "../../utils/period";
+
+// ?month=2026-10 و/أو ?branchId= (فلاتر القيود والتقارير)
+function ledgerFilter(query: Record<string, unknown>): LedgerFilter {
+  return { period: periodFilter(query), branchId: typeof query.branchId === "string" && query.branchId ? query.branchId : null };
+}
 
 export const journalRouter = Router();
 
 journalRouter.use(requireAuth);
 
 journalRouter.get("/", async (req, res) => {
+  const f = ledgerFilter(req.query as Record<string, unknown>);
   const entries = await prisma.journalEntry.findMany({
-    where: { tenantId: req.auth!.tenantId },
-    include: { lines: { include: { account: true } } },
+    where: { tenantId: req.auth!.tenantId, ...(f.period ? { date: f.period } : {}), ...(f.branchId ? { branchId: f.branchId } : {}) },
+    include: { lines: { include: { account: true } }, branch: { select: { name: true } } },
     orderBy: { date: "desc" },
   });
   res.json(entries);
@@ -20,6 +27,7 @@ journalRouter.get("/", async (req, res) => {
 const createEntrySchema = z.object({
   description: z.string().min(2),
   date: z.string().datetime().optional(),
+  branchId: z.string().uuid().nullable().optional(),
   lines: z
     .array(
       z.object({
@@ -36,11 +44,16 @@ journalRouter.post("/", requireRole("OWNER", "ADMIN"), async (req, res) => {
   const parsed = createEntrySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
+  // الفرع لازم يكون تبع نفس الشركة
+  if (parsed.data.branchId && !(await prisma.branch.findFirst({ where: { id: parsed.data.branchId, tenantId: req.auth!.tenantId } }))) {
+    return res.status(400).json({ error: "Branch not found" });
+  }
   try {
     const entry = await createJournalEntry({
       tenantId: req.auth!.tenantId,
       description: parsed.data.description,
       date: parsed.data.date ? new Date(parsed.data.date) : undefined,
+      branchId: parsed.data.branchId ?? null,
       lines: parsed.data.lines,
     });
     res.status(201).json(entry);
@@ -51,6 +64,11 @@ journalRouter.post("/", requireRole("OWNER", "ADMIN"), async (req, res) => {
 
 // ميزان المراجعة: صورة حقيقية لكل حساب مبنية على القيود المسجلة فعليًا
 journalRouter.get("/trial-balance", async (req, res) => {
-  const balance = await getTrialBalance(req.auth!.tenantId);
+  const balance = await getTrialBalance(req.auth!.tenantId, ledgerFilter(req.query as Record<string, unknown>));
   res.json(balance);
+});
+
+// الأرباح والخسائر (شهر/فرع)
+journalRouter.get("/profit-loss", async (req, res) => {
+  res.json(await getProfitAndLoss(req.auth!.tenantId, ledgerFilter(req.query as Record<string, unknown>)));
 });

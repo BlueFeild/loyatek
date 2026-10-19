@@ -59,3 +59,29 @@ dealsRouter.post("/:id/lost", requireRole("OWNER", "ADMIN", "MANAGER"), async (r
     res.status(400).json({ error: err.message });
   }
 });
+
+const updateDealSchema = z.object({
+  name: z.string().trim().min(2).max(120).optional(),
+  value: z.number().min(0).optional(),
+  // أي مرحلة - قدام أو رجوع (لو حصل تغيير أو غلطة)
+  stage: z.enum(["LEAD", "QUALIFIED", "PROPOSAL", "WON", "LOST"]).optional(),
+});
+
+// تعديل الصفقة: الاسم والقيمة، ونقلها لأي مرحلة (مع تسجيل التغيير في Timeline العميل)
+dealsRouter.patch("/:id", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  const parsed = updateDealSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid change" });
+  const tenantId = req.auth!.tenantId;
+  const deal = await prisma.deal.findFirst({ where: { id: req.params.id, tenantId } });
+  if (!deal) return res.status(404).json({ error: "Deal not found" });
+  const d = parsed.data;
+  const notes: string[] = [];
+  if (d.stage && d.stage !== deal.stage) notes.push(`Deal "${deal.name}" moved from ${deal.stage} to ${d.stage}`);
+  if (d.value !== undefined && d.value !== Number(deal.value)) notes.push(`Deal "${deal.name}" value changed from ${Number(deal.value)} to ${d.value}`);
+  if (d.name && d.name !== deal.name) notes.push(`Deal "${deal.name}" renamed to "${d.name}"`);
+  const [updated] = await prisma.$transaction([
+    prisma.deal.update({ where: { id: deal.id }, data: d, include: { customer: true } }),
+    ...notes.map((text) => prisma.activity.create({ data: { tenantId, customerId: deal.customerId, type: "STAGE_CHANGE", text } })),
+  ]);
+  res.json(updated);
+});

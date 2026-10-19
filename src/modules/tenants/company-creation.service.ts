@@ -1,4 +1,5 @@
 import { prisma } from "../../config/db";
+import { newTrialExpiry } from "../../utils/platform-config";
 import { generateUniqueSlug } from "../../utils/slug";
 import { trackPlatformEvent } from "../analytics/analytics.service";
 
@@ -14,7 +15,7 @@ export async function createLinkedCompany(ownerUserId: string, name: string, ind
 
   const slug = await generateUniqueSlug(name);
   // الشركة المجانية (السوبر أدمن) مالهاش تجربة - كل حاجة مفتوحة دايمًا
-  const trialExpiresAt = opts.free ? null : new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const trialExpiresAt = opts.free ? null : await newTrialExpiry();
 
   const tenant = await prisma.tenant.create({
     data: {
