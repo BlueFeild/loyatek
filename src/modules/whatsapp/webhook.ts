@@ -121,7 +121,11 @@ platformWhatsappWebhookRouter.get("/", (req, res) => {
 
 platformWhatsappWebhookRouter.post("/", async (req: Request & { rawBody?: Buffer }, res) => {
   const secret = process.env.META_APP_SECRET?.trim();
-  if (!secret || !verifyMetaSignature(req.rawBody, req.header("x-hub-signature-256"), secret)) return res.sendStatus(401);
+  if (!secret || !verifyMetaSignature(req.rawBody, req.header("x-hub-signature-256"), secret)) {
+    // بيظهر في Railway logs - غالبًا META_APP_SECRET مش هو App Secret بتاع التطبيق ده
+    console.warn(`[whatsapp-webhook] platform webhook rejected: ${!secret ? "META_APP_SECRET is not set" : "signature mismatch (check META_APP_SECRET)"}`);
+    return res.sendStatus(401);
+  }
   res.sendStatus(200);
   const phoneIds = Array.from(new Set(parseWebhookPayload(req.body).map((b) => b.phoneNumberId).filter((x): x is string => Boolean(x))));
   for (const phoneNumberId of phoneIds) {
@@ -133,6 +137,7 @@ platformWhatsappWebhookRouter.post("/", async (req: Request & { rawBody?: Buffer
       take: 1,
       select: { tenantId: true },
     });
+    if (owners.length === 0) console.warn(`[whatsapp-webhook] message for phone number id ${phoneNumberId} but no connected company has it`);
     for (const o of owners) {
       try {
         // handleWebhook بيتجاهل أي رقم غير رقم التاجر ده

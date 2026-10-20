@@ -110,6 +110,12 @@ whatsappRouter.patch("/settings", requireRole("OWNER", "ADMIN"), async (req, res
   await prisma.whatsappSettings.update({ where: { tenantId: req.auth!.tenantId }, data: parsed.data });
   const touchedCredentials = ["metaAccessToken", "metaPhoneNumberId", "metaWabaId"].some((k) => k in parsed.data);
   const updated = touchedCredentials ? await runVerify(req.auth!.tenantId) : await getOrCreateWhatsappSettings(req.auth!.tenantId);
+  // الربط اليدوي (Edit credentials): نشترك في رسايل حساب الواتساب زي زرار فيسبوك بالظبط،
+  // غير كده Meta ممكن ماتبعتش رسايل العملاء الداخلة للمنصة
+  if (touchedCredentials && updated.isConnected && updated.metaAccessToken && updated.metaWabaId) {
+    const sub = await subscribeAppToWaba(updated.metaAccessToken, updated.metaWabaId);
+    if (!sub.ok) console.warn(`[whatsapp] subscribe app to WABA failed for tenant ${req.auth!.tenantId}: ${sub.error}`);
+  }
   res.json(settingsView(updated, req));
 });
 
@@ -204,6 +210,11 @@ whatsappRouter.post("/register-number", requireRole("OWNER", "ADMIN"), async (re
 whatsappRouter.post("/verify", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   await ensureWebhookKeys(req.auth!.tenantId);
   const updated = await runVerify(req.auth!.tenantId);
+  // Verify connection كمان بيتأكد إن المنصة مشتركة في رسايل الحساب (بيصلّح الربط اليدوي القديم)
+  if (updated.isConnected && updated.metaAccessToken && updated.metaWabaId) {
+    const sub = await subscribeAppToWaba(updated.metaAccessToken, updated.metaWabaId);
+    if (!sub.ok) console.warn(`[whatsapp] subscribe app to WABA failed for tenant ${req.auth!.tenantId}: ${sub.error}`);
+  }
   res.json(settingsView(updated, req));
 });
 
