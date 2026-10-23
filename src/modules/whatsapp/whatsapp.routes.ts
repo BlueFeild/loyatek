@@ -20,6 +20,18 @@ import {
   sendWhatsappTemplate,
 } from "./whatsapp.service";
 import { HELLO_WORLD_ID, HELLO_WORLD_TEXT, listInboxTemplates, renderTemplateText, templateParamCount } from "./inbox-templates";
+import {
+  MAX_CARDS,
+  buildCarouselCreateComponents,
+  buildSendComponents,
+  carouselCardSchema,
+  carouselCardsProblem,
+  renderTemplatePreview,
+  sendTemplateComponents,
+  templateVarCount,
+  uploadTemplateImages,
+  type StoredCard,
+} from "./rich-templates";
 import { embeddedSignupConfig, exchangeSignupCode, findWabaPhoneNumber, registerPhoneNumber, subscribeAppToWaba } from "./embedded-signup";
 import { BOOKING_TEMPLATE_PURPOSES, ensureBookingTemplates, getApprovedBookingTemplate, type BookingTemplatePurpose } from "./booking-templates";
 
@@ -382,20 +394,29 @@ whatsappRouter.post("/conversations/:phone/template", requireRole("OWNER", "ADMI
 
   const d = parsed.data;
   let name = "hello_world", language = "en_US", body = HELLO_WORLD_TEXT, params: string[] = [];
+  // قالب بصورة/كروت: الصور بتترفع لـ Meta وتتبعت مع الرسالة
+  let richTpl: { format: string; bodyText: string; headerImageDataUrl: string | null; cards: unknown } | null = null;
   if (d.templateId !== HELLO_WORLD_ID) {
     // القالب لازم يكون تبع نفس الشركة ومعتمد من Meta
     const tpl = await prisma.whatsappTemplate.findFirst({ where: { id: d.templateId, tenantId } });
     if (!tpl) return res.status(404).json({ error: "Template not found" });
     if (tpl.status !== "APPROVED") return res.status(400).json({ error: `This template isn't approved by Meta yet (status: ${tpl.status}).` });
-    if (tpl.headerImageDataUrl) return res.status(400).json({ error: "This template has a photo header — send it from Campaigns." });
+    if (tpl.headerImageDataUrl || tpl.format === "CAROUSEL") richTpl = tpl;
     const count = templateParamCount(tpl.bodyText);
     params = Array.from({ length: count }, (_, i) => d.params[i] ?? "");
     if (params.some((v) => !v.trim())) return res.status(400).json({ error: `Fill in all ${count} blanks of the template.` });
     name = tpl.name;
     language = tpl.language;
-    body = renderTemplateText(tpl.bodyText, params);
+    body = richTpl ? renderTemplatePreview(tpl, params) : renderTemplateText(tpl.bodyText, params);
   }
-  const result = await sendWhatsappTemplate(s.metaAccessToken, s.metaPhoneNumberId, phone, name, language, params);
+  let result: { ok: boolean; messageId?: string; error?: string };
+  if (richTpl) {
+    const up = await uploadTemplateImages(s.metaAccessToken, s.metaPhoneNumberId, richTpl);
+    if (!up.ok) return res.status(400).json({ error: `Couldn't prepare the template images: ${up.error}` });
+    result = await sendTemplateComponents(s.metaAccessToken, s.metaPhoneNumberId, phone, name, language, buildSendComponents(richTpl, up.mediaIds, params));
+  } else {
+    result = await sendWhatsappTemplate(s.metaAccessToken, s.metaPhoneNumberId, phone, name, language, params);
+  }
   const row = await recordWhatsappMessage({
     tenantId,
     direction: "OUT",
@@ -632,17 +653,55 @@ whatsappRouter.post("/campaigns/:id/send", requireRole("OWNER", "ADMIN", "MANAGE
     // لو الحملة مرتبطة بقالب معتمد فعليًا من Meta، بنستخدمه بالاسم
     // واللغة الحقيقيين بتوعه. لو مفيش قالب مرتبط، أو القالب لسه PENDING
     // ومامتوفقش عليه، بنرجع لـ "hello_world" الافتراضي المعتمد تلقائيًا
+    // لو لسه PENDING عندنا نسأل Meta الأول (يمكن اتوافق عليه والتاجر مادوسش "Check status")
+    if (campaign.template && campaign.template.status === "PENDING" && campaign.template.metaTemplateId) {
+      const check = await getWhatsappTemplateStatus(settings.metaAccessToken, campaign.template.metaTemplateId);
+      if (check.ok && (check.status === "APPROVED" || check.status === "REJECTED")) {
+        campaign.template = await prisma.whatsappTemplate.update({
+          where: { id: campaign.template.id },
+          data: { status: check.status, rejectionReason: check.rejectionReason ?? null },
+        });
+      }
+    }
     if (campaign.template && campaign.template.status !== "APPROVED") {
       return res.status(400).json({
         error: `This campaign's template "${campaign.template.name}" isn't approved by Meta yet (status: ${campaign.template.status}). Wait for approval or send without a custom template.`,
       });
     }
-    const templateName = campaign.template?.status === "APPROVED" ? campaign.template.name : "hello_world";
-    const templateLang = campaign.template?.status === "APPROVED" ? campaign.template.language : "en_US";
+    const tpl = campaign.template?.status === "APPROVED" ? campaign.template : null;
+    const templateName = tpl ? tpl.name : "hello_world";
+    const templateLang = tpl ? tpl.language : "en_US";
+    // {{1}} بيتملا باسم العميل من ملف الإكسل - أكتر من فراغ واحد مش مدعوم في الحملات
+    const vars = tpl ? templateVarCount(tpl.bodyText) : 0;
+    if (vars > 1) {
+      return res.status(400).json({ error: `This template has ${vars} blanks — campaigns can fill only {{1}} (the customer's name). Use a template with at most one blank.` });
+    }
+    // الصور بتترفع لـ Meta مرة واحدة للحملة كلها (قبل كده الحملة بالصورة كانت بتفشل)
+    let mediaIds: string[] = [];
+    if (tpl) {
+      const up = await uploadTemplateImages(settings.metaAccessToken, settings.metaPhoneNumberId, tpl);
+      if (!up.ok) return res.status(400).json({ error: `Couldn't prepare the template images: ${up.error}` });
+      mediaIds = up.mediaIds;
+    }
 
     for (const r of recipients) {
       // نداء حقيقي فعلي لكل رقم لـ Meta Graph API - مش محاكاة
-      const result = await sendWhatsappTestMessage(settings.metaAccessToken, settings.metaPhoneNumberId, r.phone, templateName, templateLang);
+      const params = vars === 1 ? [String(r.name || "").trim() || "there"] : [];
+      const result = tpl
+        ? await sendTemplateComponents(settings.metaAccessToken, settings.metaPhoneNumberId, r.phone, templateName, templateLang, buildSendComponents(tpl, mediaIds, params))
+        : await sendWhatsappTestMessage(settings.metaAccessToken, settings.metaPhoneNumberId, r.phone, templateName, templateLang);
+      // الرسالة بتظهر في Team Inbox كمان (عشان ردود العملاء تبان جنبها)
+      await recordWhatsappMessage({
+        tenantId: req.auth!.tenantId,
+        direction: "OUT",
+        contactPhone: r.phone,
+        contactName: r.name || null,
+        body: tpl ? renderTemplatePreview(tpl, params) : "hello_world (Meta test template)",
+        kind: "campaign",
+        waMessageId: result.ok ? result.messageId : null,
+        status: result.ok ? "sent" : "failed",
+        error: result.ok ? null : result.error,
+      });
       if (result.ok) sent++;
       else failed++;
     }
@@ -670,6 +729,10 @@ const createTemplateSchema = z.object({
   language: z.string().default("ar"),
   category: z.enum(["MARKETING", "UTILITY"]).default("MARKETING"),
   bodyText: z.string().min(1).max(1024),
+  // STANDARD = نص (+ صورة فوق + زرار) | CAROUSEL = كروت تتقلّب
+  format: z.enum(["STANDARD", "CAROUSEL"]).default("STANDARD"),
+  cards: z.array(carouselCardSchema).max(MAX_CARDS).optional(),
+  bodyExamples: z.array(z.string().trim().max(60)).max(10).optional(),
   buttonText: z.string().optional(),
   buttonUrl: z.string().url().optional(),
   headerImageBase64: z.string().optional(),
@@ -682,7 +745,12 @@ const createTemplateSchema = z.object({
 // نستخدم الـ handle الناتج في إنشاء القالب نفسه
 whatsappRouter.post("/templates", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   const parsed = createTemplateSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid template" });
+  const isCarousel = parsed.data.format === "CAROUSEL";
+  if (isCarousel) {
+    const problem = carouselCardsProblem(parsed.data.cards ?? []);
+    if (problem) return res.status(400).json({ error: problem });
+  }
 
   const settings = await getOrCreateWhatsappSettings(req.auth!.tenantId);
   if (!settings.isConnected || !settings.metaAccessToken || !settings.metaWabaId) {
@@ -691,14 +759,16 @@ whatsappRouter.post("/templates", requireRole("OWNER", "ADMIN", "MANAGER"), asyn
     });
   }
 
+  // رفع الصور لـ Meta محتاج App ID - بتاع الشركة، أو تطبيق المنصة (ربط فيسبوك)
+  const appId = settings.metaAppId || process.env.META_APP_ID?.trim() || "";
   let headerImageHandle: string | undefined;
-  if (parsed.data.headerImageBase64) {
-    if (!settings.metaAppId) {
+  if (!isCarousel && parsed.data.headerImageBase64) {
+    if (!appId) {
       return res.status(400).json({ error: "Add your Meta App ID in settings first — it's required to upload a header image." });
     }
     const upload = await uploadTemplateHeaderImage(
       settings.metaAccessToken,
-      settings.metaAppId,
+      appId,
       parsed.data.headerImageBase64,
       parsed.data.headerImageMimeType || "image/jpeg"
     );
@@ -708,7 +778,25 @@ whatsappRouter.post("/templates", requireRole("OWNER", "ADMIN", "MANAGER"), asyn
     headerImageHandle = upload.handle;
   }
 
+  // الكاروسيل: كل صورة كارت بتترفع لـ Meta (handle) وبعدين القالب بيتبعت بشكل الكروت
+  let storedCards: StoredCard[] | undefined;
+  let rawComponents: Record<string, unknown>[] | undefined;
+  if (isCarousel) {
+    if (!appId) return res.status(400).json({ error: "Add your Meta App ID in settings first — it's required to upload the card images." });
+    const cards = parsed.data.cards ?? [];
+    const handles: string[] = [];
+    for (const [i, c] of cards.entries()) {
+      const up = await uploadTemplateHeaderImage(settings.metaAccessToken, appId, c.imageBase64, c.imageMimeType);
+      if (!up.ok || !up.handle) return res.status(400).json({ error: `Card ${i + 1} image: ${up.error || "upload failed"}` });
+      handles.push(up.handle);
+    }
+    storedCards = cards.map((c) => ({ imageDataUrl: `data:${c.imageMimeType};base64,${c.imageBase64}`, bodyText: c.bodyText, buttons: c.buttons }));
+    rawComponents = buildCarouselCreateComponents(parsed.data.bodyText, parsed.data.bodyExamples, storedCards, handles);
+  }
+
   const result = await createWhatsappTemplate(settings.metaAccessToken, settings.metaWabaId, {
+    rawComponents,
+    bodyExamples: parsed.data.bodyExamples,
     name: parsed.data.name,
     language: parsed.data.language,
     category: parsed.data.category,
@@ -731,7 +819,9 @@ whatsappRouter.post("/templates", requireRole("OWNER", "ADMIN", "MANAGER"), asyn
       bodyText: parsed.data.bodyText,
       buttonText: parsed.data.buttonText,
       buttonUrl: parsed.data.buttonUrl,
-      headerImageDataUrl: parsed.data.headerImageBase64 ? `data:${parsed.data.headerImageMimeType};base64,${parsed.data.headerImageBase64}` : undefined,
+      headerImageDataUrl: !isCarousel && parsed.data.headerImageBase64 ? `data:${parsed.data.headerImageMimeType || "image/jpeg"};base64,${parsed.data.headerImageBase64}` : undefined,
+      format: parsed.data.format,
+      cards: storedCards ? (storedCards as unknown as object) : undefined,
       metaTemplateId: result.metaTemplateId,
       status: "PENDING",
     },

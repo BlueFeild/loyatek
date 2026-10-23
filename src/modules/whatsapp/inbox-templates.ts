@@ -58,9 +58,7 @@ export async function listInboxTemplates(tenantId: string): Promise<SendableTemp
         ? t.status === "REJECTED"
           ? "Rejected by Meta"
           : "Waiting for Meta approval"
-        : t.headerImageDataUrl
-          ? "Has a photo header — send it from Campaigns"
-          : null;
+        : null;
     return { id: t.id, name: t.name, language: t.language, bodyText: t.bodyText, paramCount: templateParamCount(t.bodyText), status: t.status, sendable: !reason, reason };
   });
   list.push({ id: HELLO_WORLD_ID, name: "hello_world", language: "en_US", bodyText: HELLO_WORLD_TEXT, paramCount: 0, status: "APPROVED", sendable: true, reason: null });

@@ -316,6 +316,8 @@ interface CreateTemplateInput {
   headerImageHandle?: string;
   // أمثلة لقيم المتغيرات {{1}} {{2}}... (Meta بتطلبها للمراجعة)
   bodyExamples?: string[];
+  // شكل جاهز (زي الكاروسيل) - لو موجود بيتبعت زي ما هو بدل البناء العادي
+  rawComponents?: Record<string, unknown>[];
 }
 
 interface CreateTemplateResult {
@@ -333,22 +335,25 @@ export async function createWhatsappTemplate(
   input: CreateTemplateInput
 ): Promise<CreateTemplateResult> {
   try {
-    const components: Record<string, unknown>[] = [];
-    if (input.headerImageHandle) {
-      components.push({ type: "HEADER", format: "IMAGE", example: { header_handle: [input.headerImageHandle] } });
-    }
-    // لو النص فيه متغيرات {{1}} {{2}}، Meta بتطلب مثال لكل واحد وإلا بترفض القالب
-    const varCount = new Set(Array.from(input.bodyText.matchAll(/\{\{(\d+)\}\}/g), (m) => m[1])).size;
-    components.push(
-      varCount > 0 && input.bodyExamples?.length
-        ? { type: "BODY", text: input.bodyText, example: { body_text: [input.bodyExamples.slice(0, varCount)] } }
-        : { type: "BODY", text: input.bodyText }
-    );
-    if (input.buttonText && input.buttonUrl) {
-      components.push({
-        type: "BUTTONS",
-        buttons: [{ type: "URL", text: input.buttonText, url: input.buttonUrl }],
-      });
+    // الكاروسيل بيجي بمكوّناته جاهزة - غير كده بنبني رأس (صورة) + نص + زرار
+    const components: Record<string, unknown>[] = input.rawComponents ? [...input.rawComponents] : [];
+    if (!input.rawComponents) {
+      if (input.headerImageHandle) {
+        components.push({ type: "HEADER", format: "IMAGE", example: { header_handle: [input.headerImageHandle] } });
+      }
+      // لو النص فيه متغيرات {{1}} {{2}}، Meta بتطلب مثال لكل واحد وإلا بترفض القالب
+      const varCount = new Set(Array.from(input.bodyText.matchAll(/\{\{(\d+)\}\}/g), (m) => m[1])).size;
+      components.push(
+        varCount > 0 && input.bodyExamples?.length
+          ? { type: "BODY", text: input.bodyText, example: { body_text: [input.bodyExamples.slice(0, varCount)] } }
+          : { type: "BODY", text: input.bodyText }
+      );
+      if (input.buttonText && input.buttonUrl) {
+        components.push({
+          type: "BUTTONS",
+          buttons: [{ type: "URL", text: input.buttonText, url: input.buttonUrl }],
+        });
+      }
     }
 
     const res = await fetch(`${graphBase()}/${wabaId}/message_templates`, {

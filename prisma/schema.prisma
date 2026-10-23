@@ -1251,6 +1251,10 @@ model WhatsappTemplate {
   headerImageDataUrl String? @db.Text
   buttonText      String?
   buttonUrl       String?
+  // STANDARD (نص + صورة فوق اختياري + زرار) | CAROUSEL (كروت تتقلّب، كل كارت صورة + كلام + زرار/اتنين)
+  format          String  @default("STANDARD")
+  // كروت الكاروسيل: [{imageDataUrl, bodyText, buttons:[{type QUICK_REPLY|URL, text, url?}]}]
+  cards           Json?
   status          TemplateStatus @default(PENDING)
   metaTemplateId  String? // معرّف القالب عند Meta نفسها - للاستعلام عن حالته بعد كده
   rejectionReason String?
