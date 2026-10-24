@@ -2,24 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { AppError, ServiceUnavailableError } from "../../core/errors";
 import { copyResultSchema, type BusinessContext, type CopyBrief, type CopyGenerator, type CopyResult } from "./copy-generator";
 import { buildCopyPrompt, COPYWRITER_SYSTEM } from "./copywriter.prompts";
-
-// شكل الرد المطلوب من Claude (structured output) - وبنتأكد منه تاني بـ zod
-const OUTPUT_SCHEMA = {
-  type: "object",
-  properties: {
-    variants: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: { text: { type: "string" }, hashtags: { type: "array", items: { type: "string" } } },
-        required: ["text", "hashtags"],
-        additionalProperties: false,
-      },
-    },
-  },
-  required: ["variants"],
-  additionalProperties: false,
-};
+import { COPY_OUTPUT_SCHEMA } from "./copy-output-schema";
 
 const UNEXPECTED = "The AI returned an unexpected answer — please try again.";
 
@@ -38,7 +21,7 @@ export class AnthropicCopyGenerator implements CopyGenerator {
         // لو المودل رفض لسبب أمان، Anthropic بتعيد الطلب على البديل المناسب تلقائي
         betas: ["server-side-fallback-2026-07-01"],
         fallbacks: "default",
-        output_config: { effort: "medium", format: { type: "json_schema", schema: OUTPUT_SCHEMA } },
+        output_config: { effort: "medium", format: { type: "json_schema", schema: COPY_OUTPUT_SCHEMA } },
         system: COPYWRITER_SYSTEM,
         messages: [{ role: "user", content: buildCopyPrompt(brief, business) }],
       });
