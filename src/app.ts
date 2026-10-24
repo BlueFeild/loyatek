@@ -48,6 +48,9 @@ import { notificationsRouter } from "./modules/notifications/notifications.route
 import { analyticsRouter } from "./modules/analytics/analytics.routes";
 import { paymentSettingsRouter } from "./modules/payment-settings/payment-settings.routes";
 import { erpDemoRouter } from "./modules/erp-demo/erp-demo.routes";
+import { adminCreditsRouter, creditsRouter } from "./modules/credits/credit.routes";
+import { aiRouter } from "./modules/ai/ai.routes";
+import { AppError } from "./core/errors";
 import { getPlatformConfig, getRegionalPricing } from "./utils/platform-config";
 
 export const app = express();
@@ -147,6 +150,9 @@ app.use("/api/notifications", notificationsRouter);
 app.use("/api/analytics", analyticsRouter);
 app.use("/api/payment-settings", paymentSettingsRouter);
 app.use("/api/erp/demo-data", erpDemoRouter);
+app.use("/api/credits", creditsRouter);
+app.use("/api/super-admin/credits", adminCreditsRouter);
+app.use("/api/ai", aiRouter);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Route not found" });
@@ -163,6 +169,8 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
   if (typeof err?.message === "string" && err.message.includes("is not allowed by CORS")) {
     return res.status(403).json({ error: "Origin not allowed" });
   }
+  // أخطاء متوقعة من منطق الشغل (core/errors.ts) - رسالتها معمولة للمستخدم
+  if (err instanceof AppError) return res.status(err.status).json({ error: err.message, code: err.code });
   console.error(`[error] ${req.method} ${req.originalUrl}:`, err?.stack ?? err);
   res.status(500).json({ error: "Internal server error" });
 });
