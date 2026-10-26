@@ -24,7 +24,7 @@ describe("platform-owner (super admin) modules are free", () => {
   });
   it("platform owner has every module active, no expiry needed, even expired ones", () => {
     const t = { ...base, isPlatformOwner: true, moduleExpirations: { wallet: "2000-01-01T00:00:00Z" } };
-    expect(getEffectiveModules(t).sort()).toEqual(["booking", "catalog", "erp", "linktree", "wallet", "whatsapp"]);
+    expect(getEffectiveModules(t).sort()).toEqual(["ai", "booking", "catalog", "erp", "linktree", "wallet", "whatsapp"]);
     expect(isModuleActive(t, "wallet")).toBe(true);
     expect(isModuleActive(t, "not-a-module")).toBe(false);
   });

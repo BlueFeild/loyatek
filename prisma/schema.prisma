@@ -1436,6 +1436,9 @@ model PlatformSettings {
   moduleDiscounts       Json     @default("{}")
   // أسعار حسب الدولة [{ country, name, currency, modulePrices, extraCompanyBasePrice }]
   pricingRegions        Json     @default("[]")
+  // أسعار رسايل واتساب عند Meta اللي السوبر أدمن عدّلها { "QA": { marketing, utility, authentication } } بالدولار
+  // فاضي = الأسعار الافتراضية في modules/whatsapp/meta-rates.ts (تقديرية - Meta بتغيّرها)
+  whatsappMetaRates     Json     @default("{}")
   updatedAt           DateTime @updatedAt
 
   @@map("platform_settings")

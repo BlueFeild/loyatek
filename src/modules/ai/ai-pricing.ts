@@ -7,3 +7,6 @@ export const AI_COSTS = {
 } as const;
 
 export type AiTool = keyof typeof AI_COSTS;
+
+// اشتراك "استوديو الذكاء الاصطناعي" بيشمل النقاط دي كل شهر (السنوي = 12 شهر مرة واحدة)
+export const AI_MODULE_MONTHLY_CREDITS = 100;

@@ -24,6 +24,10 @@ import { AUDIT_SYSTEM, buildAuditPrompt, buildImagePrompt, buildVideoPrompt } fr
 
 type Part = { type: "text"; text: string } | { type: "image"; data: string; mime_type: string };
 
+// مكتبة جوجل بتعيد المحاولة لوحدها بعد "limit reached" وبتقع في خطأ داخلي ("unusable") بدل
+// الرسالة الواضحة - فبنقفل إعادة المحاولة ونرجّع للتاجر رسالة مفهومة (يجرب تاني بنفسه)
+const NO_RETRY = { maxRetries: 0 };
+
 const imagePart = (img: InputImage): Part => ({ type: "image", data: img.base64, mime_type: img.mimeType });
 
 
@@ -46,7 +50,7 @@ export class GeminiImageGenerator implements ImageGenerator {
         input,
         response_format: { type: "image", aspect_ratio: brief.aspectRatio, image_size: "1K" },
         store: false,
-      });
+      }, NO_RETRY);
       out = interaction.output_image;
     } catch (err) {
       throw translateGeminiError(err, "image");
@@ -75,7 +79,7 @@ export class GeminiVideoGenerator implements VideoGenerator {
         input,
         response_format: { type: "video", aspect_ratio: brief.aspectRatio, resolution: "720p" },
         store: false,
-      });
+      }, NO_RETRY);
       out = interaction.output_video;
     } catch (err) {
       throw translateGeminiError(err, "video");
@@ -104,7 +108,7 @@ export class GeminiAccountAuditor implements AccountAuditor {
         system_instruction: AUDIT_SYSTEM,
         response_format: { type: "text", mime_type: "application/json", schema: AUDIT_OUTPUT_SCHEMA },
         store: false,
-      });
+      }, NO_RETRY);
       text = interaction.output_text;
     } catch (err) {
       throw translateGeminiError(err, "audit");

@@ -10,6 +10,7 @@ export const MODULE_PRICES: Record<string, number> = {
   whatsapp: 79,
   erp: 99,
   linktree: 10,
+  ai: 29, // استوديو الذكاء الاصطناعي (بيشمل نقاط شهرية - ai-pricing.ts)
 };
 export const YEARLY_DISCOUNT = 0.2;
 // رسوم فتح بروفايل/شركة إضافية شهريًا (من غير أي خدمات) - رقم قابل للتعديل

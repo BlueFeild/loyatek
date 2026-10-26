@@ -27,3 +27,6 @@ DO $$ BEGIN
       FOREIGN KEY ("generationId") REFERENCES "ai_generations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END $$;
+
+-- أسعار رسايل واتساب عند Meta (تقديرية، السوبر أدمن يقدر يعدّلها) - عشان التاجر يعرف هيدفع كام لـ Meta
+ALTER TABLE "platform_settings" ADD COLUMN IF NOT EXISTS "whatsappMetaRates" JSONB NOT NULL DEFAULT '{}';

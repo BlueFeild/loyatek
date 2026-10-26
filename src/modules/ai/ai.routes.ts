@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 import { container } from "../../core/container";
 import { NotFoundError } from "../../core/errors";
 import { zodMessage } from "../../utils/validation";
@@ -11,7 +12,8 @@ const { copywriterService, imageStudioService, videoStudioService, accountAuditS
 
 // استوديو الذكاء الاصطناعي - الـ controller بيستقبل ويتأكد من البيانات بس، والمنطق في الخدمات
 export const aiRouter = Router();
-aiRouter.use(requireAuth);
+// خدمة بتتباع: مقفولة غير للمشترك في "ai" (أو التجربة / شركة المنصة)
+aiRouter.use(requireAuth, requireModule("ai"));
 
 // الأدوات المتاحة وسعر كل واحدة (الشاشة بتقرا من هنا)
 aiRouter.get("/tools", (_req, res) => {

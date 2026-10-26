@@ -325,7 +325,7 @@ superAdminRouter.patch("/users/:id/active", async (req, res) => {
   res.json({ id: updated.id, isActive: updated.isActive });
 });
 const updateModulesSchema = z.object({
-  subscribedModules: z.array(z.enum(["erp", "booking", "wallet", "whatsapp", "catalog", "linktree"])),
+  subscribedModules: z.array(z.enum(ALL_MODULES)),
 });
 
 // تعديل الموديولات المشترك فيها شركة معيّنة

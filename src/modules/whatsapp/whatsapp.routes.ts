@@ -20,6 +20,8 @@ import {
   sendWhatsappTemplate,
 } from "./whatsapp.service";
 import { HELLO_WORLD_ID, HELLO_WORLD_TEXT, listInboxTemplates, renderTemplateText, templateParamCount } from "./inbox-templates";
+import { categoryForTemplate } from "./meta-rates";
+import { container } from "../../core/container";
 import {
   MAX_CARDS,
   buildCarouselCreateComponents,
@@ -609,6 +611,17 @@ whatsappRouter.post("/campaigns/:id/recipients/upload", requireRole("OWNER", "AD
 // بصراحة لو مفيش اتصال حقيقي بدل ما يتظاهر إنه بعت حاجة. بيبعت لكل
 // المستلمين الحقيقيين المرفوعين من الإكسل واحد واحد، ومش بيوقف لو
 // واحد فيهم فشل - بيكمّل الباقي ويرجّع تقرير حقيقي بالنجاح والفشل
+// تكلفة Meta التقريبية للحملة قبل الإرسال (حسب دولة كل رقم ونوع القالب) - بتتدفع لـ Meta مش لينا
+whatsappRouter.get("/campaigns/:id/estimate", async (req, res) => {
+  const campaign = await prisma.whatsappCampaign.findFirst({ where: { id: req.params.id, tenantId: req.auth!.tenantId }, include: { template: true } });
+  if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+  const recipients = (campaign.recipients as { phone: string }[] | null) ?? [];
+  // من غير قالب معتمد بنبعت hello_world وده UTILITY
+  const category = categoryForTemplate(campaign.template?.status === "APPROVED" ? campaign.template.category : "UTILITY");
+  const estimator = await container.metaRatesService.estimator();
+  res.json(estimator.estimate(recipients.map((r) => r.phone), category));
+});
+
 whatsappRouter.post("/campaigns/:id/send", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   const settings = await getOrCreateWhatsappSettings(req.auth!.tenantId);
   if (!settings.isConnected || !settings.metaAccessToken || !settings.metaPhoneNumberId) {

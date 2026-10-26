@@ -8,6 +8,7 @@ import { CopywriterService } from "../modules/ai/copywriter.service";
 import { ImageStudioService } from "../modules/ai/image-studio.service";
 import { VideoStudioService } from "../modules/ai/video-studio.service";
 import { AccountAuditService } from "../modules/ai/account-audit.service";
+import { MetaRatesService, PrismaMetaRatesStore } from "../modules/whatsapp/meta-rates.service";
 
 // المكان الوحيد اللي بيقرر "مين بيكلم مين" (Composition Root).
 // الخدمات بتاخد اللي محتاجاه من برّه، فسهل نغيّر مزوّد أو نختبر بنسخة وهمية
@@ -23,4 +24,5 @@ export const container = {
   imageStudioService: new ImageStudioService(providers.image, creditService, generations, assets),
   videoStudioService: new VideoStudioService(providers.video, creditService, generations, assets),
   accountAuditService: new AccountAuditService(providers.auditor, creditService, generations),
+  metaRatesService: new MetaRatesService(new PrismaMetaRatesStore(prisma)),
 };
