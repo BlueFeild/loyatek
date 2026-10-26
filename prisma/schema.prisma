@@ -1432,6 +1432,11 @@ model PlatformSettings {
   defaultGraceDays      Int      @default(3)
   // مدة التجربة المجانية لأي شركة جديدة (بالأيام) - السوبر أدمن بيغيّرها
   defaultTrialDays      Int      @default(1)
+  // نقاط ببلاش لأي شركة جديدة تجرب بيها استوديو الذكاء الاصطناعي وقت التجربة
+  defaultTrialCredits   Int      @default(20)
+  // نقاط اشتراك "استوديو الذكاء الاصطناعي": بتتضاف أول ما الطلب يتفعّل (الشهري / السنوي)
+  aiMonthlyCredits      Int      @default(100)
+  aiYearlyCredits       Int      @default(1200)
   // خصم شهري لكل خدمة { moduleId: { pct, endsAt } } - بيظهر للعميل السعر قبل وبعد
   moduleDiscounts       Json     @default("{}")
   // أسعار حسب الدولة [{ country, name, currency, modulePrices, extraCompanyBasePrice }]

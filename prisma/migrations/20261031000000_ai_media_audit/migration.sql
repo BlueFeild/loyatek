@@ -30,3 +30,10 @@ END $$;
 
 -- أسعار رسايل واتساب عند Meta (تقديرية، السوبر أدمن يقدر يعدّلها) - عشان التاجر يعرف هيدفع كام لـ Meta
 ALTER TABLE "platform_settings" ADD COLUMN IF NOT EXISTS "whatsappMetaRates" JSONB NOT NULL DEFAULT '{}';
+
+-- نقاط ببلاش لكل شركة جديدة (تجربة استوديو الذكاء الاصطناعي) - السوبر أدمن بيغيّر العدد
+ALTER TABLE "platform_settings" ADD COLUMN IF NOT EXISTS "defaultTrialCredits" INTEGER NOT NULL DEFAULT 20;
+
+-- نقاط اشتراك استوديو الذكاء الاصطناعي (الشهري / السنوي) - السوبر أدمن بيغيّرها
+ALTER TABLE "platform_settings" ADD COLUMN IF NOT EXISTS "aiMonthlyCredits" INTEGER NOT NULL DEFAULT 100;
+ALTER TABLE "platform_settings" ADD COLUMN IF NOT EXISTS "aiYearlyCredits" INTEGER NOT NULL DEFAULT 1200;

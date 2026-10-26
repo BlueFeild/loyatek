@@ -8,5 +8,6 @@ export const AI_COSTS = {
 
 export type AiTool = keyof typeof AI_COSTS;
 
-// اشتراك "استوديو الذكاء الاصطناعي" بيشمل النقاط دي كل شهر (السنوي = 12 شهر مرة واحدة)
+// الافتراضي لنقاط اشتراك "استوديو الذكاء الاصطناعي" في الشهر (السنوي = × 12) -
+// السوبر أدمن بيغيّرهم (platform_settings.aiMonthlyCredits / aiYearlyCredits)
 export const AI_MODULE_MONTHLY_CREDITS = 100;

@@ -6,6 +6,7 @@ import { requireAuth, requireSuperAdmin } from "../../middleware/auth";
 import { ACCOUNT_STATUSES, ALL_MODULES, computeExpiryDate, isInGrace, isModuleActive, moduleExpiry } from "../../utils/modules";
 import { clearAccessCache } from "../../utils/account-access";
 import { clearPlatformConfigCache, getPlatformConfig, newTrialExpiry } from "../../utils/platform-config";
+import { giveNewCompanyTrialCredits } from "../credits/trial-credits";
 import { MODULE_PRICES } from "../checkout/pricing";
 import { isCurrencyCode } from "../../utils/money";
 import { signAccessToken } from "../../utils/jwt";
@@ -225,6 +226,11 @@ const platformConfigSchema = z.object({
   defaultGraceDays: z.number().int().min(0).max(365).optional(),
   // مدة التجربة المجانية لأي شركة جديدة (أيام) - 0 = من غير تجربة
   defaultTrialDays: z.number().int().min(0).max(365).optional(),
+  // نقاط ببلاش لأي شركة جديدة (تجربة استوديو الذكاء الاصطناعي) - 0 = من غير نقاط
+  defaultTrialCredits: z.number().int().min(0).max(10000).optional(),
+  // نقاط اشتراك استوديو الذكاء الاصطناعي (بتتضاف عند تفعيل الطلب)
+  aiMonthlyCredits: z.number().int().min(0).max(100000).optional(),
+  aiYearlyCredits: z.number().int().min(0).max(1000000).optional(),
   // قواعد الخصم (اللستة كلها بتتبعت مرة واحدة): خدمات (فاضية = الكل) + نسبة +
   // شهري/سنوي/الاتنين + دول (فاضية = كل الدول) + تاريخ انتهاء. الشكل القديم
   // { erp: { pct, endsAt } } لسه مقبول (خصم لخدمة على الشهري والسنوي لكل الدول)
@@ -278,6 +284,9 @@ superAdminRouter.patch("/platform-config", async (req, res) => {
       ...(d.yearlyDiscountPct !== undefined ? { yearlyDiscountPct: d.yearlyDiscountPct } : {}),
       ...(d.defaultGraceDays !== undefined ? { defaultGraceDays: d.defaultGraceDays } : {}),
       ...(d.defaultTrialDays !== undefined ? { defaultTrialDays: d.defaultTrialDays } : {}),
+      ...(d.defaultTrialCredits !== undefined ? { defaultTrialCredits: d.defaultTrialCredits } : {}),
+      ...(d.aiMonthlyCredits !== undefined ? { aiMonthlyCredits: d.aiMonthlyCredits } : {}),
+      ...(d.aiYearlyCredits !== undefined ? { aiYearlyCredits: d.aiYearlyCredits } : {}),
       ...(d.discounts
         ? {
             moduleDiscounts: (Array.isArray(d.discounts)
@@ -533,6 +542,7 @@ superAdminRouter.post("/clients", async (req, res) => {
     include: { users: true },
   });
   const owner = tenant.users[0];
+  await giveNewCompanyTrialCredits(tenant.id);
   let emailSent = false;
   if (d.sendEmail) {
     const link = await createPasswordLink(owner.id, "INVITE");

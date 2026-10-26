@@ -47,14 +47,26 @@ describe("AI Studio as a sellable service", () => {
     expect(ALL_MODULES).toContain("ai");
     for (const m of ALL_MODULES) expect(MODULE_PRICES[m]).toBeGreaterThan(0);
   });
-  it("subscription adds credits: monthly 100, yearly 1200", async () => {
-    expect(includedAiCredits("monthly")).toBe(AI_MODULE_MONTHLY_CREDITS);
-    expect(includedAiCredits("yearly")).toBe(AI_MODULE_MONTHLY_CREDITS * 12);
+  it("subscription adds the credits the super admin set (monthly / yearly)", async () => {
+    const plan = { aiMonthlyCredits: 150, aiYearlyCredits: 2000 };
+    expect(includedAiCredits("monthly", plan)).toBe(150);
+    expect(includedAiCredits("yearly", plan)).toBe(2000);
+    expect(AI_MODULE_MONTHLY_CREDITS).toBe(100); // الافتراضي
     const store = new MemoryCredits({ t: { balance: 5, isPlatformOwner: false } });
     const credits = new CreditService(store);
-    expect(await grantIncludedAiCredits(credits, "t", "yearly", "order-1234-abcd")).toBe(1200);
-    expect(store.tenants.t.balance).toBe(1205);
+    expect(await grantIncludedAiCredits(credits, "t", "yearly", "order-1234-abcd", plan)).toBe(2000);
+    expect(store.tenants.t.balance).toBe(2005);
     expect(store.log[0]).toMatchObject({ reason: "GRANT", createdById: "system" });
-    expect(await grantIncludedAiCredits(credits, "missing", "monthly", "order-x")).toBeNull(); // فشل الإضافة مايوقفش التفعيل
+    expect(await grantIncludedAiCredits(credits, "t", "monthly", "order-0", { aiMonthlyCredits: 0, aiYearlyCredits: 0 })).toBe(0);
+    expect(await grantIncludedAiCredits(credits, "missing", "monthly", "order-x", plan)).toBeNull(); // فشل الإضافة مايوقفش التفعيل
+  });
+  it("trial credits: given once on creation, 0 = none", async () => {
+    const { grantTrialCredits } = await import("../modules/credits/trial-credits");
+    const store = new MemoryCredits({ t: { balance: 0, isPlatformOwner: false } });
+    const credits = new CreditService(store);
+    expect(await grantTrialCredits(credits, "t", 20)).toBe(20);
+    expect(store.log[0]).toMatchObject({ amount: 20, note: "Free trial credits" });
+    expect(await grantTrialCredits(credits, "t", 0)).toBe(0);
+    expect(store.tenants.t.balance).toBe(20);
   });
 });

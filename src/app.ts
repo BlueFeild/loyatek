@@ -125,7 +125,12 @@ app.use("/api/public/exchange-rates", publicExchangeRatesRouter);
 app.get("/api/public/pricing", async (req, res) => {
   const pricing = await getRegionalPricing(typeof req.query.country === "string" ? req.query.country : null);
   const config = await getPlatformConfig();
-  res.json({ ...pricing, regions: config.regions.map((r) => ({ country: r.country, name: r.name, currency: r.currency })) });
+  res.json({
+    ...pricing,
+    regions: config.regions.map((r) => ({ country: r.country, name: r.name, currency: r.currency })),
+    // نقاط استوديو الذكاء الاصطناعي (الصفحات بتعرضها من هنا بدل رقم ثابت)
+    aiCredits: { monthly: config.aiMonthlyCredits, yearly: config.aiYearlyCredits, trial: config.defaultTrialCredits },
+  });
 });
 app.use("/api/super-admin/exchange-rates", adminExchangeRatesRouter);
 app.use("/api/public/wallet", publicWalletRouter);

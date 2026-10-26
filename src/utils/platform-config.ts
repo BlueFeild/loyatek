@@ -1,6 +1,7 @@
 import { prisma } from "../config/db";
 import { EXTRA_COMPANY_BASE_MONTHLY_PRICE, MODULE_PRICES, YEARLY_DISCOUNT, type Pricing } from "../modules/checkout/pricing";
 import { isModuleActive } from "./modules";
+import { AI_MODULE_MONTHLY_CREDITS } from "../modules/ai/ai-pricing";
 import { getRates, isCurrencyCode, payableAmount, rateFor } from "./money";
 
 // إعدادات المنصة اللي السوبر أدمن بيغيّرها من اللوحة: أسعار الخدمات (بالدولار)،
@@ -34,6 +35,9 @@ export interface PlatformConfig {
   defaultGraceDays: number;
   // مدة التجربة المجانية لأي شركة جديدة (أيام)
   defaultTrialDays: number;
+  defaultTrialCredits: number;
+  aiMonthlyCredits: number;
+  aiYearlyCredits: number;
   discounts: DiscountRule[];
   regions: PricingRegion[];
 }
@@ -111,6 +115,9 @@ export async function getPlatformConfig(): Promise<PlatformConfig> {
     },
     defaultGraceDays: row?.defaultGraceDays ?? 3,
     defaultTrialDays: row?.defaultTrialDays ?? 1,
+    defaultTrialCredits: row?.defaultTrialCredits ?? 20,
+    aiMonthlyCredits: row?.aiMonthlyCredits ?? AI_MODULE_MONTHLY_CREDITS,
+    aiYearlyCredits: row?.aiYearlyCredits ?? AI_MODULE_MONTHLY_CREDITS * 12,
     discounts: readDiscounts(row?.moduleDiscounts),
     regions: readRegions(row?.pricingRegions),
   };

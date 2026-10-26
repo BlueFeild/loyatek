@@ -5,6 +5,7 @@ import { createNotification } from "../notifications/notifications.service";
 import { checkPlatformInvoice } from "./myfatoorah";
 import { container } from "../../core/container";
 import { grantIncludedAiCredits } from "../ai/ai-subscription";
+import { getPlatformConfig } from "../../utils/platform-config";
 
 // تفعيل طلب اشتراك: بيتنادى أوتوماتيك أول ما الدفع يتأكد من MyFatoorah، أو
 // يدويًا من السوبر أدمن (طلبات اتدفعت بره البوابة مثلًا). نفس المنطق للاتنين
@@ -29,7 +30,7 @@ export async function activateSubscriptionOrder(orderId: string) {
         where: { id: newTenant.id },
         data: { subscribedModules: order.selectedModules, moduleExpirations: Object.fromEntries(order.selectedModules.map((m: string) => [m, expiry])) },
       });
-      if (order.selectedModules.includes("ai")) await grantIncludedAiCredits(container.creditService, newTenant.id, order.billingCycle, order.id);
+      if (order.selectedModules.includes("ai")) await grantIncludedAiCredits(container.creditService, newTenant.id, order.billingCycle, order.id, await getPlatformConfig());
     }
     await createNotification({ tenantId: order.tenantId, type: "SUBSCRIPTION_ACTIVATED", title: "Your new company is ready", body: `${newTenant.name} has been created and its services are active.`, link: "/dashboard" }).catch(() => {});
     return { ok: true as const, createdTenantId: newTenant.id, createdTenantName: newTenant.name };
@@ -52,7 +53,7 @@ export async function activateSubscriptionOrder(orderId: string) {
     return true;
   });
   if (!done) return { ok: true as const, alreadyActive: true };
-  if (order.selectedModules.includes("ai")) await grantIncludedAiCredits(container.creditService, tenant.id, order.billingCycle, order.id);
+  if (order.selectedModules.includes("ai")) await grantIncludedAiCredits(container.creditService, tenant.id, order.billingCycle, order.id, await getPlatformConfig());
   await createNotification({ tenantId: tenant.id, type: "SUBSCRIPTION_ACTIVATED", title: "Your services are active", body: `Activated: ${order.selectedModules.join(", ")}. Thank you!`, link: "/dashboard" }).catch(() => {});
   return { ok: true as const, subscribedModules: merged, moduleExpirations: nextExpirations };
 }

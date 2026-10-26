@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { newTrialExpiry } from "../../utils/platform-config";
+import { giveNewCompanyTrialCredits } from "../credits/trial-credits";
 import { prisma } from "../../config/db";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../../utils/jwt";
 import { generateUniqueSlug } from "../../utils/slug";
@@ -55,6 +56,8 @@ export async function registerTenant(input: RegisterInput) {
   });
 
   await trackPlatformEvent({ type: "SIGNUP", tenantId: tenant.id });
+  // نقاط ببلاش يجرب بيها استوديو الذكاء الاصطناعي وقت التجربة
+  await giveNewCompanyTrialCredits(tenant.id);
 
   return issueTokens(owner.id, tenant.id, owner.role, owner.branchId, owner.isSuperAdmin, false);
 }
@@ -216,6 +219,8 @@ export async function registerTenantWithGoogle(input: GoogleSignupInput) {
   });
 
   await trackPlatformEvent({ type: "SIGNUP", tenantId: tenant.id });
+  // نقاط ببلاش يجرب بيها استوديو الذكاء الاصطناعي وقت التجربة
+  await giveNewCompanyTrialCredits(tenant.id);
 
   return issueTokens(owner.id, tenant.id, owner.role, owner.branchId, owner.isSuperAdmin, false);
 }
