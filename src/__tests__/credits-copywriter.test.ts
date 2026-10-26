@@ -1,48 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { CreditService } from "../modules/credits/credit.service";
-import type { CreditMovement, CreditStore } from "../modules/credits/credit.repository";
 import { CopywriterService } from "../modules/ai/copywriter.service";
 import { FakeCopyGenerator } from "../modules/ai/fake-copy-generator";
-import type { GenerationStore, NewGeneration } from "../modules/ai/ai-generation.repository";
+import { MemoryCredits, MemoryGenerations } from "./helpers/ai-memory-stores";
 import { copyBriefSchema } from "../modules/ai/copy-generator";
 import { buildCopyPrompt } from "../modules/ai/copywriter.prompts";
 import { InsufficientCreditsError, ServiceUnavailableError } from "../core/errors";
-
-// تخزين في الذاكرة (نفس العقد بتاع Prisma) - عشان نختبر المنطق لوحده
-class MemoryCredits implements CreditStore {
-  log: (CreditMovement & { balanceAfter: number })[] = [];
-  constructor(public tenants: Record<string, { balance: number; isPlatformOwner: boolean }>) {}
-  async balance(id: string) {
-    return this.tenants[id] ?? null;
-  }
-  async apply(m: CreditMovement) {
-    const t = this.tenants[m.tenantId];
-    if (m.amount < 0 && t.balance < -m.amount) return null;
-    t.balance += m.amount;
-    this.log.push({ ...m, balanceAfter: t.balance });
-    return t.balance;
-  }
-  async logOnly(m: CreditMovement, balanceAfter: number) {
-    this.log.push({ ...m, balanceAfter });
-  }
-  async history(id: string) {
-    return this.log.filter((l) => l.tenantId === id);
-  }
-}
-
-class MemoryGenerations implements GenerationStore {
-  rows: NewGeneration[] = [];
-  async create(g: NewGeneration) {
-    this.rows.push(g);
-    return { id: `gen${this.rows.length}` };
-  }
-  async recent(tenantId: string) {
-    return this.rows.filter((r) => r.tenantId === tenantId);
-  }
-  async business(tenantId: string) {
-    return tenantId === "missing" ? null : { name: "Doha Cafe", industry: "RESTAURANT" };
-  }
-}
 
 const brief = copyBriefSchema.parse({ kind: "caption", topic: "قهوة جديدة" });
 

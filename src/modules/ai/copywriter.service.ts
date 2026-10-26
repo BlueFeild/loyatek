@@ -2,9 +2,10 @@ import { NotFoundError, ServiceUnavailableError } from "../../core/errors";
 import type { CreditService } from "../credits/credit.service";
 import type { GenerationStore } from "./ai-generation.repository";
 import type { CopyBrief, CopyGenerator } from "./copy-generator";
+import { AI_COSTS } from "./ai-pricing";
 
-// سعر كل طلب كتابة بالنقاط (الطلب الواحد = لحد 3 نسخ)
-export const COPY_COST = 1;
+// سعر كل طلب كتابة بالنقاط (الطلب الواحد = لحد 3 نسخ) - من ai-pricing.ts
+export const COPY_COST = AI_COSTS.copy;
 
 // الكاتب الذكي: يتأكد من الرصيد ← يولّد ← يحفظ ← يخصم (الخصم بعد النجاح بس)
 export class CopywriterService {

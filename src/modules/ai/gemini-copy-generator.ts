@@ -3,6 +3,7 @@ import { AppError, ServiceUnavailableError } from "../../core/errors";
 import { copyResultSchema, type BusinessContext, type CopyBrief, type CopyGenerator, type CopyResult } from "./copy-generator";
 import { buildCopyPrompt, COPYWRITER_SYSTEM } from "./copywriter.prompts";
 import { COPY_OUTPUT_SCHEMA } from "./copy-output-schema";
+import { defaultGeminiClient } from "./gemini-client";
 
 const UNEXPECTED = "The AI returned an unexpected answer — please try again.";
 
@@ -12,7 +13,7 @@ export class GeminiCopyGenerator implements CopyGenerator {
   readonly model: string;
 
   constructor(
-    private readonly client: GoogleGenAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }),
+    private readonly client: GoogleGenAI = defaultGeminiClient(),
     model = process.env.GEMINI_MODEL?.trim() || "gemini-flash-latest"
   ) {
     this.model = model;
