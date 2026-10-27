@@ -225,3 +225,15 @@ describe("makeAiProviders", () => {
     expect([none.copy, none.image, none.video, none.auditor]).toEqual([null, null, null, null]);
   });
 });
+
+describe("Google 429: real limit vs. no free tier at all", () => {
+  const failing = (message: string) =>
+    ({ interactions: { create: async () => { throw Object.assign(new Error(message), { status: 429 }); } } }) as unknown as GoogleGenAI;
+  it("'limit: 0' / free_tier quota → says billing is needed", async () => {
+    const msg = "You exceeded your current quota. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-nano-banana-2.1";
+    await expect(new GeminiImageGenerator(failing(msg), "m").generate(imageBriefSchema.parse({ prompt: "cake" }), biz)).rejects.toMatchObject({ status: 503, message: expect.stringMatching(/needs billing/) });
+  });
+  it("a normal rate limit → try again in a minute", async () => {
+    await expect(new GeminiImageGenerator(failing("Resource has been exhausted (e.g. check quota)."), "m").generate(imageBriefSchema.parse({ prompt: "cake" }), biz)).rejects.toMatchObject({ message: expect.stringMatching(/try again in a minute/) });
+  });
+});

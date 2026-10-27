@@ -7,7 +7,12 @@ export function translateGeminiError(err: unknown, what: string): Error {
   const status = geminiStatus(err);
   const message = err instanceof Error ? err.message : String(err);
   if (status === 429) {
-    return new ServiceUnavailableError(`The AI ${what} limit was reached — try again in a minute (free plans have low limits).`);
+    console.error(`[ai] Gemini ${what} 429: ${message}`);
+    // جوجل بترد 429 كمان لما الموديل مالوش حد مجاني أصلًا ("limit: 0" / free_tier) - ده محتاج تفعيل الدفع، مش استنى دقيقة
+    if (/limit:\s*0\b|free[_ ]tier|billing/i.test(message)) {
+      return new ServiceUnavailableError(`AI ${what} needs billing enabled on the Google AI account — please contact support (you were not charged).`);
+    }
+    return new ServiceUnavailableError(`The AI ${what} limit was reached — try again in a minute (you were not charged).`);
   }
   if (status === 400 && /billing|paid|quota|free tier/i.test(message)) {
     console.error(`[ai] Gemini ${what}: needs a paid plan — ${message}`);
