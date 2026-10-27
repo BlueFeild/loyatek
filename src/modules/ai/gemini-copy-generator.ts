@@ -1,12 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
-import { AppError, ServiceUnavailableError } from "../../core/errors";
+import { AppError } from "../../core/errors";
 import { copyResultSchema, type BusinessContext, type CopyBrief, type CopyGenerator, type CopyResult } from "./copy-generator";
 import { buildCopyPrompt, COPYWRITER_SYSTEM } from "./copywriter.prompts";
 import { COPY_OUTPUT_SCHEMA } from "./copy-output-schema";
 import { defaultGeminiClient, geminiTextModels, withModelFallback } from "./gemini-client";
 import { translateGeminiError } from "./gemini-errors";
-
-const UNEXPECTED = "The AI returned an unexpected answer — please try again.";
+import { parseStructured } from "./structured-output";
 
 // بديل مجاني/أرخص: Google Gemini (المفتاح GEMINI_API_KEY في Railway Variables بس).
 // ملحوظة: في باقة Gemini المجانية جوجل ممكن تستخدم البيانات لتحسين خدماتها - للتجربة بس
@@ -40,14 +39,6 @@ export class GeminiCopyGenerator implements CopyGenerator {
       throw translateGeminiError(err, "writing");
     }
 
-    let json: unknown;
-    try {
-      json = JSON.parse(text ?? "");
-    } catch {
-      throw new ServiceUnavailableError(UNEXPECTED);
-    }
-    const parsed = copyResultSchema.safeParse(json);
-    if (!parsed.success) throw new ServiceUnavailableError(UNEXPECTED);
-    return parsed.data;
+    return parseStructured(copyResultSchema, text);
   }
 }

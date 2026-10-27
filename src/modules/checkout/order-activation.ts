@@ -26,11 +26,15 @@ export async function activateSubscriptionOrder(orderId: string) {
     const newTenant = await createLinkedCompany(owner.id, order.extraCompanyName, order.extraCompanyIndustry);
     if (order.selectedModules.length > 0) {
       const expiry = computeExpiryDate(order.billingCycle).toISOString();
-      await prisma.tenant.update({
-        where: { id: newTenant.id },
-        data: { subscribedModules: order.selectedModules, moduleExpirations: Object.fromEntries(order.selectedModules.map((m: string) => [m, expiry])) },
+      const plan = order.selectedModules.includes("ai") ? await getPlatformConfig() : null;
+      // الموديولات ونقاط الذكاء الاصطناعي مع بعض (transaction واحدة)
+      await prisma.$transaction(async (tx: any) => {
+        await tx.tenant.update({
+          where: { id: newTenant.id },
+          data: { subscribedModules: order.selectedModules, moduleExpirations: Object.fromEntries(order.selectedModules.map((m: string) => [m, expiry])) },
+        });
+        if (plan) await grantIncludedAiCredits(container.creditLedger, tx, newTenant.id, order.billingCycle, order.id, plan);
       });
-      if (order.selectedModules.includes("ai")) await grantIncludedAiCredits(container.creditService, newTenant.id, order.billingCycle, order.id, await getPlatformConfig());
     }
     await createNotification({ tenantId: order.tenantId, type: "SUBSCRIPTION_ACTIVATED", title: "Your new company is ready", body: `${newTenant.name} has been created and its services are active.`, link: "/dashboard" }).catch(() => {});
     return { ok: true as const, createdTenantId: newTenant.id, createdTenantName: newTenant.name };
@@ -46,14 +50,17 @@ export async function activateSubscriptionOrder(orderId: string) {
     const startFrom = currentExpiry && currentExpiry > new Date() ? currentExpiry : new Date();
     nextExpirations[moduleId] = computeExpiryDate(order.billingCycle, startFrom).toISOString();
   }
+  const plan = order.selectedModules.includes("ai") ? await getPlatformConfig() : null;
+  // القفل + الموديولات + نقاط الذكاء الاصطناعي في transaction واحدة: يا كله يا ولا حاجة،
+  // والقفل بيضمن إن النقاط تتضاف مرة واحدة بس حتى لو التفعيل اتنادى مرتين في نفس اللحظة
   const done = await prisma.$transaction(async (tx: any) => {
     const claimed = await tx.subscriptionOrder.updateMany({ where: { id: order.id, status: { in: ["PENDING", "PAID"] } }, data: { status: "ACTIVATED" } });
     if (claimed.count === 0) return false;
     await tx.tenant.update({ where: { id: tenant.id }, data: { subscribedModules: merged, moduleExpirations: nextExpirations } });
+    if (plan) await grantIncludedAiCredits(container.creditLedger, tx, tenant.id, order.billingCycle, order.id, plan);
     return true;
   });
   if (!done) return { ok: true as const, alreadyActive: true };
-  if (order.selectedModules.includes("ai")) await grantIncludedAiCredits(container.creditService, tenant.id, order.billingCycle, order.id, await getPlatformConfig());
   await createNotification({ tenantId: tenant.id, type: "SUBSCRIPTION_ACTIVATED", title: "Your services are active", body: `Activated: ${order.selectedModules.join(", ")}. Thank you!`, link: "/dashboard" }).catch(() => {});
   return { ok: true as const, subscribedModules: merged, moduleExpirations: nextExpirations };
 }

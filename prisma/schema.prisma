@@ -1365,7 +1365,9 @@ model AiAsset {
 enum CampaignStatus {
   DRAFT
   READY
+  SENDING
   SENT
+  FAILED
 }
 
 enum CampaignKind {
@@ -1394,6 +1396,8 @@ model WhatsappCampaign {
   recipients  Json           @default("[]")
   sentCount   Int            @default(0)
   failedCount Int            @default(0)
+  // وقت آخر تقدم في الإرسال (الإرسال في الخلفية) - لو فضل قديم يبقى السيرفر اتعاد تشغيله
+  sendingAt   DateTime?
   createdAt   DateTime       @default(now())
 
   @@index([tenantId])

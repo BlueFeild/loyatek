@@ -6,6 +6,10 @@ export function graphBase(): string {
   return (process.env.META_GRAPH_BASE_URL || "https://graph.facebook.com/v21.0").replace(/\/+$/, "");
 }
 
+// مهلة نداءات Meta اللي الحملات بتستناها (الإرسال 20 ثانية، رفع الصوت دقيقة)
+const META_SEND_TIMEOUT_MS = 20_000;
+const META_UPLOAD_TIMEOUT_MS = 60_000;
+
 export async function getOrCreateWhatsappSettings(tenantId: string) {
   const existing = await prisma.whatsappSettings.findUnique({ where: { tenantId } });
   if (existing) return existing;
@@ -58,6 +62,7 @@ export async function sendWhatsappTestMessage(
         type: "template",
         template: { name: templateName, language: { code: languageCode } },
       }),
+      signal: AbortSignal.timeout(META_SEND_TIMEOUT_MS),
     });
 
     const data = (await res.json()) as MetaGraphResponse;
@@ -223,6 +228,7 @@ export async function uploadWhatsappAudio(
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}` },
       body: form,
+      signal: AbortSignal.timeout(META_UPLOAD_TIMEOUT_MS),
     });
 
     const data = (await res.json()) as MetaGraphResponse;
@@ -253,6 +259,7 @@ export async function sendWhatsappAudioMessage(
         type: "audio",
         audio: { id: mediaId },
       }),
+      signal: AbortSignal.timeout(META_SEND_TIMEOUT_MS),
     });
 
     const data = (await res.json()) as MetaGraphResponse;
@@ -384,6 +391,7 @@ export async function getWhatsappTemplateStatus(
   try {
     const res = await fetch(`${graphBase()}/${metaTemplateId}?fields=status,rejected_reason`, {
       headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(META_SEND_TIMEOUT_MS),
     });
     const data = (await res.json()) as MetaGraphResponse & { status?: string; rejected_reason?: string };
     if (!res.ok) return { ok: false, error: data?.error?.message || "Could not check template status" };

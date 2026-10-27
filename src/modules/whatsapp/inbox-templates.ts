@@ -37,19 +37,26 @@ export interface SendableTemplate {
 }
 
 // القوالب: المعتمدة الأول. اللي لسه PENDING بنسأل Meta عن حالتها (أول 10 بس)
+// الأعمدة اللي القايمة محتاجاها بس (من غير صور الرأس/الكروت التقيلة)
+const LIST_FIELDS = { id: true, name: true, language: true, bodyText: true, status: true, metaTemplateId: true } as const;
+
 export async function listInboxTemplates(tenantId: string): Promise<SendableTemplate[]> {
-  let rows = await prisma.whatsappTemplate.findMany({ where: { tenantId }, orderBy: { createdAt: "desc" } });
+  const rows = await prisma.whatsappTemplate.findMany({ where: { tenantId }, orderBy: { createdAt: "desc" }, select: LIST_FIELDS });
   const pending = rows.filter((t) => t.status === "PENDING" && t.metaTemplateId).slice(0, 10);
   if (pending.length) {
     const s = await getOrCreateWhatsappSettings(tenantId);
-    if (s.metaAccessToken) {
-      for (const t of pending) {
-        const check = await getWhatsappTemplateStatus(s.metaAccessToken, t.metaTemplateId!);
-        if (check.ok && (check.status === "APPROVED" || check.status === "REJECTED")) {
-          await prisma.whatsappTemplate.update({ where: { id: t.id }, data: { status: check.status, rejectionReason: check.rejectionReason ?? null } });
-        }
-      }
-      rows = await prisma.whatsappTemplate.findMany({ where: { tenantId }, orderBy: { createdAt: "desc" } });
+    const token = s.metaAccessToken;
+    if (token) {
+      // كل الأسئلة لـ Meta مع بعض، والنتيجة بتتحدث في نفس الصفوف (من غير استعلام تاني)
+      await Promise.all(
+        pending.map(async (t) => {
+          const check = await getWhatsappTemplateStatus(token, t.metaTemplateId!);
+          if (check.ok && (check.status === "APPROVED" || check.status === "REJECTED")) {
+            await prisma.whatsappTemplate.update({ where: { id: t.id }, data: { status: check.status, rejectionReason: check.rejectionReason ?? null } });
+            t.status = check.status;
+          }
+        })
+      );
     }
   }
   const list: SendableTemplate[] = rows.map((t) => {

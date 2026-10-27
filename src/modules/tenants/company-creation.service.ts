@@ -1,6 +1,6 @@
 import { prisma } from "../../config/db";
 import { newTrialExpiry } from "../../utils/platform-config";
-import { giveNewCompanyTrialCredits } from "../credits/trial-credits";
+import { container } from "../../core/container";
 import { generateUniqueSlug } from "../../utils/slug";
 import { trackPlatformEvent } from "../analytics/analytics.service";
 
@@ -47,7 +47,7 @@ export async function createLinkedCompany(ownerUserId: string, name: string, ind
 
   await trackPlatformEvent({ type: "SIGNUP", tenantId: tenant.id });
   // الشركة المجانية (المنصة) رصيدها مفتوح أصلًا - غيرها ياخد نقاط التجربة
-  if (!opts.free) await giveNewCompanyTrialCredits(tenant.id);
+  if (!opts.free) await container.trialCreditsService.giveNewCompany(tenant.id);
 
   return tenant;
 }

@@ -1,18 +1,26 @@
 import type { CreditMovement, CreditStore } from "../../modules/credits/credit.repository";
-import type { GenerationRow, GenerationStore, NewGeneration } from "../../modules/ai/ai-generation.repository";
+import type { FinishResult, GenerationRow, GenerationStore, NewGeneration } from "../../modules/ai/ai-generation.repository";
 import type { AssetStore, NewAsset, StoredAsset } from "../../modules/ai/ai-asset.repository";
-import type { Prisma } from "@prisma/client";
+import type { BusinessProfileReader } from "../../modules/ai/business-profile.repository";
 
 // تخزين في الذاكرة (نفس عقود Prisma) - عشان نختبر المنطق لوحده من غير قاعدة بيانات
+
+const tick = () => new Promise((r) => setImmediate(r));
 
 export class MemoryCredits implements CreditStore {
   log: (CreditMovement & { balanceAfter: number })[] = [];
   constructor(public tenants: Record<string, { balance: number; isPlatformOwner: boolean }>) {}
   async balance(id: string) {
-    return this.tenants[id] ?? null;
+    await tick(); // زي قاعدة البيانات: الطلبات اللي في نفس اللحظة بتتداخل
+    const t = this.tenants[id];
+    return t ? { ...t } : null;
   }
-  async apply(m: CreditMovement) {
+  // tx بيتجاهل هنا (مفيش transactions في الذاكرة)
+  async apply(m: CreditMovement, _tx?: unknown) {
+    await tick();
     const t = this.tenants[m.tenantId];
+    if (!t) return null;
+    // الفحص والتعديل مع بعض (ذرّي زي updateMany ... gte)
     if (m.amount < 0 && t.balance < -m.amount) return null;
     t.balance += m.amount;
     this.log.push({ ...m, balanceAfter: t.balance });
@@ -32,7 +40,8 @@ export class MemoryGenerations implements GenerationStore {
   constructor(private readonly assets?: MemoryAssets) {}
 
   async create(g: NewGeneration) {
-    const id = `gen${++this.seq}`;
+    this.seq++;
+    const id = g.id ?? `gen${this.seq}`;
     this.rows.push({
       id,
       tenantId: g.tenantId,
@@ -64,14 +73,29 @@ export class MemoryGenerations implements GenerationStore {
     const r = this.rows.find((x) => x.id === id && x.tenantId === tenantId);
     return r ? this.withAssets(r) : null;
   }
-  async finish(id: string, result: { status: "DONE" | "FAILED"; output?: Prisma.InputJsonValue; error?: string | null; creditsUsed?: number }) {
-    const r = this.rows.find((x) => x.id === id)!;
+  async finishPending(id: string, result: FinishResult) {
+    await tick();
+    const r = this.rows.find((x) => x.id === id);
+    if (!r || r.status !== "PENDING") return false;
     r.status = result.status;
     if (result.output !== undefined) r.output = result.output;
     r.error = result.error ?? null;
     if (result.creditsUsed !== undefined) r.creditsUsed = result.creditsUsed;
     r.finishedAt = new Date();
+    return true;
   }
+  async countPending(tenantId: string, tool: string) {
+    return this.rows.filter((r) => r.tenantId === tenantId && r.tool === tool && r.status === "PENDING").length;
+  }
+  async pendingBefore(tenantId: string, tool: string, before: Date) {
+    await tick();
+    return this.rows
+      .filter((r) => r.tenantId === tenantId && r.tool === tool && r.status === "PENDING" && r.createdAt < before)
+      .map((r) => ({ id: r.id, creditsUsed: r.creditsUsed, userId: r.userId }));
+  }
+}
+
+export class MemoryProfiles implements BusinessProfileReader {
   async business(tenantId: string) {
     return tenantId === "missing" ? null : { name: "Doha Cafe", industry: "HOSPITALITY" };
   }

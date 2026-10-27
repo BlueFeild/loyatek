@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { prisma } from "../config/db";
 import { getEffectiveModules } from "../utils/modules";
 import { tenantGraceDays } from "../utils/platform-config";
+import { bypassesAccountChecks } from "../utils/jwt";
 
 // هل الشركة دي ليها حق تستخدم موديول معيّن دلوقتي؟ نفس منطق الواجهة بالظبط
 // (effectiveModules): اشتراك حقيقي شغال (شامل أيام السماح) أو تجربة مجانية لسه
@@ -42,7 +43,7 @@ export async function hasModuleAccess(tenantId: string, moduleId: string): Promi
 export function requireModule(moduleId: string) {
   return async (req: Request, res: Response, next: NextFunction) => {
     if (!req.auth) return res.status(401).json({ error: "Unauthenticated" });
-    if (req.auth.isSuperAdmin || req.auth.impersonatedBy) return next();
+    if (bypassesAccountChecks(req.auth)) return next();
     if (await hasModuleAccess(req.auth.tenantId, moduleId)) return next();
     return res.status(403).json({
       error: `Your ${moduleId.toUpperCase()} subscription is not active. Subscribe or renew to use it.`,

@@ -34,6 +34,17 @@ export interface AccessTokenPayload {
   // الحقيقي اللي بيدير الحساب، عشان أي حاجة تتعمل تتسجّل تحت شركة
   // العميل الصح، ومع ده نعرف مين اللي عمل الإجراء فعليًا لو احتجنا نراجعه
   impersonatedBy?: string;
+  // "manage" = سوبر أدمن / وكالة داخلين يراجعوا شركة (بيعدّوا فحص الإيقاف والاشتراك).
+  // "switch" = المالك بيتنقل بين شركاته (لازم يتفحص زي أي دخول عادي)
+  impersonationKind?: "manage" | "switch";
+}
+
+// مين يعدّي فحص حالة الحساب والاشتراك: السوبر أدمن، أو "إدارة نيابةً".
+// توكن قديم فيه impersonatedBy من غير نوع (عمره 15 دقيقة بالكتير) بيفضل زي الأول
+export function bypassesAccountChecks(p: Pick<AccessTokenPayload, "isSuperAdmin" | "impersonatedBy" | "impersonationKind">): boolean {
+  if (p.isSuperAdmin) return true;
+  if (!p.impersonatedBy) return false;
+  return p.impersonationKind !== "switch";
 }
 
 // Access token قصير العمر - يتبعت مع كل request

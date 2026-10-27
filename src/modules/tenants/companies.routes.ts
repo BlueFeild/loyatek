@@ -60,6 +60,8 @@ companiesRouter.post("/:tenantId/switch", async (req, res) => {
     branchId: membership.memberUser.branchId,
     isSuperAdmin: false,
     impersonatedBy: req.auth!.userId,
+    // تنقّل عادي بين شركات نفس المالك - بيتفحص الإيقاف والاشتراك زي أي دخول
+    impersonationKind: "switch",
   });
 
   res.json({ accessToken, tenantId: membership.tenantId, tenantName: membership.tenant.name, role: membership.memberUser.role });

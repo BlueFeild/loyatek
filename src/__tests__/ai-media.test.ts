@@ -8,10 +8,11 @@ import { FakeAccountAuditor, FakeImageGenerator, FakeVideoGenerator } from "../m
 import { GeminiAccountAuditor, GeminiImageGenerator, GeminiVideoGenerator } from "../modules/ai/gemini-media-providers";
 import { auditInputSchema, computeAuditMetrics, imageBriefSchema, videoBriefSchema } from "../modules/ai/media-types";
 import { buildAuditPrompt, buildImagePrompt } from "../modules/ai/media.prompts";
-import { makeAiProviders } from "../modules/ai/copy-generator.factory";
+import { makeAiProviders } from "../modules/ai/ai-providers.factory";
 import { AI_COSTS } from "../modules/ai/ai-pricing";
 import { InsufficientCreditsError, ServiceUnavailableError } from "../core/errors";
-import { MemoryAssets, MemoryCredits, MemoryGenerations } from "./helpers/ai-memory-stores";
+import { MemoryAssets, MemoryCredits, MemoryGenerations, MemoryProfiles } from "./helpers/ai-memory-stores";
+import type { VideoGenerator } from "../modules/ai/media-types";
 
 const biz = { name: "Doha Cafe", industry: "HOSPITALITY" };
 
@@ -20,15 +21,16 @@ function setup(balance: number, isPlatformOwner = false) {
   const credits = new CreditService(store);
   const assets = new MemoryAssets();
   const gens = new MemoryGenerations(assets);
-  return { store, credits, assets, gens };
+  const profiles = new MemoryProfiles();
+  return { store, credits, assets, gens, profiles };
 }
 
 describe("ImageStudioService", () => {
   const brief = imageBriefSchema.parse({ prompt: "Spanish latte on a marble table", scene: "lusail" });
-  it("generates, stores the image, charges after success; the product photo isn't stored in the log", async () => {
-    const { credits, assets, gens, store } = setup(10);
+  it("charges, generates, stores the image; the product photo isn't stored in the log", async () => {
+    const { credits, assets, gens, store, profiles } = setup(10);
     const gen = new FakeImageGenerator();
-    const svc = new ImageStudioService(gen, credits, gens, assets);
+    const svc = new ImageStudioService(gen, credits, gens, assets, profiles);
     const withPhoto = imageBriefSchema.parse({ ...brief, productImage: { base64: "iVBORw0KGgoAAAANSUhEUg==", mimeType: "image/png" } });
     const out = await svc.create("a", "u1", withPhoto);
     expect(out.balance).toBe(10 - AI_COSTS.image);
@@ -36,32 +38,55 @@ describe("ImageStudioService", () => {
     expect(assets.items[0]).toMatchObject({ tenantId: "a", kind: "image", mimeType: "image/png" });
     expect(gens.rows[0].input).toMatchObject({ withProductPhoto: true, scene: "lusail" });
     expect(JSON.stringify(gens.rows[0].input)).not.toContain("iVBOR");
-    expect(store.log[0]).toMatchObject({ reason: "AI_IMAGE", amount: -AI_COSTS.image });
+    expect(store.log[0]).toMatchObject({ reason: "AI_IMAGE", amount: -AI_COSTS.image, refId: out.id });
     expect((await svc.history("a"))[0].assetIds).toEqual([out.assetId]);
   });
-  it("not enough credits → refused before calling the AI; failure → nothing charged", async () => {
-    const { credits, assets, gens, store } = setup(2);
+  it("not enough credits → refused before calling the AI; failure → refunded, nothing saved", async () => {
+    const { credits, assets, gens, store, profiles } = setup(2);
     const gen = new FakeImageGenerator();
-    const svc = new ImageStudioService(gen, credits, gens, assets);
+    const svc = new ImageStudioService(gen, credits, gens, assets, profiles);
     await expect(svc.create("a", null, brief)).rejects.toBeInstanceOf(InsufficientCreditsError);
     expect(gen.calls).toHaveLength(0);
     store.tenants.a.balance = 10;
     gen.failNext = new ServiceUnavailableError("busy");
     await expect(svc.create("a", null, brief)).rejects.toThrow("busy");
     expect(store.tenants.a.balance).toBe(10);
+    expect(store.log.map((l) => l.reason)).toEqual(["AI_IMAGE", "REFUND"]);
     expect(assets.items).toHaveLength(0);
+    expect(gens.rows).toHaveLength(0);
+  });
+  it("parallel requests can never get a free image", async () => {
+    const { credits, assets, gens, store, profiles } = setup(AI_COSTS.image * 2);
+    const gen = new FakeImageGenerator();
+    const svc = new ImageStudioService(gen, credits, gens, assets, profiles);
+    const results = await Promise.allSettled(Array.from({ length: 5 }, () => svc.create("a", null, brief)));
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(2);
+    expect(gen.calls).toHaveLength(2); // الباقي اترفض قبل ما يكلّم الذكاء الاصطناعي
+    expect(assets.items).toHaveLength(2);
+    expect(store.tenants.a.balance).toBe(0);
+  });
+  it("platform owner: never charged, usage logged after success only", async () => {
+    const { credits, assets, gens, store, profiles } = setup(0, true);
+    const gen = new FakeImageGenerator();
+    const svc = new ImageStudioService(gen, credits, gens, assets, profiles);
+    await svc.create("a", null, brief);
+    gen.failNext = new ServiceUnavailableError("busy");
+    await expect(svc.create("a", null, brief)).rejects.toThrow("busy");
+    expect(store.tenants.a.balance).toBe(0);
+    expect(store.log).toHaveLength(1);
+    expect(store.log[0]).toMatchObject({ amount: -AI_COSTS.image, note: expect.stringMatching(/not charged/) });
   });
   it("not configured → 503", async () => {
-    const { credits, assets, gens } = setup(10);
-    await expect(new ImageStudioService(null, credits, gens, assets).create("a", null, brief)).rejects.toMatchObject({ status: 503 });
+    const { credits, assets, gens, profiles } = setup(10);
+    await expect(new ImageStudioService(null, credits, gens, assets, profiles).create("a", null, brief)).rejects.toMatchObject({ status: 503 });
   });
 });
 
 describe("VideoStudioService (background job)", () => {
   const brief = videoBriefSchema.parse({ prompt: "Steam rising from a latte" });
   it("reserves credits, returns PENDING at once, then DONE with the video", async () => {
-    const { credits, assets, gens, store } = setup(50);
-    const svc = new VideoStudioService(new FakeVideoGenerator(), credits, gens, assets);
+    const { credits, assets, gens, store, profiles } = setup(50);
+    const svc = new VideoStudioService(new FakeVideoGenerator(), credits, gens, assets, profiles);
     const started = await svc.start("a", "u1", brief);
     expect(started.status).toBe("PENDING");
     expect(started.balance).toBe(50 - AI_COSTS.video);
@@ -72,12 +97,13 @@ describe("VideoStudioService (background job)", () => {
     expect(done.assetIds).toHaveLength(1);
     expect(assets.items[0]).toMatchObject({ kind: "video", mimeType: "video/mp4" });
     expect(store.tenants.a.balance).toBe(50 - AI_COSTS.video);
+    expect(store.log[0]).toMatchObject({ reason: "AI_VIDEO", refId: started.id });
   });
   it("failure → FAILED with a message and the credits come back", async () => {
-    const { credits, assets, gens, store } = setup(50);
+    const { credits, assets, gens, store, profiles } = setup(50);
     const gen = new FakeVideoGenerator();
     gen.failNext = new ServiceUnavailableError("AI video isn't set up yet");
-    const svc = new VideoStudioService(gen, credits, gens, assets);
+    const svc = new VideoStudioService(gen, credits, gens, assets, profiles);
     const started = await svc.start("a", null, brief);
     await svc.whenIdle();
     const job = await svc.get("a", started.id);
@@ -86,33 +112,33 @@ describe("VideoStudioService (background job)", () => {
     expect(store.log.map((l) => l.reason)).toEqual(["AI_VIDEO", "REFUND"]);
   });
   it("animates one of the company's own AI images; another company's image is refused", async () => {
-    const { credits, assets, gens } = setup(50);
+    const { credits, assets, gens, profiles } = setup(50);
     const img = await assets.save({ tenantId: "a", generationId: "g0", kind: "image", mimeType: "image/png", base64: "iVBORw0KGgo=" });
     const other = await assets.save({ tenantId: "b", generationId: "g9", kind: "image", mimeType: "image/png", base64: "iVBORw0KGgo=" });
     const gen = new FakeVideoGenerator();
-    const svc = new VideoStudioService(gen, credits, gens, assets);
+    const svc = new VideoStudioService(gen, credits, gens, assets, profiles);
     await svc.start("a", null, videoBriefSchema.parse({ prompt: "Make it move", sourceAssetId: img.id }));
     await svc.whenIdle();
     expect(gen.calls[0].brief.image).toMatchObject({ mimeType: "image/png" });
     await expect(svc.start("a", null, videoBriefSchema.parse({ prompt: "Make it move", sourceAssetId: other.id }))).rejects.toMatchObject({ status: 400 });
   });
-  it("max 2 running per company; not enough credits → nothing left PENDING", async () => {
-    const { credits, assets, gens } = setup(100);
+  it("max 2 running per company; not enough credits → no job at all", async () => {
+    const { credits, assets, gens, profiles } = setup(100);
     const gen = new FakeVideoGenerator();
     gen.delayMs = 200;
-    const svc = new VideoStudioService(gen, credits, gens, assets);
+    const svc = new VideoStudioService(gen, credits, gens, assets, profiles);
     await svc.start("a", null, brief);
     await svc.start("a", null, brief);
     await expect(svc.start("a", null, brief)).rejects.toMatchObject({ status: 429 });
     await svc.whenIdle();
     const poor = setup(5);
-    const svc2 = new VideoStudioService(new FakeVideoGenerator(), poor.credits, poor.gens, poor.assets);
+    const svc2 = new VideoStudioService(new FakeVideoGenerator(), poor.credits, poor.gens, poor.assets, poor.profiles);
     await expect(svc2.start("a", null, brief)).rejects.toBeInstanceOf(InsufficientCreditsError);
-    expect(poor.gens.rows[0].status).toBe("FAILED");
+    expect(poor.gens.rows).toHaveLength(0);
   });
   it("a job stuck PENDING (server restarted) expires and is refunded", async () => {
-    const { credits, assets, gens, store } = setup(50);
-    const svc = new VideoStudioService(new FakeVideoGenerator(), credits, gens, assets, 0);
+    const { credits, assets, gens, store, profiles } = setup(50);
+    const svc = new VideoStudioService(new FakeVideoGenerator(), credits, gens, assets, profiles, { staleAfterMs: 0 });
     // عملية قديمة من غير ما تكون شغالة في الذاكرة
     const old = await gens.create({ tenantId: "a", tool: "video", kind: "text_to_video", input: {}, output: {}, creditsUsed: 20, model: "x", status: "PENDING" });
     gens.rows[0].createdAt = new Date(Date.now() - 60_000);
@@ -121,14 +147,36 @@ describe("VideoStudioService (background job)", () => {
     expect(job.status).toBe("FAILED");
     expect(store.tenants.a.balance).toBe(50);
   });
+  it("concurrent polls expire a stale job once — refunded once", async () => {
+    const { credits, assets, gens, store, profiles } = setup(30);
+    const svc = new VideoStudioService(new FakeVideoGenerator(), credits, gens, assets, profiles, { staleAfterMs: 0 });
+    const old = await gens.create({ tenantId: "a", tool: "video", kind: "text_to_video", input: {}, output: {}, creditsUsed: 20, model: "x", status: "PENDING" });
+    gens.rows[0].createdAt = new Date(Date.now() - 60_000);
+    await Promise.all([svc.get("a", old.id), svc.history("a"), svc.get("a", old.id), svc.history("a")]);
+    expect(store.tenants.a.balance).toBe(50);
+    expect(store.log.filter((l) => l.reason === "REFUND")).toHaveLength(1);
+  });
+  it("a provider that never answers times out → FAILED and refunded once", async () => {
+    const { credits, assets, gens, store, profiles } = setup(50);
+    const hung: VideoGenerator = { model: "hung", generate: () => new Promise(() => {}) };
+    const svc = new VideoStudioService(hung, credits, gens, assets, profiles, { timeoutMs: 30 });
+    const started = await svc.start("a", null, brief);
+    expect(store.tenants.a.balance).toBe(50 - AI_COSTS.video);
+    await svc.whenIdle();
+    const job = await svc.get("a", started.id);
+    expect(job).toMatchObject({ status: "FAILED", creditsUsed: 0 });
+    expect(job.error).toMatch(/took too long/);
+    expect(store.tenants.a.balance).toBe(50);
+    expect(store.log.filter((l) => l.reason === "REFUND")).toHaveLength(1);
+  });
 });
 
 describe("AccountAuditService", () => {
   const input = auditInputSchema.parse({ platform: "instagram", handle: "@dohacafe", followers: 2000, avgLikes: 70, avgComments: 10, avgViews: 900 });
-  it("computes the numbers itself, saves the report without screenshots, charges after success", async () => {
-    const { credits, gens, store } = setup(10);
+  it("computes the numbers itself, saves the report without screenshots, charges", async () => {
+    const { credits, gens, store, profiles } = setup(10);
     const auditor = new FakeAccountAuditor();
-    const svc = new AccountAuditService(auditor, credits, gens);
+    const svc = new AccountAuditService(auditor, credits, gens, profiles);
     const withShots = auditInputSchema.parse({ ...input, screenshots: [{ base64: "iVBORw0KGgoAAAANSUhEUg==", mimeType: "image/png" }] });
     const out = await svc.run("a", "u1", withShots);
     expect(out.metrics).toEqual({ engagementRate: 4, viewRate: 45 });
@@ -140,13 +188,29 @@ describe("AccountAuditService", () => {
     expect((await svc.get("a", out.id)).output).toMatchObject({ metrics: { engagementRate: 4 } });
     await expect(svc.get("b", out.id)).rejects.toMatchObject({ status: 404 });
   });
+  it("parallel audits with credits for one → one report, the rest refused; a failure refunds", async () => {
+    const { credits, gens, store, profiles } = setup(AI_COSTS.audit);
+    const auditor = new FakeAccountAuditor();
+    const svc = new AccountAuditService(auditor, credits, gens, profiles);
+    const results = await Promise.allSettled([svc.run("a", null, input), svc.run("a", null, input), svc.run("a", null, input)]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(auditor.calls).toHaveLength(1);
+    store.tenants.a.balance = AI_COSTS.audit;
+    auditor.failNext = new ServiceUnavailableError("busy");
+    await expect(svc.run("a", null, input)).rejects.toThrow("busy");
+    expect(store.tenants.a.balance).toBe(AI_COSTS.audit);
+    expect(gens.rows).toHaveLength(1);
+  });
   it("unknown numbers stay unknown (no made-up rates)", () => {
     expect(computeAuditMetrics(auditInputSchema.parse({ platform: "tiktok", handle: "x" }))).toEqual({ engagementRate: null, viewRate: null });
     expect(computeAuditMetrics(auditInputSchema.parse({ platform: "tiktok", handle: "x", followers: 0, avgLikes: 5 }))).toEqual({ engagementRate: null, viewRate: null });
   });
-  it("max 4 screenshots", () => {
+  it("max 4 screenshots; photos must be real base64 and not too big", () => {
     const shot = { base64: "iVBORw0KGgoAAAANSUhEUg==", mimeType: "image/png" };
     expect(auditInputSchema.safeParse({ platform: "x", handle: "a", screenshots: [shot, shot, shot, shot, shot] }).success).toBe(false);
+    expect(auditInputSchema.safeParse({ platform: "x", handle: "a", screenshots: [{ ...shot, base64: "not base64 at all!!! <script>" }] }).success).toBe(false);
+    expect(auditInputSchema.safeParse({ platform: "x", handle: "a", screenshots: [{ ...shot, base64: "A".repeat(2_600_000) }] }).success).toBe(false);
+    expect(auditInputSchema.safeParse({ platform: "x", handle: "a", screenshots: [shot] }).success).toBe(true);
   });
 });
 

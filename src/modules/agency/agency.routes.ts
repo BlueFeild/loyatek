@@ -64,6 +64,7 @@ agencyRouter.post("/tenants/:id/manage", async (req, res) => {
     branchId: owner.branchId,
     isSuperAdmin: false, // مهم - وقت الإدارة نيابةً بيتصرف كتاجر عادي
     impersonatedBy: req.auth!.userId,
+    impersonationKind: "manage",
   });
 
   res.json({ accessToken, tenantId: tenant.id, tenantName: tenant.name, role: owner.role });

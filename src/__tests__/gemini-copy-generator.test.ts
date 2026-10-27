@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError, type GoogleGenAI } from "@google/genai";
 import { GeminiCopyGenerator } from "../modules/ai/gemini-copy-generator";
-import { makeCopyGenerator } from "../modules/ai/copy-generator.factory";
+import { makeCopyGenerator } from "../modules/ai/ai-providers.factory";
 import { AnthropicCopyGenerator } from "../modules/ai/anthropic-copy-generator";
 import { FakeCopyGenerator } from "../modules/ai/fake-copy-generator";
 import { copyBriefSchema } from "../modules/ai/copy-generator";

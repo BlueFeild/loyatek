@@ -53,20 +53,23 @@ describe("AI Studio as a sellable service", () => {
     expect(includedAiCredits("yearly", plan)).toBe(2000);
     expect(AI_MODULE_MONTHLY_CREDITS).toBe(100); // الافتراضي
     const store = new MemoryCredits({ t: { balance: 5, isPlatformOwner: false } });
-    const credits = new CreditService(store);
-    expect(await grantIncludedAiCredits(credits, "t", "yearly", "order-1234-abcd", plan)).toBe(2000);
+    expect(await grantIncludedAiCredits(store, null, "t", "yearly", "order-1234-abcd", plan)).toBe(2000);
     expect(store.tenants.t.balance).toBe(2005);
-    expect(store.log[0]).toMatchObject({ reason: "GRANT", createdById: "system" });
-    expect(await grantIncludedAiCredits(credits, "t", "monthly", "order-0", { aiMonthlyCredits: 0, aiYearlyCredits: 0 })).toBe(0);
-    expect(await grantIncludedAiCredits(credits, "missing", "monthly", "order-x", plan)).toBeNull(); // فشل الإضافة مايوقفش التفعيل
+    expect(store.log[0]).toMatchObject({ reason: "AI_SUBSCRIPTION", createdById: null, refId: "order-1234-abcd" });
+    expect(await grantIncludedAiCredits(store, null, "t", "monthly", "order-0", { aiMonthlyCredits: 0, aiYearlyCredits: 0 })).toBe(0);
+    // فشل الإضافة بيرمي خطأ ← transaction التفعيل كلها بترجع (مفيش تفعيل من غير نقاط)
+    await expect(grantIncludedAiCredits(store, null, "missing", "monthly", "order-x", plan)).rejects.toThrow();
   });
-  it("trial credits: given once on creation, 0 = none", async () => {
-    const { grantTrialCredits } = await import("../modules/credits/trial-credits");
+  it("trial credits: given once on creation (reason TRIAL, no user), 0 = none", async () => {
+    const { TrialCreditsService } = await import("../modules/credits/trial-credits");
     const store = new MemoryCredits({ t: { balance: 0, isPlatformOwner: false } });
-    const credits = new CreditService(store);
-    expect(await grantTrialCredits(credits, "t", 20)).toBe(20);
-    expect(store.log[0]).toMatchObject({ amount: 20, note: "Free trial credits" });
-    expect(await grantTrialCredits(credits, "t", 0)).toBe(0);
+    let amount = 20;
+    const trial = new TrialCreditsService(new CreditService(store), async () => amount);
+    expect(await trial.giveNewCompany("t")).toBe(20);
+    expect(store.log[0]).toMatchObject({ amount: 20, note: "Free trial credits", reason: "TRIAL", createdById: null });
+    amount = 0;
+    expect(await trial.giveNewCompany("t")).toBe(0);
+    expect(await trial.giveNewCompany("missing")).toBe(0); // فشلها مايوقفش إنشاء الشركة
     expect(store.tenants.t.balance).toBe(20);
   });
 });

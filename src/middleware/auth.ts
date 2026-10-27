@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { verifyAccessToken, AccessTokenPayload } from "../utils/jwt";
+import { verifyAccessToken, AccessTokenPayload, bypassesAccountChecks } from "../utils/jwt";
 import { checkAccess } from "../utils/account-access";
 
 // إضافة بيانات المستخدم لكل request بعد التحقق من الـ token
@@ -27,8 +27,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   req.auth = payload; // بيحتوي على tenantId و role و branchId
 
   // شركة موقوفة / مؤرشفة أو مستخدم متوقف: كل الجلسات المفتوحة بتقف خلال ثواني.
-  // السوبر أدمن (حتى وهو داخل كشركة) بيقدر يفتح عشان يراجع
-  if (!payload.isSuperAdmin && !payload.impersonatedBy) {
+  // السوبر أدمن (حتى وهو داخل كشركة) بيقدر يفتح عشان يراجع - التنقل بين شركات المالك لأ
+  if (!bypassesAccountChecks(payload)) {
     const denied = await checkAccess(payload.userId, payload.tenantId);
     if (denied) return res.status(403).json({ error: denied.message, code: denied.code });
   }

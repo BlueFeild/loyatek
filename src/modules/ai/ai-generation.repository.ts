@@ -1,7 +1,8 @@
 import { Prisma, PrismaClient } from "@prisma/client";
-import type { BusinessContext } from "./copy-generator";
 
 export interface NewGeneration {
+  // رقم العملية ممكن يتحدد من الأول (عشان حركة النقاط تتسجل بيه قبل ما الصف يتعمل)
+  id?: string;
   tenantId: string;
   userId?: string | null;
   tool: string;
@@ -28,12 +29,23 @@ export interface GenerationRow {
   assetIds: string[];
 }
 
+export interface PendingJob {
+  id: string;
+  creditsUsed: number;
+  userId: string | null;
+}
+
+export type FinishResult = { status: "DONE" | "FAILED"; output?: Prisma.InputJsonValue; error?: string | null; creditsUsed?: number };
+
 export interface GenerationStore {
   create(g: NewGeneration): Promise<{ id: string }>;
   recent(tenantId: string, tool: string): Promise<GenerationRow[]>;
   find(tenantId: string, id: string): Promise<GenerationRow | null>;
-  finish(id: string, result: { status: "DONE" | "FAILED"; output?: Prisma.InputJsonValue; error?: string | null; creditsUsed?: number }): Promise<void>;
-  business(tenantId: string): Promise<BusinessContext | null>;
+  // إنهاء عملية PENDING بشكل ذرّي: true = احنا اللي قفلناها (فمسموح نرجّع النقاط)،
+  // false = حد تاني قفلها قبلنا (مانرجّعش تاني)
+  finishPending(id: string, result: FinishResult): Promise<boolean>;
+  countPending(tenantId: string, tool: string): Promise<number>;
+  pendingBefore(tenantId: string, tool: string, before: Date): Promise<PendingJob[]>;
 }
 
 const withAssets = { assets: { select: { id: true }, orderBy: { createdAt: "asc" as const } } };
@@ -45,7 +57,7 @@ function toRow(r: RowWithAssets): GenerationRow {
   return { ...rest, assetIds: assets.map((a) => a.id) };
 }
 
-// الوصول لقاعدة البيانات بس (نتايج الذكاء الاصطناعي + بيانات الشركة اللي بتتكتب عنها)
+// الوصول لقاعدة البيانات بس (نتايج الذكاء الاصطناعي)
 export class AiGenerationRepository implements GenerationStore {
   constructor(private readonly db: PrismaClient) {}
 
@@ -63,15 +75,19 @@ export class AiGenerationRepository implements GenerationStore {
     return r ? toRow(r) : null;
   }
 
-  async finish(id: string, result: { status: "DONE" | "FAILED"; output?: Prisma.InputJsonValue; error?: string | null; creditsUsed?: number }) {
-    await this.db.aiGeneration.update({
-      where: { id },
+  async finishPending(id: string, result: FinishResult) {
+    const updated = await this.db.aiGeneration.updateMany({
+      where: { id, status: "PENDING" },
       data: { status: result.status, output: result.output, error: result.error ?? null, creditsUsed: result.creditsUsed, finishedAt: new Date() },
     });
+    return updated.count === 1;
   }
 
-  async business(tenantId: string): Promise<BusinessContext | null> {
-    const t = await this.db.tenant.findUnique({ where: { id: tenantId }, select: { name: true, industry: true } });
-    return t ? { name: t.name, industry: String(t.industry) } : null;
+  countPending(tenantId: string, tool: string) {
+    return this.db.aiGeneration.count({ where: { tenantId, tool, status: "PENDING" } });
+  }
+
+  pendingBefore(tenantId: string, tool: string, before: Date) {
+    return this.db.aiGeneration.findMany({ where: { tenantId, tool, status: "PENDING", createdAt: { lt: before } }, select: { id: true, creditsUsed: true, userId: true } });
   }
 }

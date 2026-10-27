@@ -499,12 +499,28 @@ whatsappRouter.post("/contacts/:phone/notes", requireRole("OWNER", "ADMIN", "MAN
 
 // --- Campaigns (مسودات حقيقية - الإرسال الفعلي محتاج تكامل Meta) ---
 
+// شكل الحملة للشاشة: من غير التسجيل الصوتي ولا قايمة المستلمين (تقال) - عددهم بس
+function campaignView<T extends { recipients: unknown; audioBase64: string | null }>(c: T) {
+  const { recipients, audioBase64, ...rest } = c;
+  return { ...rest, recipientCount: Array.isArray(recipients) ? recipients.length : 0, hasAudio: Boolean(audioBase64) };
+}
+
 whatsappRouter.get("/campaigns", async (req, res) => {
-  const campaigns = await prisma.whatsappCampaign.findMany({
-    where: { tenantId: req.auth!.tenantId },
-    orderBy: { createdAt: "desc" },
-  });
-  res.json(campaigns);
+  const tenantId = req.auth!.tenantId;
+  await container.campaignSender.expireStale(tenantId);
+  const [campaigns, counts] = await Promise.all([
+    prisma.whatsappCampaign.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, tenantId: true, name: true, segmentDesc: true, templateText: true, status: true, kind: true, templateId: true, sentCount: true, failedCount: true, createdAt: true },
+    }),
+    prisma.$queryRaw<{ id: string; recipientCount: number; hasAudio: boolean }[]>`
+      SELECT "id", COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof("recipients") = 'array' THEN "recipients" ELSE '[]'::jsonb END), 0)::int AS "recipientCount",
+             ("audioBase64" IS NOT NULL AND "audioBase64" <> '') AS "hasAudio"
+      FROM "whatsapp_campaigns" WHERE "tenantId" = ${tenantId}`,
+  ]);
+  const byId = new Map(counts.map((c) => [c.id, c]));
+  res.json(campaigns.map((c) => ({ ...c, recipientCount: byId.get(c.id)?.recipientCount ?? 0, hasAudio: byId.get(c.id)?.hasAudio ?? false })));
 });
 
 const createCampaignSchema = z.object({
@@ -527,7 +543,7 @@ whatsappRouter.post("/campaigns", requireRole("OWNER", "ADMIN", "MANAGER"), asyn
   const campaign = await prisma.whatsappCampaign.create({
     data: { tenantId: req.auth!.tenantId, ...parsed.data },
   });
-  res.status(201).json(campaign);
+  res.status(201).json(campaignView(campaign));
 });
 
 whatsappRouter.delete("/campaigns/:id", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
@@ -559,7 +575,7 @@ whatsappRouter.post("/campaigns/voice", requireRole("OWNER", "ADMIN", "MANAGER")
       templateText: "",
     },
   });
-  res.status(201).json(campaign);
+  res.status(201).json(campaignView(campaign));
 });
 
 // رفع ملف إكسل حقيقي وتحليله - بيدوّر على عمود اسمه Phone/رقم وعمود
@@ -573,8 +589,9 @@ whatsappRouter.post("/campaigns/:id/recipients/upload", requireRole("OWNER", "AD
   const parsed = uploadRecipientsSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const campaign = await prisma.whatsappCampaign.findFirst({ where: { id: req.params.id, tenantId: req.auth!.tenantId } });
+  const campaign = await prisma.whatsappCampaign.findFirst({ where: { id: req.params.id, tenantId: req.auth!.tenantId }, select: { id: true, status: true } });
   if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+  if (campaign.status === "SENDING") return res.status(409).json({ error: "This campaign is being sent right now — wait until it finishes." });
 
   let rows: any[];
   try {
@@ -600,131 +617,33 @@ whatsappRouter.post("/campaigns/:id/recipients/upload", requireRole("OWNER", "AD
     return res.status(400).json({ error: "No valid phone numbers found in the file" });
   }
 
-  const updated = await prisma.whatsappCampaign.update({
-    where: { id: campaign.id },
+  // مش وقت الإرسال (القفل بيمنع إن قايمة جديدة تتحط وحملة بتتبعت)
+  const updated = await prisma.whatsappCampaign.updateMany({
+    where: { id: campaign.id, status: { not: "SENDING" } },
     data: { recipients, sentCount: 0, failedCount: 0, status: "DRAFT" },
   });
-  res.json(updated);
+  if (updated.count === 0) return res.status(409).json({ error: "This campaign is being sent right now — wait until it finishes." });
+  res.json({ ok: true, recipientCount: recipients.length });
 });
 
-// إرسال حملة حقيقي - محتاج حساب Meta متصل فعليًا، عشان كده بيرفض
-// بصراحة لو مفيش اتصال حقيقي بدل ما يتظاهر إنه بعت حاجة. بيبعت لكل
-// المستلمين الحقيقيين المرفوعين من الإكسل واحد واحد، ومش بيوقف لو
-// واحد فيهم فشل - بيكمّل الباقي ويرجّع تقرير حقيقي بالنجاح والفشل
 // تكلفة Meta التقريبية للحملة قبل الإرسال (حسب دولة كل رقم ونوع القالب) - بتتدفع لـ Meta مش لينا
 whatsappRouter.get("/campaigns/:id/estimate", async (req, res) => {
-  const campaign = await prisma.whatsappCampaign.findFirst({ where: { id: req.params.id, tenantId: req.auth!.tenantId }, include: { template: true } });
+  const campaign = await prisma.whatsappCampaign.findFirst({
+    where: { id: req.params.id, tenantId: req.auth!.tenantId },
+    select: { recipients: true, template: { select: { status: true, category: true } } },
+  });
   if (!campaign) return res.status(404).json({ error: "Campaign not found" });
-  const recipients = (campaign.recipients as { phone: string }[] | null) ?? [];
+  const recipients = Array.isArray(campaign.recipients) ? (campaign.recipients as { phone: string }[]) : [];
   // من غير قالب معتمد بنبعت hello_world وده UTILITY
   const category = categoryForTemplate(campaign.template?.status === "APPROVED" ? campaign.template.category : "UTILITY");
   const estimator = await container.metaRatesService.estimator();
   res.json(estimator.estimate(recipients.map((r) => r.phone), category));
 });
 
+// الإرسال نفسه في CampaignSender: فحص ← قفل (طلب تاني = 409) ← 202 على طول ← الإرسال في الخلفية.
+// الشاشة بتحدّث القايمة كل شوية لحد ما الحالة تبقى SENT / FAILED
 whatsappRouter.post("/campaigns/:id/send", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
-  const settings = await getOrCreateWhatsappSettings(req.auth!.tenantId);
-  if (!settings.isConnected || !settings.metaAccessToken || !settings.metaPhoneNumberId) {
-    return res.status(400).json({
-      error: "Connect a real Meta WhatsApp Business API account in Settings before sending campaigns.",
-    });
-  }
-
-  const campaign = await prisma.whatsappCampaign.findFirst({
-    where: { id: req.params.id, tenantId: req.auth!.tenantId },
-    include: { template: true },
-  });
-  if (!campaign) return res.status(404).json({ error: "Campaign not found" });
-
-  const recipients = campaign.recipients as { phone: string; name: string }[];
-  if (!recipients || recipients.length === 0) {
-    return res.status(400).json({ error: "Upload a recipient list (Excel file) before sending this campaign." });
-  }
-
-  let sent = 0;
-  let failed = 0;
-
-  if (campaign.kind === "VOICE") {
-    if (!campaign.audioBase64) return res.status(400).json({ error: "This voice campaign has no recording attached." });
-
-    // الملف الصوتي بيترفع مرة واحدة بس لـ Meta، وبعدين نفس الـ media_id
-    // بيتبعت لكل المستلمين - مش رفع منفصل لكل واحد
-    const upload = await uploadWhatsappAudio(settings.metaAccessToken, settings.metaPhoneNumberId, campaign.audioBase64);
-    if (!upload.ok || !upload.mediaId) {
-      return res.status(400).json({ error: upload.error || "Failed to upload the voice recording to Meta" });
-    }
-
-    for (const r of recipients) {
-      // ملحوظة مهمة: واتساب مايسمحش برسايل صوتية حرة إلا للأرقام اللي
-      // بعتت رسالة للحساب خلال آخر 24 ساعة - ده قيد حقيقي من Meta،
-      // فمتوقع إن بعض المستلمين يفشلوا لو مبعتوش رسالة لحسابك مؤخرًا
-      const result = await sendWhatsappAudioMessage(settings.metaAccessToken, settings.metaPhoneNumberId, r.phone, upload.mediaId);
-      if (result.ok) sent++;
-      else failed++;
-    }
-  } else {
-    // لو الحملة مرتبطة بقالب معتمد فعليًا من Meta، بنستخدمه بالاسم
-    // واللغة الحقيقيين بتوعه. لو مفيش قالب مرتبط، أو القالب لسه PENDING
-    // ومامتوفقش عليه، بنرجع لـ "hello_world" الافتراضي المعتمد تلقائيًا
-    // لو لسه PENDING عندنا نسأل Meta الأول (يمكن اتوافق عليه والتاجر مادوسش "Check status")
-    if (campaign.template && campaign.template.status === "PENDING" && campaign.template.metaTemplateId) {
-      const check = await getWhatsappTemplateStatus(settings.metaAccessToken, campaign.template.metaTemplateId);
-      if (check.ok && (check.status === "APPROVED" || check.status === "REJECTED")) {
-        campaign.template = await prisma.whatsappTemplate.update({
-          where: { id: campaign.template.id },
-          data: { status: check.status, rejectionReason: check.rejectionReason ?? null },
-        });
-      }
-    }
-    if (campaign.template && campaign.template.status !== "APPROVED") {
-      return res.status(400).json({
-        error: `This campaign's template "${campaign.template.name}" isn't approved by Meta yet (status: ${campaign.template.status}). Wait for approval or send without a custom template.`,
-      });
-    }
-    const tpl = campaign.template?.status === "APPROVED" ? campaign.template : null;
-    const templateName = tpl ? tpl.name : "hello_world";
-    const templateLang = tpl ? tpl.language : "en_US";
-    // {{1}} بيتملا باسم العميل من ملف الإكسل - أكتر من فراغ واحد مش مدعوم في الحملات
-    const vars = tpl ? templateVarCount(tpl.bodyText) : 0;
-    if (vars > 1) {
-      return res.status(400).json({ error: `This template has ${vars} blanks — campaigns can fill only {{1}} (the customer's name). Use a template with at most one blank.` });
-    }
-    // الصور بتترفع لـ Meta مرة واحدة للحملة كلها (قبل كده الحملة بالصورة كانت بتفشل)
-    let mediaIds: string[] = [];
-    if (tpl) {
-      const up = await uploadTemplateImages(settings.metaAccessToken, settings.metaPhoneNumberId, tpl);
-      if (!up.ok) return res.status(400).json({ error: `Couldn't prepare the template images: ${up.error}` });
-      mediaIds = up.mediaIds;
-    }
-
-    for (const r of recipients) {
-      // نداء حقيقي فعلي لكل رقم لـ Meta Graph API - مش محاكاة
-      const params = vars === 1 ? [String(r.name || "").trim() || "there"] : [];
-      const result = tpl
-        ? await sendTemplateComponents(settings.metaAccessToken, settings.metaPhoneNumberId, r.phone, templateName, templateLang, buildSendComponents(tpl, mediaIds, params))
-        : await sendWhatsappTestMessage(settings.metaAccessToken, settings.metaPhoneNumberId, r.phone, templateName, templateLang);
-      // الرسالة بتظهر في Team Inbox كمان (عشان ردود العملاء تبان جنبها)
-      await recordWhatsappMessage({
-        tenantId: req.auth!.tenantId,
-        direction: "OUT",
-        contactPhone: r.phone,
-        contactName: r.name || null,
-        body: tpl ? renderTemplatePreview(tpl, params) : "hello_world (Meta test template)",
-        kind: "campaign",
-        waMessageId: result.ok ? result.messageId : null,
-        status: result.ok ? "sent" : "failed",
-        error: result.ok ? null : result.error,
-      });
-      if (result.ok) sent++;
-      else failed++;
-    }
-  }
-
-  await prisma.whatsappCampaign.update({
-    where: { id: campaign.id },
-    data: { status: "SENT", sentCount: sent, failedCount: failed },
-  });
-  res.json({ ok: true, sent, failed, total: recipients.length });
+  res.status(202).json(await container.campaignSender.start(req.auth!.tenantId, req.params.id));
 });
 
 // --- Message Templates (قوالب رسائل حقيقية بترفع لـ Meta للموافقة) ---

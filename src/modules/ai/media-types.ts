@@ -1,13 +1,19 @@
 import { z } from "zod";
-import { ServiceUnavailableError } from "../../core/errors";
 import type { BusinessContext } from "./copy-generator";
+import { parseStructured } from "./structured-output";
 
 // "عقود" أدوات الصور والفيديو والتحليل: أي مزوّد بيطبّقها، والخدمات مابتعرفش مين
 
-const MAX_IMAGE_BASE64 = 6_000_000; // ~4.5MB صورة (الشاشة بتصغّرها قبل الرفع)
+// ~1.8MB صورة (الشاشة بتصغّرها لحوالي 300KB قبل الرفع) - أكبر من كده بيتقل الطلب والذاكرة
+const MAX_IMAGE_BASE64 = 2_500_000;
+const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
 export const inputImageSchema = z.object({
-  base64: z.string().min(20).max(MAX_IMAGE_BASE64, "The photo is too large — please use a smaller one"),
+  base64: z
+    .string()
+    .min(20)
+    .max(MAX_IMAGE_BASE64, "The photo is too large — please use a smaller one")
+    .refine((s) => s.length % 4 === 0 && BASE64_RE.test(s), "The photo couldn't be read — please choose it again"),
   mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
 });
 export type InputImage = z.infer<typeof inputImageSchema>;
@@ -98,15 +104,8 @@ export type AuditReport = z.infer<typeof auditReportSchema>;
 
 // رد المزوّد (نص JSON) ← تقرير متأكدين من شكله
 export function parseAuditReport(text: string | undefined): AuditReport {
-  let json: unknown;
-  try {
-    json = JSON.parse(text ?? "");
-  } catch {
-    throw new ServiceUnavailableError("The AI returned an unexpected answer — please try again.");
-  }
-  const parsed = auditReportSchema.safeParse(json);
-  if (!parsed.success) throw new ServiceUnavailableError("The AI returned an unexpected answer — please try again.");
-  return { ...parsed.data, healthScore: Math.round(parsed.data.healthScore) };
+  const report = parseStructured(auditReportSchema, text);
+  return { ...report, healthScore: Math.round(report.healthScore) };
 }
 
 export interface AccountAuditor {

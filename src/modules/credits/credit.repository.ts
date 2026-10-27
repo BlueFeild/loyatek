@@ -9,7 +9,7 @@ export interface CreditMovement {
   createdById?: string | null;
 }
 
-type Db = PrismaClient | Prisma.TransactionClient;
+export type Db = PrismaClient | Prisma.TransactionClient;
 
 // اللي الخدمة محتاجاه من التخزين (أي تخزين يطبّقه - Prisma أو نسخة في الذاكرة للاختبار)
 export interface CreditStore {
@@ -28,17 +28,21 @@ export class CreditRepository implements CreditStore {
     return t ? { balance: t.creditBalance, isPlatformOwner: t.isPlatformOwner } : null;
   }
 
-  // إضافة/خصم ذرّي: الخصم مايعديش الرصيد تحت الصفر حتى لو طلبين في نفس اللحظة
-  async apply(m: CreditMovement): Promise<number | null> {
-    return this.db.$transaction(async (tx) => {
-      const where: Prisma.TenantWhereInput = { id: m.tenantId };
-      if (m.amount < 0) where.creditBalance = { gte: -m.amount };
-      const updated = await tx.tenant.updateMany({ where, data: { creditBalance: { increment: m.amount } } });
-      if (updated.count === 0) return null;
-      const t = await tx.tenant.findUniqueOrThrow({ where: { id: m.tenantId }, select: { creditBalance: true } });
-      await this.log(tx, m, t.creditBalance);
-      return t.creditBalance;
-    });
+  // إضافة/خصم ذرّي: الخصم مايعديش الرصيد تحت الصفر حتى لو طلبين في نفس اللحظة.
+  // tx = جوه transaction تانية (زي تفعيل اشتراك) عشان الاتنين يحصلوا مع بعض أو مايحصلوش
+  async apply(m: CreditMovement, tx?: Prisma.TransactionClient): Promise<number | null> {
+    if (tx) return this.applyIn(tx, m);
+    return this.db.$transaction((t) => this.applyIn(t, m));
+  }
+
+  private async applyIn(tx: Prisma.TransactionClient, m: CreditMovement): Promise<number | null> {
+    const where: Prisma.TenantWhereInput = { id: m.tenantId };
+    if (m.amount < 0) where.creditBalance = { gte: -m.amount };
+    const updated = await tx.tenant.updateMany({ where, data: { creditBalance: { increment: m.amount } } });
+    if (updated.count === 0) return null;
+    const t = await tx.tenant.findUniqueOrThrow({ where: { id: m.tenantId }, select: { creditBalance: true } });
+    await this.log(tx, m, t.creditBalance);
+    return t.creditBalance;
   }
 
   // عمليات من غير خصم (شركة المنصة مجانية) بتتسجل برضه عشان نعرف الاستهلاك

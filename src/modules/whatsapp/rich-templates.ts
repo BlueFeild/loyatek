@@ -7,6 +7,8 @@ import { graphBase } from "./whatsapp.service";
 // (/{phone-id}/media) ونبعت الـ media id لكل المستلمين - قبل كده الحملة بالصورة كانت بتفشل
 
 export const MAX_CARDS = 10;
+// أي نداء لـ Meta مايعلقش أكتر من كده (الحملات بتستنى عليه)
+export const META_FETCH_TIMEOUT_MS = 20_000;
 export const MIN_CARDS = 2;
 
 const buttonSchema = z.discriminatedUnion("type", [
@@ -133,7 +135,7 @@ export async function uploadImageMedia(token: string, phoneNumberId: string, dat
     form.append("messaging_product", "whatsapp");
     form.append("type", parsed.mime);
     form.append("file", new Blob([parsed.buffer], { type: parsed.mime }), parsed.mime === "image/png" ? "image.png" : "image.jpg");
-    const res = await fetch(`${graphBase()}/${phoneNumberId}/media`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form });
+    const res = await fetch(`${graphBase()}/${phoneNumberId}/media`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form, signal: AbortSignal.timeout(META_FETCH_TIMEOUT_MS) });
     const data = (await res.json().catch(() => ({}))) as { id?: string; error?: { message?: string } };
     if (!res.ok || !data.id) return { ok: false, error: data?.error?.message || "Meta rejected the image upload" };
     return { ok: true, mediaId: String(data.id) };
@@ -142,14 +144,12 @@ export async function uploadImageMedia(token: string, phoneNumberId: string, dat
   }
 }
 
+// كل الصور بتترفع مع بعض (كاروسيل لحد 10 كروت) - الترتيب محفوظ
 export async function uploadTemplateImages(token: string, phoneNumberId: string, t: TemplateLike): Promise<{ ok: boolean; mediaIds: string[]; error?: string }> {
-  const mediaIds: string[] = [];
-  for (const img of templateImages(t)) {
-    const up = await uploadImageMedia(token, phoneNumberId, img);
-    if (!up.ok || !up.mediaId) return { ok: false, mediaIds, error: up.error };
-    mediaIds.push(up.mediaId);
-  }
-  return { ok: true, mediaIds };
+  const uploads = await Promise.all(templateImages(t).map((img) => uploadImageMedia(token, phoneNumberId, img)));
+  const failed = uploads.find((u) => !u.ok || !u.mediaId);
+  if (failed) return { ok: false, mediaIds: [], error: failed.error };
+  return { ok: true, mediaIds: uploads.map((u) => u.mediaId!) };
 }
 
 export async function sendTemplateComponents(token: string, phoneNumberId: string, to: string, name: string, language: string, components: Record<string, unknown>[]) {
@@ -160,6 +160,7 @@ export async function sendTemplateComponents(token: string, phoneNumberId: strin
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ messaging_product: "whatsapp", to: to.replace(/[^\d]/g, ""), type: "template", template }),
+      signal: AbortSignal.timeout(META_FETCH_TIMEOUT_MS),
     });
     const data = (await res.json().catch(() => ({}))) as { messages?: { id?: string }[]; error?: { message?: string } };
     if (!res.ok) return { ok: false as const, error: data?.error?.message || "Meta rejected the template message" };

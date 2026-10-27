@@ -6,7 +6,7 @@ import { requireAuth, requireSuperAdmin } from "../../middleware/auth";
 import { ACCOUNT_STATUSES, ALL_MODULES, computeExpiryDate, isInGrace, isModuleActive, moduleExpiry } from "../../utils/modules";
 import { clearAccessCache } from "../../utils/account-access";
 import { clearPlatformConfigCache, getPlatformConfig, newTrialExpiry } from "../../utils/platform-config";
-import { giveNewCompanyTrialCredits } from "../credits/trial-credits";
+import { container } from "../../core/container";
 import { MODULE_PRICES } from "../checkout/pricing";
 import { isCurrencyCode } from "../../utils/money";
 import { signAccessToken } from "../../utils/jwt";
@@ -62,6 +62,7 @@ superAdminRouter.post("/tenants/:id/impersonate", async (req, res) => {
     branchId: owner.branchId,
     isSuperAdmin: false, // مهم - وقت الانتحال بيتصرف كتاجر عادي، مش سوبر أدمن
     impersonatedBy: req.auth!.userId,
+    impersonationKind: "manage",
   });
 
   res.json({ accessToken, tenantId: tenant.id, tenantName: tenant.name, role: owner.role });
@@ -542,7 +543,7 @@ superAdminRouter.post("/clients", async (req, res) => {
     include: { users: true },
   });
   const owner = tenant.users[0];
-  await giveNewCompanyTrialCredits(tenant.id);
+  await container.trialCreditsService.giveNewCompany(tenant.id);
   let emailSent = false;
   if (d.sendEmail) {
     const link = await createPasswordLink(owner.id, "INVITE");
