@@ -1,7 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { AppError } from "../../core/errors";
 import type { BusinessContext } from "./copy-generator";
-import { defaultGeminiClient } from "./gemini-client";
+import { defaultGeminiClient, geminiTextModels, withModelFallback } from "./gemini-client";
 import { translateGeminiError } from "./gemini-errors";
 import {
   AUDIT_OUTPUT_SCHEMA,
@@ -91,24 +91,32 @@ export class GeminiVideoGenerator implements VideoGenerator {
 
 export class GeminiAccountAuditor implements AccountAuditor {
   readonly model: string;
+  private readonly models: string[];
   constructor(
     private readonly client: GoogleGenAI = defaultGeminiClient(),
-    model = process.env.GEMINI_MODEL?.trim() || "gemini-flash-latest"
+    models: string | string[] = geminiTextModels()
   ) {
-    this.model = model;
+    this.models = Array.isArray(models) ? models : [models];
+    this.model = this.models[0];
   }
 
   async audit(input: AuditInput, metrics: AuditMetrics, business: BusinessContext): Promise<AuditReport> {
     const parts: Part[] = [{ type: "text", text: buildAuditPrompt(input, metrics, business) }, ...input.screenshots.map(imagePart)];
     let text: string | undefined;
     try {
-      const interaction = await this.client.interactions.create({
-        model: this.model,
-        input: parts,
-        system_instruction: AUDIT_SYSTEM,
-        response_format: { type: "text", mime_type: "application/json", schema: AUDIT_OUTPUT_SCHEMA },
-        store: false,
-      }, NO_RETRY);
+      // لو الموديل الأساسي مزحوم (503) نجرب البديل
+      const interaction = await withModelFallback(this.models, (model) =>
+        this.client.interactions.create(
+          {
+            model,
+            input: parts,
+            system_instruction: AUDIT_SYSTEM,
+            response_format: { type: "text", mime_type: "application/json", schema: AUDIT_OUTPUT_SCHEMA },
+            store: false,
+          },
+          NO_RETRY
+        )
+      );
       text = interaction.output_text;
     } catch (err) {
       throw translateGeminiError(err, "audit");

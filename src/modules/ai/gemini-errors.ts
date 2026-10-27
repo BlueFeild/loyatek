@@ -1,9 +1,10 @@
 import { AppError, ServiceUnavailableError } from "../../core/errors";
+import { geminiStatus } from "./gemini-client";
 
 // ترجمة أخطاء جوجل لرسايل مفهومة للتاجر (من غير ما نسرّب تفاصيل المفتاح)
 export function translateGeminiError(err: unknown, what: string): Error {
   if (err instanceof AppError) return err;
-  const status = Number((err as { status?: unknown; statusCode?: unknown })?.status ?? (err as { statusCode?: unknown })?.statusCode);
+  const status = geminiStatus(err);
   const message = err instanceof Error ? err.message : String(err);
   if (status === 429) {
     return new ServiceUnavailableError(`The AI ${what} limit was reached — try again in a minute (free plans have low limits).`);
@@ -20,8 +21,9 @@ export function translateGeminiError(err: unknown, what: string): Error {
     return new ServiceUnavailableError(`AI ${what} isn't set up yet — please contact support.`);
   }
   if (status >= 500) {
+    // 503 = "high demand" عند جوجل (بيحصل كتير في الباقة المجانية) - مؤقت
     console.error(`[ai] Gemini ${what} server error ${status}: ${message}`);
-    return new ServiceUnavailableError("The AI is not available right now — please try again.");
+    return new ServiceUnavailableError("Google's AI is very busy right now — please try again in a minute (you were not charged).");
   }
   console.error(`[ai] Gemini ${what} call failed:`, err);
   return new ServiceUnavailableError("Couldn't reach the AI service — please try again.");

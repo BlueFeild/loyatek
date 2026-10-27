@@ -5,6 +5,7 @@ import { makeCopyGenerator } from "../modules/ai/copy-generator.factory";
 import { AnthropicCopyGenerator } from "../modules/ai/anthropic-copy-generator";
 import { FakeCopyGenerator } from "../modules/ai/fake-copy-generator";
 import { copyBriefSchema } from "../modules/ai/copy-generator";
+import { geminiTextModels } from "../modules/ai/gemini-client";
 
 // عميل Gemini وهمي: بنشوف الطلب ونرد رد ثابت (مفيش نداء حقيقي)
 function stubClient(reply: () => Promise<unknown>, seen: any[]) {
@@ -43,7 +44,7 @@ describe("GeminiCopyGenerator", () => {
       }, []),
       "m"
     );
-    await expect(gen.generate(brief, biz)).rejects.toMatchObject({ status: 503, message: expect.stringMatching(/free AI limit/) });
+    await expect(gen.generate(brief, biz)).rejects.toMatchObject({ status: 503, message: expect.stringMatching(/limit was reached/) });
   });
   it("garbage → 503", async () => {
     const gen = new GeminiCopyGenerator(stubClient(async () => ({ text: "hello" }), []), "m");
@@ -78,6 +79,40 @@ describe("GeminiCopyGenerator with the real SDK over HTTP (local stand-in server
     } finally {
       server.close();
     }
+  });
+});
+
+describe("busy model → fallback model (Google 503 high demand)", () => {
+  it("first model 503 → second model answers; the request goes to both in order", async () => {
+    const seen: string[] = [];
+    const client = {
+      models: {
+        generateContent: async (req: { model: string }) => {
+          seen.push(req.model);
+          if (req.model === "busy-model") throw new ApiError({ message: "This model is currently experiencing high demand.", status: 503 });
+          return { text: JSON.stringify({ variants: [{ text: "هلا", hashtags: [] }] }) };
+        },
+      },
+    } as unknown as GoogleGenAI;
+    const out = await new GeminiCopyGenerator(client, ["busy-model", "lite-model"]).generate(brief, biz);
+    expect(out.variants[0].text).toBe("هلا");
+    expect(seen).toEqual(["busy-model", "lite-model"]);
+  });
+  it("both busy → friendly message saying nothing was charged", async () => {
+    const client = { models: { generateContent: async () => { throw new ApiError({ message: "high demand", status: 503 }); } } } as unknown as GoogleGenAI;
+    await expect(new GeminiCopyGenerator(client, ["a", "b"]).generate(brief, biz)).rejects.toMatchObject({ status: 503, message: expect.stringMatching(/very busy.*not charged/) });
+  });
+  it("a real error (bad key 400) does NOT try the next model", async () => {
+    const seen: string[] = [];
+    const client = { models: { generateContent: async (req: { model: string }) => { seen.push(req.model); throw new ApiError({ message: "API key not valid", status: 400 }); } } } as unknown as GoogleGenAI;
+    await expect(new GeminiCopyGenerator(client, ["a", "b"]).generate(brief, biz)).rejects.toMatchObject({ status: 503 });
+    expect(seen).toEqual(["a"]);
+  });
+  it("models from Railway Variables (fallback default flash-lite, none turns it off)", () => {
+    expect(geminiTextModels({})).toEqual(["gemini-flash-latest", "gemini-3.5-flash-lite"]);
+    expect(geminiTextModels({ GEMINI_MODEL: "gemini-3.8-flash" })).toEqual(["gemini-3.8-flash", "gemini-3.5-flash-lite"]);
+    expect(geminiTextModels({ GEMINI_FALLBACK_MODEL: "none" })).toEqual(["gemini-flash-latest"]);
+    expect(geminiTextModels({ GEMINI_MODEL: "x", GEMINI_FALLBACK_MODEL: "x" })).toEqual(["x"]);
   });
 });
 
