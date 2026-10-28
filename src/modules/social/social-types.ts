@@ -35,6 +35,9 @@ export interface DiscoveredAccount {
   parentId: string | null;
   accessToken: string;
   tokenExpiresAt: Date | null;
+  // تيك توك بس
+  refreshToken?: string | null;
+  refreshExpiresAt?: Date | null;
 }
 
 // ربط Meta: الكود اللي رجع من نافذة فيسبوك → صفحات + حسابات انستجرام
@@ -48,11 +51,22 @@ export interface PublishAccount {
   platform: SocialPlatform;
   externalId: string;
   accessToken: string;
+  username?: string | null;
+}
+
+export interface PublishMedia {
+  kind: "image" | "video";
+  // لينك عام (فيسبوك/انستجرام بيجيبوا الملف منه)
+  url: string;
+  mimeType?: string;
+  // تيك توك بيترفعله الفيديو نفسه (من غير توثيق دومين)
+  load?: () => Promise<Buffer>;
 }
 
 export interface PublishContent {
   caption: string;
-  media: { kind: "image" | "video"; url: string } | null;
+  media: PublishMedia | null;
+  options?: PostOptions;
 }
 
 export interface PublishResult {
@@ -62,6 +76,50 @@ export interface PublishResult {
 
 export interface SocialPublisher {
   publish(account: PublishAccount, content: PublishContent): Promise<PublishResult>;
+}
+
+// ---------- تيك توك ----------
+
+// تيك توك بيطلب إن التاجر يختار بنفسه (مفيش اختيار افتراضي) - شروط الـ Audit بتاعهم
+export interface TikTokOptions {
+  privacyLevel: string; // من creator_info: PUBLIC_TO_EVERYONE | MUTUAL_FOLLOW_FRIENDS | FOLLOWER_OF_CREATOR | SELF_ONLY
+  allowComment: boolean;
+  allowDuet: boolean;
+  allowStitch: boolean;
+  // إفصاح المحتوى التجاري
+  brandOrganic: boolean; // "Your brand" - بيروّج لنشاطه هو
+  brandedContent: boolean; // "Branded content" - إعلان مدفوع لطرف تاني
+}
+
+export interface PostOptions {
+  tiktok?: TikTokOptions;
+}
+
+export interface TikTokCreatorInfo {
+  nickname: string;
+  username: string;
+  avatarUrl: string | null;
+  privacyLevelOptions: string[];
+  commentDisabled: boolean;
+  duetDisabled: boolean;
+  stitchDisabled: boolean;
+  maxVideoDurationSec: number;
+}
+
+export interface RefreshedTokens {
+  accessToken: string;
+  tokenExpiresAt: Date;
+  refreshToken: string;
+  refreshExpiresAt: Date | null;
+}
+
+// ربط تيك توك (OAuth): لينك الدخول → الكود → الحساب
+export interface TikTokConnector {
+  readonly enabled: boolean;
+  authorizeUrl(state: string, redirectUri: string): string;
+  exchangeCode(code: string, redirectUri: string): Promise<DiscoveredAccount>;
+  refresh(refreshToken: string): Promise<RefreshedTokens>;
+  creatorInfo(accessToken: string): Promise<TikTokCreatorInfo>;
 }
 
 // خطأ من المنصة. needsReconnect = التوكن مابقاش شغال (التاجر يربط تاني)

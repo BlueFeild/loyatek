@@ -81,6 +81,11 @@ socialRouter.delete("/posts/:id", canPost, async (req, res) => {
 // المفتاح 48 حرف عشوائي - مفيش طريقة تخمّنه أو توصل لملفات شركة تانية
 export const publicSocialMediaRouter = Router();
 publicSocialMediaRouter.get("/:key", async (req, res) => {
+  // توثيق اللينك عند تيك توك (URL prefix): ملف tiktokXXXX.txt اسمه ومحتواه من Railway Variables
+  const verifyName = process.env.TIKTOK_VERIFICATION_FILE_NAME?.trim();
+  if (verifyName && req.params.key === verifyName) {
+    return res.type("text/plain").send(process.env.TIKTOK_VERIFICATION_FILE_CONTENT?.trim() ?? "");
+  }
   const m = await socialPostService.mediaByKey(req.params.key);
   if (!m) throw new NotFoundError("File not found");
   const etag = assetEtag(m);
@@ -163,4 +168,22 @@ publicSocialWebhookRouter.post("/", async (req: express.Request & { rawBody?: Bu
   } catch (err) {
     console.warn(`[social-webhook] processing failed: ${(err as Error)?.message}`);
   }
+});
+
+// ---------- تيك توك ----------
+// لينك دخول تيك توك (التاجر بيتنقل له، وتيك توك بيرجعه على الـ callback العام)
+socialRouter.get("/tiktok/connect-url", canConnect, (req, res) => {
+  res.json(socialAccountService.tiktokConnectUrl(req.auth!.tenantId, req.auth!.userId));
+});
+
+socialRouter.get("/tiktok/creator-info", async (req, res) => {
+  const accountId = String(req.query.accountId ?? "");
+  if (!/^[0-9a-f-]{36}$/i.test(accountId)) return res.status(400).json({ error: "Missing the TikTok account" });
+  res.json(await socialAccountService.tiktokCreatorInfo(req.auth!.tenantId, accountId));
+});
+
+export const publicTikTokCallbackRouter = Router();
+publicTikTokCallbackRouter.get("/", async (req, res) => {
+  const q = req.query as Record<string, string | undefined>;
+  res.redirect(302, await socialAccountService.tiktokCallback({ code: q.code, state: q.state, error: q.error, error_description: q.error_description }));
 });

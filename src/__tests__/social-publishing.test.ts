@@ -6,13 +6,14 @@ import { SocialAccountService } from "../modules/social/social-account.service";
 import { MetaSocialGateway } from "../modules/social/meta-social.gateway";
 import { decryptToken, encryptToken } from "../modules/social/token-crypto";
 import { EDITABLE_STATUSES, type AccountForPublish, type NewPost, type PostPatch, type PostView, type SocialStore } from "../modules/social/social.repository";
-import { SocialPlatformError, type DiscoveredAccount, type MetaAccountConnector, type PublishAccount, type PublishContent, type SocialPublisher } from "../modules/social/social-types";
+import { SocialPlatformError, type DiscoveredAccount, type MetaAccountConnector, type PostOptions, type PublishAccount, type PublishContent, type SocialPublisher } from "../modules/social/social-types";
+import type { StoredTokens } from "../modules/social/social.repository";
 
 process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "test-refresh-secret";
 
 type Acc = AccountForPublish & { name: string; username: string | null; lastError: string | null };
 type Target = { id: string; accountId: string; status: string; permalink: string | null; error: string | null; externalPostId?: string; publishedAt: Date | null };
-type Post = { id: string; tenantId: string; caption: string; mediaId: string | null; status: string; scheduledAt: Date | null; publishingAt: Date | null; publishedAt: Date | null; createdAt: Date; targets: Target[] };
+type Post = { id: string; tenantId: string; caption: string; mediaId: string | null; options: PostOptions | null; status: string; scheduledAt: Date | null; publishingAt: Date | null; publishedAt: Date | null; createdAt: Date; targets: Target[] };
 
 // تخزين في الذاكرة بنفس عقد Prisma
 class MemoryStore implements SocialStore {
@@ -24,13 +25,13 @@ class MemoryStore implements SocialStore {
     return `${p}-${++this.seq}`.padEnd(8, "0");
   }
   addAccount(a: Partial<Acc> & { id: string; platform: Acc["platform"] }) {
-    this.accounts.set(a.id, { tenantId: "t1", externalId: `ext-${a.id}`, accessToken: encryptToken(`token-${a.id}`), status: "ACTIVE", name: a.id, username: null, lastError: null, ...a });
+    this.accounts.set(a.id, { tenantId: "t1", externalId: `ext-${a.id}`, accessToken: encryptToken(`token-${a.id}`), tokenExpiresAt: null, refreshToken: null, status: "ACTIVE", name: a.id, username: null, lastError: null, ...a });
   }
   async upsertAccounts(tenantId: string, _u: string | null, list: DiscoveredAccount[]) {
     for (const a of list) {
       const existing = [...this.accounts.values()].find((x) => x.tenantId === tenantId && x.platform === a.platform && x.externalId === a.externalId);
       const id = existing?.id ?? this.id("acc");
-      this.accounts.set(id, { id, tenantId, platform: a.platform, externalId: a.externalId, accessToken: a.accessToken, status: "ACTIVE", name: a.name, username: a.username, lastError: null });
+      this.accounts.set(id, { id, tenantId, platform: a.platform, externalId: a.externalId, accessToken: a.accessToken, tokenExpiresAt: a.tokenExpiresAt, refreshToken: a.refreshToken ?? null, status: "ACTIVE", name: a.name, username: a.username, lastError: null });
     }
   }
   async listAccounts(tenantId: string) {
@@ -48,6 +49,14 @@ class MemoryStore implements SocialStore {
   async markAccount(id: string, status: string, lastError: string | null) {
     Object.assign(this.accounts.get(id)!, { status, lastError });
   }
+  tokenWrites: StoredTokens[] = [];
+  async updateTokens(id: string, t: StoredTokens) {
+    this.tokenWrites.push(t);
+    Object.assign(this.accounts.get(id)!, { accessToken: t.accessToken, tokenExpiresAt: t.tokenExpiresAt, refreshToken: t.refreshToken });
+  }
+  async mediaData(id: string) {
+    return this.media.get(id)?.data ?? null;
+  }
   async disconnectAccount(tenantId: string, id: string) {
     const a = this.accounts.get(id);
     if (!a || a.tenantId !== tenantId) return false;
@@ -61,7 +70,7 @@ class MemoryStore implements SocialStore {
   }
   async mediaRef(tenantId: string, id: string) {
     const m = this.media.get(id);
-    return m && m.tenantId === tenantId ? { id, kind: m.kind, publicKey: m.publicKey } : null;
+    return m && m.tenantId === tenantId ? { id, kind: m.kind, mimeType: m.mimeType, publicKey: m.publicKey } : null;
   }
   async mediaByKey(key: string) {
     const m = [...this.media.values()].find((x) => x.publicKey === key);
@@ -76,6 +85,7 @@ class MemoryStore implements SocialStore {
       mediaId: p.mediaId,
       status: p.status,
       scheduledAt: p.scheduledAt,
+      options: p.options,
       publishingAt: null,
       publishedAt: null,
       createdAt: new Date(),
@@ -99,6 +109,7 @@ class MemoryStore implements SocialStore {
       scheduledAt: p.scheduledAt,
       publishedAt: p.publishedAt,
       createdAt: p.createdAt,
+      options: p.options,
       media: p.mediaId ? { id: p.mediaId, kind: this.media.get(p.mediaId)!.kind } : null,
       targets: p.targets.map((t) => ({ ...t, platform: this.accounts.get(t.accountId)!.platform, accountName: this.accounts.get(t.accountId)!.name })),
     };
@@ -126,7 +137,7 @@ class MemoryStore implements SocialStore {
     const p = this.posts.get(id);
     if (!p) return null;
     const m = p.mediaId ? this.media.get(p.mediaId)! : null;
-    return { id, tenantId: p.tenantId, caption: p.caption, media: m ? { id: m.id, kind: m.kind, publicKey: m.publicKey } : null, targets: p.targets.map((t) => ({ id: t.id, accountId: t.accountId, status: t.status })) };
+    return { id, tenantId: p.tenantId, caption: p.caption, options: p.options, media: m ? { id: m.id, kind: m.kind, mimeType: m.mimeType, publicKey: m.publicKey } : null, targets: p.targets.map((t) => ({ id: t.id, accountId: t.accountId, status: t.status })) };
   }
   async finishTarget(targetId: string, r: Partial<Target>) {
     for (const p of this.posts.values()) for (const t of p.targets) if (t.id === targetId) Object.assign(t, r);
@@ -216,7 +227,7 @@ describe("SocialPostService", () => {
     expect(after.targets.every((t) => t.status === "PUBLISHED" && t.permalink)).toBe(true);
     expect(s.publisher.calls).toHaveLength(2);
     const key = s.store.media.get(m.id)!.publicKey;
-    expect(s.publisher.calls[0].content.media).toEqual({ kind: "image", url: `https://api.test/api/public/social/media/${key}` });
+    expect(s.publisher.calls[0].content.media).toMatchObject({ kind: "image", mimeType: "image/jpeg", url: `https://api.test/api/public/social/media/${key}` });
     // التوكن بيوصل للمنصة مفكوك، ومتخزن متشفّر
     expect(s.publisher.calls[0].account.accessToken).toBe("token-fb1");
   });
@@ -285,7 +296,7 @@ describe("SocialPostService", () => {
     await s.service.runDue();
     expect((await s.service.get("t1", d.id)).status).toBe("DRAFT");
 
-    const stuck = await s.store.createPost({ tenantId: "t1", createdById: null, caption: "x", mediaId: null, status: "SCHEDULED", scheduledAt: NOW, accountIds: ["fb1"] });
+    const stuck = await s.store.createPost({ tenantId: "t1", createdById: null, caption: "x", mediaId: null, status: "SCHEDULED", scheduledAt: NOW, options: null, accountIds: ["fb1"] });
     Object.assign(s.store.posts.get(stuck)!, { status: "PUBLISHING", publishingAt: NOW });
     const r = await s.service.runDue();
     expect(r.expired).toBe(1);
@@ -382,5 +393,42 @@ describe("MetaSocialGateway (request shapes)", () => {
     const list = await new MetaSocialGateway().discoverAccounts({ accessToken: "user-token" });
     expect(list.map((a) => `${a.platform}:${a.externalId}:${a.parentId ?? ""}`)).toEqual(["FACEBOOK:p1:", "INSTAGRAM:ig1:p1", "FACEBOOK:p2:"]);
     expect(list[1].accessToken).toBe("PT");
+  });
+});
+
+describe("SocialPostService — TikTok rules", () => {
+  const TT = { privacyLevel: "SELF_ONLY" as const, allowComment: true, allowDuet: false, allowStitch: false, brandOrganic: false, brandedContent: false };
+  it("needs media + JPG photo + a chosen privacy; options reach the publisher with a loader for the bytes", async () => {
+    const s = setup();
+    s.store.addAccount({ id: "tt1", platform: "TIKTOK", username: "karak.qa" });
+    const png = await s.service.uploadMedia("t1", "image/png", Buffer.from("png"));
+    const video = await s.service.uploadMedia("t1", "video/mp4", Buffer.from("mp4-bytes"));
+    await expect(s.service.create("t1", null, { caption: "x", mediaId: null, accountIds: ["tt1"], when: "now", options: { tiktok: TT } })).rejects.toThrow(/TikTok needs a video or a photo/);
+    await expect(s.service.create("t1", null, { caption: "x", mediaId: png.id, accountIds: ["tt1"], when: "now", options: { tiktok: TT } })).rejects.toThrow(/must be JPG/);
+    await expect(s.service.create("t1", null, { caption: "x", mediaId: video.id, accountIds: ["tt1"], when: "now" })).rejects.toThrow(/who can see/);
+    await expect(s.service.create("t1", null, { caption: "x", mediaId: video.id, accountIds: ["tt1"], when: "now", options: { tiktok: { ...TT, brandedContent: true } } })).rejects.toThrow(/Branded content/);
+
+    const p = await s.service.create("t1", null, { caption: "Reel", mediaId: video.id, accountIds: ["tt1", "fb1"], when: "now", options: { tiktok: TT } });
+    await s.service.idle();
+    expect((await s.service.get("t1", p.id)).status).toBe("PUBLISHED");
+    const call = s.publisher.calls.find((c) => c.account.platform === "TIKTOK")!;
+    expect(call.account.username).toBe("karak.qa");
+    expect(call.content.options?.tiktok).toEqual(TT);
+    expect((await call.content.media!.load!()).toString()).toBe("mp4-bytes");
+  });
+
+  it("an expiring TikTok token is refreshed before publishing", async () => {
+    const store = new MemoryStore();
+    const publisher = new FakePublisher();
+    const refresh = vi.fn(async () => ({ accessToken: "fresh", tokenExpiresAt: new Date(NOW.getTime() + 86400_000), refreshToken: "rft2", refreshExpiresAt: null }));
+    const { SocialTokenService } = await import("../modules/social/social-token.service");
+    const service = new SocialPostService(store, publisher, () => "https://api.test", () => NOW, new SocialTokenService(store, { TIKTOK: { refresh } }, () => NOW));
+    store.addAccount({ id: "tt1", platform: "TIKTOK", tokenExpiresAt: new Date(NOW.getTime() + 60_000), refreshToken: encryptToken("rft1") });
+    const v = await service.uploadMedia("t1", "video/mp4", Buffer.from("v"));
+    await service.create("t1", null, { caption: "x", mediaId: v.id, accountIds: ["tt1"], when: "now", options: { tiktok: TT } });
+    await service.idle();
+    expect(refresh).toHaveBeenCalledWith("rft1");
+    expect(publisher.calls[0].account.accessToken).toBe("fresh");
+    expect(store.tokenWrites).toHaveLength(1);
   });
 });

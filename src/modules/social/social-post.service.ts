@@ -2,11 +2,12 @@ import crypto from "crypto";
 import { AppError, NotFoundError, ValidationError } from "../../core/errors";
 import type { PostPatch, SocialStore } from "./social.repository";
 import type { PostInput } from "./social.schemas";
-import { SOCIAL_LIMITS, SOCIAL_MEDIA_TYPES, SocialPlatformError, type SocialPublisher } from "./social-types";
-import { decryptToken } from "./token-crypto";
+import { SOCIAL_LIMITS, SOCIAL_MEDIA_TYPES, SocialPlatformError, type PostOptions, type SocialPublisher } from "./social-types";
+import { SocialTokenService } from "./social-token.service";
 
-// المنصات اللي النشر عليها شغال دلوقتي (تيك توك/سناب لسه)
-const PUBLISHABLE = new Set(["FACEBOOK", "INSTAGRAM"]);
+// المنصات اللي النشر عليها شغال دلوقتي (سناب لسه)
+const PUBLISHABLE = new Set(["FACEBOOK", "INSTAGRAM", "TIKTOK"]);
+const TIKTOK_CAPTION_MAX = 2200;
 
 // البوستات: كتابة / جدولة / نشر. النشر نفسه دايمًا في الخلفية (انستجرام بياخد وقت مع الفيديو):
 // "انشر دلوقتي" = SCHEDULED بميعاد دلوقتي + نبدأ على طول، والـ job بيلم أي بوست جه ميعاده
@@ -18,7 +19,8 @@ export class SocialPostService {
     private readonly publisher: SocialPublisher,
     // عنوان الباك إند العام (انستجرام لازم يجيب الصورة/الفيديو من لينك على النت)
     private readonly publicBaseUrl: () => string,
-    private readonly now: () => Date = () => new Date()
+    private readonly now: () => Date = () => new Date(),
+    private readonly tokens: SocialTokenService = new SocialTokenService(store)
   ) {}
 
   // ---------- الملفات ----------
@@ -96,6 +98,17 @@ export class SocialPostService {
     if (toInstagram && caption.length > SOCIAL_LIMITS.instagramCaptionMax) {
       throw new ValidationError(`Instagram captions can be up to ${SOCIAL_LIMITS.instagramCaptionMax} characters.`);
     }
+    const options: PostOptions = {};
+    if (accounts.some((a) => a.platform === "TIKTOK")) {
+      if (!media) throw new ValidationError("TikTok needs a video or a photo.");
+      if (media.kind === "image" && media.mimeType !== "image/jpeg") throw new ValidationError("TikTok photos must be JPG — upload the photo again.");
+      if (caption.length > TIKTOK_CAPTION_MAX) throw new ValidationError(`TikTok captions can be up to ${TIKTOK_CAPTION_MAX} characters.`);
+      const t = input.options?.tiktok;
+      // شرط تيك توك: التاجر يختار بنفسه مين يشوف البوست (مفيش اختيار افتراضي)
+      if (!t?.privacyLevel) throw new ValidationError("Choose who can see the TikTok post.");
+      if (t.brandedContent && t.privacyLevel === "SELF_ONLY") throw new ValidationError("Branded content can't be private on TikTok — choose another “who can see it”.");
+      options.tiktok = t;
+    }
 
     let scheduledAt: Date | null = null;
     if (input.when === "now") scheduledAt = now;
@@ -108,7 +121,7 @@ export class SocialPostService {
         }
       }
     }
-    return { caption, mediaId: media?.id ?? null, accountIds, status: input.when === "draft" ? ("DRAFT" as const) : ("SCHEDULED" as const), scheduledAt };
+    return { caption, mediaId: media?.id ?? null, accountIds, options: options.tiktok ? options : null, status: input.when === "draft" ? ("DRAFT" as const) : ("SCHEDULED" as const), scheduledAt };
   }
 
   // ---------- النشر ----------
@@ -144,7 +157,19 @@ export class SocialPostService {
     if (!(await this.store.claim(id, this.now()))) return;
     const post = await this.store.postForPublish(id);
     if (!post) return;
-    const media = post.media ? { kind: post.media.kind, url: `${this.publicBaseUrl()}/api/public/social/media/${post.media.publicKey}` } : null;
+    const m = post.media;
+    const media = m
+      ? {
+          kind: m.kind,
+          url: `${this.publicBaseUrl()}/api/public/social/media/${m.publicKey}`,
+          mimeType: m.mimeType,
+          load: async () => {
+            const data = await this.store.mediaData(m.id);
+            if (!data) throw new SocialPlatformError("The photo/video file is missing — upload it again.");
+            return data;
+          },
+        }
+      : null;
 
     let ok = 0;
     let failed = 0;
@@ -160,7 +185,11 @@ export class SocialPostService {
         continue;
       }
       try {
-        const r = await this.publisher.publish({ platform: account.platform, externalId: account.externalId, accessToken: decryptToken(account.accessToken) }, { caption: post.caption, media });
+        const accessToken = await this.tokens.accessToken(account);
+        const r = await this.publisher.publish(
+          { platform: account.platform, externalId: account.externalId, username: account.username, accessToken },
+          { caption: post.caption, media, options: post.options ?? undefined }
+        );
         ok++;
         await this.store.finishTarget(t.id, { status: "PUBLISHED", externalPostId: r.externalPostId, permalink: r.permalink, error: null, publishedAt: this.now() });
       } catch (err) {

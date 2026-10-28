@@ -1908,6 +1908,9 @@ model SocialAccount {
   parentId       String?
   accessToken    String
   tokenExpiresAt DateTime?
+  // تيك توك: التوكن بيخلص كل 24 ساعة وبيتجدد بالـ refresh token (متشفّر برضه)
+  refreshToken     String?
+  refreshExpiresAt DateTime?
   status         String             @default("ACTIVE") // ACTIVE | NEEDS_RECONNECT | DISCONNECTED
   lastError      String?
   connectedById  String?
@@ -1946,6 +1949,8 @@ model SocialPost {
   mediaId      String?
   media        SocialMedia?       @relation(fields: [mediaId], references: [id], onDelete: SetNull)
   status       String             @default("DRAFT") // DRAFT | SCHEDULED | PUBLISHING | PUBLISHED | PARTIAL | FAILED
+  // إعدادات خاصة بكل منصة (تيك توك: مين يشوف، التعليقات، الإعلان...)
+  options      Json?
   scheduledAt  DateTime?
   publishingAt DateTime?
   publishedAt  DateTime?

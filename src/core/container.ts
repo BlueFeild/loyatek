@@ -21,6 +21,8 @@ import { SocialAccountService } from "../modules/social/social-account.service";
 import { SocialPostService } from "../modules/social/social-post.service";
 import { PrismaInboxRepository } from "../modules/social/social-inbox.repository";
 import { SocialInboxService } from "../modules/social/social-inbox.service";
+import { TikTokGateway } from "../modules/social/tiktok.gateway";
+import { RoutingPublisher, SocialTokenService } from "../modules/social/social-token.service";
 
 // المكان الوحيد اللي بيقرر "مين بيكلم مين" (Composition Root).
 // الخدمات بتاخد اللي محتاجاه من برّه، فسهل نغيّر مزوّد أو نختبر بنسخة وهمية
@@ -32,6 +34,10 @@ const profiles = new PrismaBusinessProfileReader(prisma);
 const providers = makeAiProviders();
 const socialStore = new PrismaSocialRepository(prisma);
 const metaSocial = new MetaSocialGateway();
+const tiktok = new TikTokGateway();
+const socialTokens = new SocialTokenService(socialStore, { TIKTOK: tiktok });
+const socialPublisher = new RoutingPublisher({ FACEBOOK: metaSocial, INSTAGRAM: metaSocial, TIKTOK: tiktok });
+const frontendBaseUrl = () => (process.env.FRONTEND_BASE_URL || "https://digital.blue-field.co").replace(/\/+$/, "");
 
 // عنوان الباك إند العام: فيسبوك/انستجرام بيجيبوا صورة البوست منه (Railway بيدّي RAILWAY_PUBLIC_DOMAIN لوحده)
 function publicApiBaseUrl(): string {
@@ -54,7 +60,7 @@ export const container = {
   accountAuditService: new AccountAuditService(providers.auditor, creditService, generations, profiles),
   metaRatesService: new MetaRatesService(new PrismaMetaRatesStore(prisma)),
   campaignSender: new CampaignSender(new PrismaCampaignRepository(prisma), new MetaCampaignGateway()),
-  socialAccountService: new SocialAccountService(socialStore, metaSocial),
-  socialPostService: new SocialPostService(socialStore, metaSocial, publicApiBaseUrl),
+  socialAccountService: new SocialAccountService(socialStore, metaSocial, { tiktok, tokens: socialTokens, publicApiBaseUrl, frontendBaseUrl }),
+  socialPostService: new SocialPostService(socialStore, socialPublisher, publicApiBaseUrl, undefined, socialTokens),
   socialInboxService: new SocialInboxService(new PrismaInboxRepository(prisma), metaSocial, { generator: providers.copy, credits: creditService, generations, profiles }),
 };

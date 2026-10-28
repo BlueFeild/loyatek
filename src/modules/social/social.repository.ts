@@ -1,5 +1,5 @@
-import { PrismaClient } from "@prisma/client";
-import type { DiscoveredAccount, SocialPlatform } from "./social-types";
+import { Prisma, PrismaClient } from "@prisma/client";
+import type { DiscoveredAccount, PostOptions, SocialPlatform } from "./social-types";
 
 // اللي خدمات النشر محتاجاه من التخزين (Prisma هنا، ونسخة في الذاكرة للاختبارات)
 
@@ -20,13 +20,24 @@ export interface AccountForPublish {
   tenantId: string;
   platform: SocialPlatform;
   externalId: string;
+  username: string | null;
   accessToken: string; // متشفّر
+  tokenExpiresAt: Date | null;
+  refreshToken: string | null; // متشفّر
   status: string;
+}
+
+export interface StoredTokens {
+  accessToken: string; // متشفّر
+  tokenExpiresAt: Date | null;
+  refreshToken: string | null; // متشفّر
+  refreshExpiresAt: Date | null;
 }
 
 export interface MediaRef {
   id: string;
   kind: "image" | "video";
+  mimeType: string;
   publicKey: string;
 }
 
@@ -48,6 +59,7 @@ export interface PostView {
   scheduledAt: Date | null;
   publishedAt: Date | null;
   createdAt: Date;
+  options: PostOptions | null;
   media: { id: string; kind: string } | null;
   targets: TargetView[];
 }
@@ -56,6 +68,7 @@ export interface PostForPublish {
   id: string;
   tenantId: string;
   caption: string;
+  options: PostOptions | null;
   media: MediaRef | null;
   targets: { id: string; accountId: string; status: string }[];
 }
@@ -67,10 +80,11 @@ export interface NewPost {
   mediaId: string | null;
   status: "DRAFT" | "SCHEDULED";
   scheduledAt: Date | null;
+  options: PostOptions | null;
   accountIds: string[];
 }
 
-export type PostPatch = Partial<Pick<NewPost, "caption" | "mediaId" | "status" | "scheduledAt" | "accountIds">>;
+export type PostPatch = Partial<Pick<NewPost, "caption" | "mediaId" | "status" | "scheduledAt" | "accountIds" | "options">>;
 
 export const EDITABLE_STATUSES = ["DRAFT", "SCHEDULED", "FAILED"];
 
@@ -80,11 +94,13 @@ export interface SocialStore {
   accountsByIds(tenantId: string, ids: string[]): Promise<{ id: string; platform: string; status: string }[]>;
   accountForPublish(id: string): Promise<AccountForPublish | null>;
   markAccount(id: string, status: string, lastError: string | null): Promise<void>;
+  updateTokens(id: string, tokens: StoredTokens): Promise<void>;
   disconnectAccount(tenantId: string, id: string): Promise<boolean>;
 
   saveMedia(m: { tenantId: string; kind: "image" | "video"; mimeType: string; data: Buffer; publicKey: string }): Promise<{ id: string; kind: string; size: number }>;
   mediaRef(tenantId: string, id: string): Promise<MediaRef | null>;
   mediaByKey(publicKey: string): Promise<{ id: string; mimeType: string; size: number; data: Buffer } | null>;
+  mediaData(id: string): Promise<Buffer | null>;
 
   createPost(p: NewPost): Promise<string>;
   // بيعدّل بس لو البوست لسه في حالة تتعدّل (EDITABLE_STATUSES). false = اتنشر / بيتنشر
@@ -117,6 +133,7 @@ function toView(p: any): PostView {
     scheduledAt: p.scheduledAt,
     publishedAt: p.publishedAt,
     createdAt: p.createdAt,
+    options: (p.options as PostOptions | null) ?? null,
     media: p.media,
     targets: p.targets.map((t: any) => ({
       id: t.id,
@@ -138,7 +155,19 @@ export class PrismaSocialRepository implements SocialStore {
   async upsertAccounts(tenantId: string, userId: string | null, accounts: DiscoveredAccount[]) {
     await this.db.$transaction(
       accounts.map((a) => {
-        const data = { name: a.name, username: a.username, pictureUrl: a.pictureUrl, parentId: a.parentId, accessToken: a.accessToken, tokenExpiresAt: a.tokenExpiresAt, status: "ACTIVE", lastError: null, connectedById: userId };
+        const data = {
+          name: a.name,
+          username: a.username,
+          pictureUrl: a.pictureUrl,
+          parentId: a.parentId,
+          accessToken: a.accessToken,
+          tokenExpiresAt: a.tokenExpiresAt,
+          refreshToken: a.refreshToken ?? null,
+          refreshExpiresAt: a.refreshExpiresAt ?? null,
+          status: "ACTIVE",
+          lastError: null,
+          connectedById: userId,
+        };
         return this.db.socialAccount.upsert({
           where: { tenantId_platform_externalId: { tenantId, platform: a.platform, externalId: a.externalId } },
           create: { tenantId, platform: a.platform, externalId: a.externalId, ...data },
@@ -161,7 +190,10 @@ export class PrismaSocialRepository implements SocialStore {
   }
 
   async accountForPublish(id: string) {
-    const a = await this.db.socialAccount.findUnique({ where: { id }, select: { id: true, tenantId: true, platform: true, externalId: true, accessToken: true, status: true } });
+    const a = await this.db.socialAccount.findUnique({
+      where: { id },
+      select: { id: true, tenantId: true, platform: true, externalId: true, username: true, accessToken: true, tokenExpiresAt: true, refreshToken: true, status: true },
+    });
     return a ? { ...a, platform: a.platform as SocialPlatform } : null;
   }
 
@@ -169,8 +201,12 @@ export class PrismaSocialRepository implements SocialStore {
     await this.db.socialAccount.update({ where: { id }, data: { status, lastError } });
   }
 
+  async updateTokens(id: string, tokens: StoredTokens) {
+    await this.db.socialAccount.update({ where: { id }, data: tokens });
+  }
+
   async disconnectAccount(tenantId: string, id: string) {
-    const r = await this.db.socialAccount.updateMany({ where: { id, tenantId }, data: { status: "DISCONNECTED", accessToken: "", lastError: null } });
+    const r = await this.db.socialAccount.updateMany({ where: { id, tenantId }, data: { status: "DISCONNECTED", accessToken: "", refreshToken: null, lastError: null } });
     return r.count > 0;
   }
 
@@ -179,13 +215,18 @@ export class PrismaSocialRepository implements SocialStore {
   }
 
   async mediaRef(tenantId: string, id: string) {
-    const m = await this.db.socialMedia.findFirst({ where: { id, tenantId }, select: { id: true, kind: true, publicKey: true } });
+    const m = await this.db.socialMedia.findFirst({ where: { id, tenantId }, select: { id: true, kind: true, mimeType: true, publicKey: true } });
     return m ? { ...m, kind: m.kind as "image" | "video" } : null;
   }
 
   async mediaByKey(publicKey: string) {
     const m = await this.db.socialMedia.findUnique({ where: { publicKey }, select: { id: true, mimeType: true, size: true, data: true } });
     return m ? { ...m, data: m.data as Buffer } : null;
+  }
+
+  async mediaData(id: string) {
+    const m = await this.db.socialMedia.findUnique({ where: { id }, select: { data: true } });
+    return m ? (m.data as Buffer) : null;
   }
 
   async createPost(p: NewPost) {
@@ -197,6 +238,7 @@ export class PrismaSocialRepository implements SocialStore {
         mediaId: p.mediaId,
         status: p.status,
         scheduledAt: p.scheduledAt,
+        options: (p.options ?? undefined) as Prisma.InputJsonValue | undefined,
         targets: { create: p.accountIds.map((accountId) => ({ accountId })) },
       },
       select: { id: true },
@@ -205,7 +247,8 @@ export class PrismaSocialRepository implements SocialStore {
   }
 
   async updatePost(tenantId: string, id: string, patch: PostPatch) {
-    const { accountIds, ...fields } = patch;
+    const { accountIds, options, ...rest } = patch;
+    const fields = { ...rest, ...(options !== undefined ? { options: (options ?? Prisma.JsonNull) as Prisma.InputJsonValue } : {}) };
     return this.db.$transaction(async (tx) => {
       const r = await tx.socialPost.updateMany({ where: { id, tenantId, status: { in: EDITABLE_STATUSES } }, data: fields });
       if (r.count === 0) return false;
@@ -249,10 +292,10 @@ export class PrismaSocialRepository implements SocialStore {
   async postForPublish(id: string) {
     const p = await this.db.socialPost.findUnique({
       where: { id },
-      select: { id: true, tenantId: true, caption: true, media: { select: { id: true, kind: true, publicKey: true } }, targets: { select: { id: true, accountId: true, status: true } } },
+      select: { id: true, tenantId: true, caption: true, options: true, media: { select: { id: true, kind: true, mimeType: true, publicKey: true } }, targets: { select: { id: true, accountId: true, status: true } } },
     });
     if (!p) return null;
-    return { ...p, media: p.media ? { ...p.media, kind: p.media.kind as "image" | "video" } : null };
+    return { ...p, options: (p.options as PostOptions | null) ?? null, media: p.media ? { ...p.media, kind: p.media.kind as "image" | "video" } : null };
   }
 
   async finishTarget(targetId: string, r: { status: "PUBLISHED" | "FAILED"; externalPostId?: string; permalink?: string | null; error?: string | null; publishedAt?: Date }) {
