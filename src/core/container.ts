@@ -15,6 +15,10 @@ import { PrismaCampaignRepository } from "../modules/whatsapp/campaign.repositor
 import { MetaCampaignGateway } from "../modules/whatsapp/campaign-gateway";
 import { CampaignSender } from "../modules/whatsapp/campaign-sender.service";
 import { getPlatformConfig } from "../utils/platform-config";
+import { PrismaSocialRepository } from "../modules/social/social.repository";
+import { MetaSocialGateway } from "../modules/social/meta-social.gateway";
+import { SocialAccountService } from "../modules/social/social-account.service";
+import { SocialPostService } from "../modules/social/social-post.service";
 
 // المكان الوحيد اللي بيقرر "مين بيكلم مين" (Composition Root).
 // الخدمات بتاخد اللي محتاجاه من برّه، فسهل نغيّر مزوّد أو نختبر بنسخة وهمية
@@ -24,6 +28,17 @@ const generations = new AiGenerationRepository(prisma);
 const assets = new AiAssetRepository(prisma);
 const profiles = new PrismaBusinessProfileReader(prisma);
 const providers = makeAiProviders();
+const socialStore = new PrismaSocialRepository(prisma);
+const metaSocial = new MetaSocialGateway();
+
+// عنوان الباك إند العام: فيسبوك/انستجرام بيجيبوا صورة البوست منه (Railway بيدّي RAILWAY_PUBLIC_DOMAIN لوحده)
+function publicApiBaseUrl(): string {
+  const configured = process.env.PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, "");
+  if (configured) return configured;
+  const railway = process.env.RAILWAY_PUBLIC_DOMAIN?.trim();
+  if (railway) return `https://${railway}`;
+  return `http://localhost:${process.env.PORT || 4000}`;
+}
 
 export const container = {
   creditService,
@@ -37,4 +52,6 @@ export const container = {
   accountAuditService: new AccountAuditService(providers.auditor, creditService, generations, profiles),
   metaRatesService: new MetaRatesService(new PrismaMetaRatesStore(prisma)),
   campaignSender: new CampaignSender(new PrismaCampaignRepository(prisma), new MetaCampaignGateway()),
+  socialAccountService: new SocialAccountService(socialStore, metaSocial),
+  socialPostService: new SocialPostService(socialStore, metaSocial, publicApiBaseUrl),
 };

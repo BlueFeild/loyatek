@@ -50,6 +50,7 @@ import { paymentSettingsRouter } from "./modules/payment-settings/payment-settin
 import { erpDemoRouter } from "./modules/erp-demo/erp-demo.routes";
 import { adminCreditsRouter, creditsRouter } from "./modules/credits/credit.routes";
 import { aiRouter } from "./modules/ai/ai.routes";
+import { publicSocialMediaRouter, socialRouter } from "./modules/social/social.routes";
 import { adminMetaRatesRouter, publicMetaRatesRouter } from "./modules/whatsapp/meta-rates.routes";
 import { AppError } from "./core/errors";
 import { getPlatformConfig, getRegionalPricing } from "./utils/platform-config";
@@ -159,6 +160,8 @@ app.use("/api/erp/demo-data", erpDemoRouter);
 app.use("/api/credits", creditsRouter);
 app.use("/api/super-admin/credits", adminCreditsRouter);
 app.use("/api/ai", aiRouter);
+app.use("/api/social", socialRouter);
+app.use("/api/public/social/media", publicSocialMediaRouter);
 app.use("/api/public/whatsapp-rates", publicMetaRatesRouter);
 app.use("/api/super-admin/whatsapp-rates", adminMetaRatesRouter);
 

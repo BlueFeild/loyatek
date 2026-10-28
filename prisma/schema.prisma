@@ -127,6 +127,9 @@ model Tenant {
   creditTransactions CreditTransaction[]
   aiGenerations   AiGeneration[]
   aiAssets        AiAsset[]
+  socialAccounts  SocialAccount[]
+  socialMedia     SocialMedia[]
+  socialPosts     SocialPost[]
   whatsappCampaigns WhatsappCampaign[]
   notifications   Notification[]
 
@@ -1887,4 +1890,86 @@ model ExchangeRate {
   updatedAt     DateTime  @updatedAt
 
   @@map("exchange_rates")
+}
+// ---------- النشر على السوشيال ميديا (فيسبوك / انستجرام، وبعدين تيك توك وسناب) ----------
+
+// حساب متربط: صفحة فيسبوك أو حساب انستجرام بيزنس. التوكن متشفّر (social/token-crypto.ts)
+model SocialAccount {
+  id             String             @id @default(uuid())
+  tenantId       String
+  tenant         Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  platform       String // FACEBOOK | INSTAGRAM | TIKTOK | SNAPCHAT
+  externalId     String
+  name           String
+  username       String?
+  pictureUrl     String?
+  // انستجرام: صفحة فيسبوك اللي الحساب متربط بيها
+  parentId       String?
+  accessToken    String
+  tokenExpiresAt DateTime?
+  status         String             @default("ACTIVE") // ACTIVE | NEEDS_RECONNECT | DISCONNECTED
+  lastError      String?
+  connectedById  String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  targets        SocialPostTarget[]
+
+  @@unique([tenantId, platform, externalId])
+  @@map("social_accounts")
+}
+
+// صورة/فيديو للبوست. publicKey = لينك عام صعب التخمين (انستجرام لازم يجيب الملف من النت)
+model SocialMedia {
+  id        String       @id @default(uuid())
+  tenantId  String
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind      String // image | video
+  mimeType  String
+  size      Int
+  data      Bytes
+  publicKey String       @unique
+  createdAt DateTime     @default(now())
+  posts     SocialPost[]
+
+  @@index([tenantId, createdAt])
+  @@map("social_media")
+}
+
+model SocialPost {
+  id           String             @id @default(uuid())
+  tenantId     String
+  tenant       Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdById  String?
+  caption      String             @default("")
+  mediaId      String?
+  media        SocialMedia?       @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+  status       String             @default("DRAFT") // DRAFT | SCHEDULED | PUBLISHING | PUBLISHED | PARTIAL | FAILED
+  scheduledAt  DateTime?
+  publishingAt DateTime?
+  publishedAt  DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  targets      SocialPostTarget[]
+
+  @@index([status, scheduledAt])
+  @@index([tenantId, createdAt])
+  @@map("social_posts")
+}
+
+// البوست على حساب واحد (نفس البوست ممكن ينزل على صفحة + انستجرام)
+model SocialPostTarget {
+  id             String        @id @default(uuid())
+  postId         String
+  post           SocialPost    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  accountId      String
+  account        SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  status         String        @default("PENDING") // PENDING | PUBLISHED | FAILED
+  externalPostId String?
+  permalink      String?
+  error          String?
+  publishedAt    DateTime?
+
+  @@unique([postId, accountId])
+  @@index([accountId])
+  @@map("social_post_targets")
 }

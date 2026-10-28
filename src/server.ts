@@ -3,6 +3,7 @@ import { app } from "./app";
 import { startBookingReminderScheduler } from "./jobs/booking-reminders";
 import { startExchangeRateScheduler } from "./utils/money";
 import { startPaymentSyncScheduler } from "./jobs/payment-sync";
+import { startSocialPublisherScheduler } from "./jobs/social-publisher";
 
 const PORT = process.env.PORT || 4000;
 
@@ -14,4 +15,5 @@ app.listen(PORT, () => {
   startExchangeRateScheduler();
   // طلبات الاشتراك اللي اتدفعت بتتفعّل لوحدها (بنسأل MyFatoorah برقم الفاتورة كل دقيقتين)
   startPaymentSyncScheduler(Number(process.env.PAYMENT_SYNC_INTERVAL_MS) || undefined);
+  startSocialPublisherScheduler(Number(process.env.SOCIAL_PUBLISH_INTERVAL_MS) || undefined);
 });
