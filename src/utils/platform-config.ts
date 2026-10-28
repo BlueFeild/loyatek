@@ -38,6 +38,9 @@ export interface PlatformConfig {
   defaultTrialCredits: number;
   aiMonthlyCredits: number;
   aiYearlyCredits: number;
+  // حماية فلوس الإعلانات (تمويل البوست): أقصى ميزانية يومية بالدولار وأقصى مدة بالأيام
+  adsMaxDailyBudgetUsd: number;
+  adsMaxDays: number;
   discounts: DiscountRule[];
   regions: PricingRegion[];
 }
@@ -118,6 +121,8 @@ export async function getPlatformConfig(): Promise<PlatformConfig> {
     defaultTrialCredits: row?.defaultTrialCredits ?? 20,
     aiMonthlyCredits: row?.aiMonthlyCredits ?? AI_MODULE_MONTHLY_CREDITS,
     aiYearlyCredits: row?.aiYearlyCredits ?? AI_MODULE_MONTHLY_CREDITS * 12,
+    adsMaxDailyBudgetUsd: row?.adsMaxDailyBudgetUsd ?? 100,
+    adsMaxDays: row?.adsMaxDays ?? 30,
     discounts: readDiscounts(row?.moduleDiscounts),
     regions: readRegions(row?.pricingRegions),
   };

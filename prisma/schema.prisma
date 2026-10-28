@@ -131,6 +131,9 @@ model Tenant {
   socialMedia     SocialMedia[]
   socialPosts     SocialPost[]
   socialMessages  SocialMessage[]
+  socialAdsAuth   SocialAdsAuth?
+  socialAdCampaigns SocialAdCampaign[]
+  socialAdEvents  SocialAdEvent[]
   whatsappCampaigns WhatsappCampaign[]
   notifications   Notification[]
 
@@ -1452,6 +1455,9 @@ model PlatformSettings {
   // أسعار رسايل واتساب عند Meta اللي السوبر أدمن عدّلها { "QA": { marketing, utility, authentication } } بالدولار
   // فاضي = الأسعار الافتراضية في modules/whatsapp/meta-rates.ts (تقديرية - Meta بتغيّرها)
   whatsappMetaRates     Json     @default("{}")
+  // حماية فلوس الإعلانات: أقصى ميزانية يومية (بالدولار) وأقصى مدة لإعلان واحد - السوبر أدمن بيغيّرهم
+  adsMaxDailyBudgetUsd  Int      @default(100)
+  adsMaxDays            Int      @default(30)
   updatedAt           DateTime @updatedAt
 
   @@map("platform_settings")
@@ -1918,6 +1924,7 @@ model SocialAccount {
   updatedAt      DateTime           @updatedAt
   targets        SocialPostTarget[]
   messages       SocialMessage[]
+  adCampaigns    SocialAdCampaign[]
 
   @@unique([tenantId, platform, externalId])
   @@map("social_accounts")
@@ -2007,4 +2014,77 @@ model SocialMessage {
   @@index([tenantId, createdAt])
   @@index([accountId, threadKey, createdAt])
   @@map("social_messages")
+}
+
+// الإعلانات المدفوعة على Meta: توكن المستخدم (طويل، متشفّر) اللي بيدخل على حسابات الإعلانات بتاعة التاجر.
+// توكنات الصفحات مابتعرفش تعمل إعلانات، فبنحفظ توكن المستخدم وقت "Connect Facebook & Instagram"
+model SocialAdsAuth {
+  tenantId       String    @id
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accessToken    String
+  tokenExpiresAt DateTime?
+  connectedById  String?
+  updatedAt      DateTime  @updatedAt
+
+  @@map("social_ads_auth")
+}
+
+// "تمويل بوست": حملة + مجموعة إعلانية + إعلان عند Meta. الفلوس بتتدفع من حساب إعلانات التاجر نفسه
+model SocialAdCampaign {
+  id             String           @id @default(uuid())
+  tenantId       String
+  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // الصفحة / حساب انستجرام صاحب البوست (لو اتشال، الإعلان يفضل في السجل)
+  accountId      String?
+  account        SocialAccount?   @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  platform       String // FACEBOOK | INSTAGRAM
+  postExternalId String
+  permalink      String?
+  caption        String?
+  adAccountId    String // act_123
+  adAccountName  String?
+  // عملة حساب الإعلانات (Meta بتحاسب بيها)
+  currency       String
+  objective      String // REACH | ENGAGEMENT
+  dailyBudget    Decimal          @db.Decimal(18, 2)
+  startAt        DateTime
+  endAt          DateTime
+  targeting      Json
+  status         String           @default("CREATING") // CREATING | PENDING_REVIEW | ACTIVE | PAUSED | REJECTED | ISSUE | COMPLETED | FAILED
+  metaStatus     String?
+  reviewFeedback String?
+  error          String?
+  metaCampaignId String?
+  metaAdSetId    String?
+  metaCreativeId String?
+  metaAdId       String?
+  impressions    Int              @default(0)
+  reach          Int              @default(0)
+  clicks         Int              @default(0)
+  engagements    Int              @default(0)
+  spend          Decimal          @default(0) @db.Decimal(18, 2)
+  syncedAt       DateTime?
+  createdById    String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  events         SocialAdEvent[]
+
+  @@index([tenantId, createdAt])
+  @@map("social_ad_campaigns")
+}
+
+// سجل كل حركة على الإعلان: مين شغّله / وقّفه / غيّر الميزانية وإمتى
+model SocialAdEvent {
+  id         String           @id @default(uuid())
+  tenantId   String
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaignId String
+  campaign   SocialAdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId     String?
+  action     String // CREATED | FAILED | PAUSED | RESUMED | BUDGET_CHANGED
+  details    Json?
+  createdAt  DateTime         @default(now())
+
+  @@index([campaignId, createdAt])
+  @@map("social_ad_events")
 }

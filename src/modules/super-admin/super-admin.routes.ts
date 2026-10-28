@@ -232,6 +232,9 @@ const platformConfigSchema = z.object({
   // نقاط اشتراك استوديو الذكاء الاصطناعي (بتتضاف عند تفعيل الطلب)
   aiMonthlyCredits: z.number().int().min(0).max(100000).optional(),
   aiYearlyCredits: z.number().int().min(0).max(1000000).optional(),
+  // حدود الإعلانات المدفوعة لكل التجار (أقصى ميزانية يومية بالدولار + أقصى مدة)
+  adsMaxDailyBudgetUsd: z.number().int().min(1).max(100000).optional(),
+  adsMaxDays: z.number().int().min(1).max(365).optional(),
   // قواعد الخصم (اللستة كلها بتتبعت مرة واحدة): خدمات (فاضية = الكل) + نسبة +
   // شهري/سنوي/الاتنين + دول (فاضية = كل الدول) + تاريخ انتهاء. الشكل القديم
   // { erp: { pct, endsAt } } لسه مقبول (خصم لخدمة على الشهري والسنوي لكل الدول)
@@ -288,6 +291,8 @@ superAdminRouter.patch("/platform-config", async (req, res) => {
       ...(d.defaultTrialCredits !== undefined ? { defaultTrialCredits: d.defaultTrialCredits } : {}),
       ...(d.aiMonthlyCredits !== undefined ? { aiMonthlyCredits: d.aiMonthlyCredits } : {}),
       ...(d.aiYearlyCredits !== undefined ? { aiYearlyCredits: d.aiYearlyCredits } : {}),
+      ...(d.adsMaxDailyBudgetUsd !== undefined ? { adsMaxDailyBudgetUsd: d.adsMaxDailyBudgetUsd } : {}),
+      ...(d.adsMaxDays !== undefined ? { adsMaxDays: d.adsMaxDays } : {}),
       ...(d.discounts
         ? {
             moduleDiscounts: (Array.isArray(d.discounts)

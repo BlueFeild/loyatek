@@ -14,6 +14,8 @@ export interface SocialAccountOptions {
   publicApiBaseUrl?: () => string;
   // عنوان الموقع (بعد ربط تيك توك نرجّع التاجر لصفحة النشر)
   frontendBaseUrl?: () => string;
+  // الإعلانات المدفوعة: توكن المستخدم الطويل بيتحفظ هنا وقت الربط
+  adsAuth?: { saveConnection(tenantId: string, userId: string | null, userToken: string, expiresAt: Date | null): Promise<void> };
   now?: () => Date;
 }
 
@@ -64,11 +66,13 @@ export class SocialAccountService {
   }
 
   async connectMeta(tenantId: string, userId: string | null, login: { code: string } | { accessToken: string }) {
-    const found = await this.meta.discoverAccounts(login);
+    const connection = this.meta.connect ? await this.meta.connect(login) : null;
+    const found = connection ? connection.accounts : await this.meta.discoverAccounts(login);
     if (found.length === 0) {
       throw new AppError(422, "NO_PAGES", "No Facebook Page was shared — press Connect again and tick your Page (and its Instagram account) in the Meta window.");
     }
     await this.save(tenantId, userId, found);
+    if (connection && this.opts.adsAuth) await this.opts.adsAuth.saveConnection(tenantId, userId, connection.userToken, connection.userTokenExpiresAt);
     // التعليقات والرسايل الجديدة توصل لوحدها (لو فشل، زرار "Check for new" بيجيبها)
     if (this.meta.subscribePage) {
       for (const p of found.filter((a) => a.platform === "FACEBOOK")) {

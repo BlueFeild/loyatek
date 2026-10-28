@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SOCIAL_LIMITS } from "./social-types";
+import { AD_GENDERS, AD_LIMITS, AD_OBJECTIVES } from "./ads-types";
 
 // شكل البيانات اللي جاية من الشاشة (الـ controller بيتأكد منها قبل الخدمة)
 
@@ -51,3 +52,31 @@ export const threadListSchema = z.object({
 export const replySchema = threadRefSchema.extend({ text: z.string().trim().min(1, "Write the reply first").max(2000) });
 
 export const suggestSchema = threadRefSchema.extend({ dialect: z.enum(["qatari", "gulf", "msa", "egyptian", "english"]).optional() });
+
+// ---------- الإعلانات المدفوعة (تمويل بوست) ----------
+export const adTargetingSchema = z
+  .object({
+    countries: z.array(z.string().regex(/^[A-Za-z]{2}$/)).max(AD_LIMITS.maxCountries).default([]),
+    cities: z.array(z.object({ key: z.string().min(1).max(40), name: z.string().min(1).max(120) })).max(AD_LIMITS.maxCities).default([]),
+    ageMin: z.number().int().min(AD_LIMITS.ageMin).max(AD_LIMITS.ageMax).default(18),
+    ageMax: z.number().int().min(AD_LIMITS.ageMin).max(AD_LIMITS.ageMax).default(65),
+    gender: z.enum(AD_GENDERS).default("all"),
+  })
+  .transform((t) => ({ ...t, countries: t.countries.map((c) => c.toUpperCase()) }))
+  .refine((t) => t.countries.length > 0 || t.cities.length > 0, { message: "Choose at least one country or city", path: ["countries"] })
+  .refine((t) => t.ageMin <= t.ageMax, { message: "The minimum age must be less than the maximum", path: ["ageMin"] });
+
+export const boostSchema = z.object({
+  targetId: z.string().uuid(),
+  adAccountId: z.string().regex(/^act_\d{1,30}$/, "Choose an ad account"),
+  objective: z.enum(AD_OBJECTIVES),
+  dailyBudget: z.number().positive("Enter the daily budget").max(1_000_000),
+  days: z.number().int().min(1).max(365),
+  startAt: z.coerce.date().optional(),
+  targeting: adTargetingSchema,
+  confirmedTotal: z.number().positive(),
+});
+
+export const adBudgetSchema = z.object({ dailyBudget: z.number().positive("Enter the daily budget").max(1_000_000) });
+
+export const citySearchSchema = z.object({ q: z.string().trim().min(2, "Type at least 2 letters").max(60) });

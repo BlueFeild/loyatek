@@ -8,6 +8,7 @@ import { assetEtag, planAssetResponse } from "../ai/asset-http";
 import { connectMetaSchema, listPostsSchema, postInputSchema, replySchema, suggestSchema, threadListSchema, threadRefSchema, uploadMediaSchema } from "./social.schemas";
 import { verifyMetaSignature } from "../whatsapp/webhook";
 import { SOCIAL_LIMITS } from "./social-types";
+import { adsRouter } from "./ads.routes";
 
 const { socialAccountService, socialPostService, socialInboxService } = container;
 
@@ -17,6 +18,9 @@ socialRouter.use(requireAuth, requireModule("ai"));
 
 const canPost = requireRole("OWNER", "ADMIN", "MANAGER");
 const canConnect = requireRole("OWNER", "ADMIN");
+
+// ---------- الإعلانات المدفوعة (تمويل بوست) ----------
+socialRouter.use("/ads", adsRouter);
 
 // ---------- الحسابات ----------
 socialRouter.get("/config", (_req, res) => {

@@ -40,9 +40,17 @@ export interface DiscoveredAccount {
   refreshExpiresAt?: Date | null;
 }
 
+export interface MetaConnection {
+  accounts: DiscoveredAccount[];
+  userToken: string;
+  userTokenExpiresAt: Date | null;
+}
+
 // ربط Meta: الكود اللي رجع من نافذة فيسبوك → صفحات + حسابات انستجرام
 export interface MetaAccountConnector {
   discoverAccounts(login: { code: string } | { accessToken: string }): Promise<DiscoveredAccount[]>;
+  // نفس الربط + توكن المستخدم الطويل (للإعلانات المدفوعة)
+  connect?(login: { code: string } | { accessToken: string }): Promise<MetaConnection>;
   // نخلّي الصفحة تبعت تعليقاتها ورسايلها على الـ webhook بتاعنا (مش إجباري - لو فشل الصندوق بيتحدّث بالمزامنة)
   subscribePage?(pageId: string, pageToken: string): Promise<void>;
 }
@@ -126,7 +134,9 @@ export interface TikTokConnector {
 export class SocialPlatformError extends AppError {
   constructor(
     message: string,
-    public readonly needsReconnect = false
+    public readonly needsReconnect = false,
+    // رقم الخطأ عند Meta (مثلًا 200 = صلاحية ناقصة، 100 = بيانات غلط)
+    public readonly platformCode?: number
   ) {
     super(502, "SOCIAL_PLATFORM_ERROR", message);
   }

@@ -23,6 +23,10 @@ import { PrismaInboxRepository } from "../modules/social/social-inbox.repository
 import { SocialInboxService } from "../modules/social/social-inbox.service";
 import { TikTokGateway } from "../modules/social/tiktok.gateway";
 import { RoutingPublisher, SocialTokenService } from "../modules/social/social-token.service";
+import { PrismaAdsRepository } from "../modules/social/ads.repository";
+import { MetaAdsGateway } from "../modules/social/meta-ads.gateway";
+import { SocialAdsService } from "../modules/social/ads.service";
+import { getRates } from "../utils/money";
 
 // المكان الوحيد اللي بيقرر "مين بيكلم مين" (Composition Root).
 // الخدمات بتاخد اللي محتاجاه من برّه، فسهل نغيّر مزوّد أو نختبر بنسخة وهمية
@@ -37,6 +41,13 @@ const metaSocial = new MetaSocialGateway();
 const tiktok = new TikTokGateway();
 const socialTokens = new SocialTokenService(socialStore, { TIKTOK: tiktok });
 const socialPublisher = new RoutingPublisher({ FACEBOOK: metaSocial, INSTAGRAM: metaSocial, TIKTOK: tiktok });
+const socialAdsService = new SocialAdsService(new PrismaAdsRepository(prisma), new MetaAdsGateway(), {
+  limits: async () => {
+    const c = await getPlatformConfig();
+    return { maxDailyBudgetUsd: c.adsMaxDailyBudgetUsd, maxDays: c.adsMaxDays };
+  },
+  rates: getRates,
+});
 const frontendBaseUrl = () => (process.env.FRONTEND_BASE_URL || "https://digital.blue-field.co").replace(/\/+$/, "");
 
 // عنوان الباك إند العام: فيسبوك/انستجرام بيجيبوا صورة البوست منه (Railway بيدّي RAILWAY_PUBLIC_DOMAIN لوحده)
@@ -60,7 +71,8 @@ export const container = {
   accountAuditService: new AccountAuditService(providers.auditor, creditService, generations, profiles),
   metaRatesService: new MetaRatesService(new PrismaMetaRatesStore(prisma)),
   campaignSender: new CampaignSender(new PrismaCampaignRepository(prisma), new MetaCampaignGateway()),
-  socialAccountService: new SocialAccountService(socialStore, metaSocial, { tiktok, tokens: socialTokens, publicApiBaseUrl, frontendBaseUrl }),
+  socialAccountService: new SocialAccountService(socialStore, metaSocial, { tiktok, tokens: socialTokens, publicApiBaseUrl, frontendBaseUrl, adsAuth: socialAdsService }),
   socialPostService: new SocialPostService(socialStore, socialPublisher, publicApiBaseUrl, undefined, socialTokens),
+  socialAdsService,
   socialInboxService: new SocialInboxService(new PrismaInboxRepository(prisma), metaSocial, { generator: providers.copy, credits: creditService, generations, profiles }),
 };

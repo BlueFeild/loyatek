@@ -1,10 +1,11 @@
-import { graphBase } from "../whatsapp/whatsapp.service";
+import { metaGraph, type GraphRequest } from "./meta-graph";
 import {
   SocialPlatformError,
   type DiscoveredAccount,
   type InboxAccount,
   type InboxEvent,
   type MetaAccountConnector,
+  type MetaConnection,
   type PublishAccount,
   type PublishContent,
   type PublishResult,
@@ -13,11 +14,7 @@ import {
   type SocialPublisher,
 } from "./social-types";
 
-// فيسبوك + انستجرام عن طريق Graph API (نفس تطبيق Meta بتاع المنصة).
-// META_APP_ID / META_APP_SECRET من Railway، و META_GRAPH_BASE_URL = Meta وهمية للتجارب المحلية بس
-const FETCH_TIMEOUT_MS = 60_000;
-
-type GraphJson = { error?: { message?: string; code?: number; error_subcode?: number; error_user_msg?: string } } & Record<string, any>;
+// فيسبوك + انستجرام عن طريق Graph API (نفس تطبيق Meta بتاع المنصة). META_APP_ID / META_APP_SECRET من Railway
 
 export interface MetaSocialOptions {
   // كل قد إيه نسأل انستجرام "الفيديو جهز؟" وأقصى وقت نستنى
@@ -34,30 +31,17 @@ export class MetaSocialGateway implements MetaAccountConnector, SocialPublisher,
     this.maxWaitMs = opts.maxWaitMs ?? 5 * 60 * 1000;
   }
 
-  private async graph(path: string, opts: { token?: string; method?: "GET" | "POST"; body?: Record<string, unknown> } = {}): Promise<Record<string, any>> {
-    let res: Response;
-    try {
-      res = await fetch(`${graphBase()}${path}`, {
-        method: opts.method ?? "GET",
-        headers: { ...(opts.body ? { "Content-Type": "application/json" } : {}), ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}) },
-        body: opts.body ? JSON.stringify(opts.body) : undefined,
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-    } catch (err) {
-      throw new SocialPlatformError(`Couldn't reach Meta: ${(err as Error).message}`);
-    }
-    const data = ((await res.json().catch(() => ({}))) ?? {}) as GraphJson;
-    if (!res.ok || data.error) {
-      const e = data.error ?? {};
-      // 190 = التوكن انتهى أو اتلغى (التاجر غيّر الباسورد / شال صلاحية التطبيق)
-      const reconnect = e.code === 190 || e.code === 102 || e.error_subcode === 463 || e.error_subcode === 460;
-      throw new SocialPlatformError(e.error_user_msg || e.message || `Meta error ${res.status}`, reconnect);
-    }
-    return data;
+  private graph(path: string, opts: GraphRequest = {}) {
+    return metaGraph(path, opts);
   }
 
   // ---------- الربط ----------
   async discoverAccounts(login: { code: string } | { accessToken: string }): Promise<DiscoveredAccount[]> {
+    return (await this.connect(login)).accounts;
+  }
+
+  // الصفحات + توكن المستخدم الطويل (الإعلانات محتاجاه - توكن الصفحة مايعرفش يعمل إعلان)
+  async connect(login: { code: string } | { accessToken: string }): Promise<MetaConnection> {
     const appId = process.env.META_APP_ID?.trim();
     const secret = process.env.META_APP_SECRET?.trim();
     let userToken: string;
@@ -72,11 +56,13 @@ export class MetaSocialGateway implements MetaAccountConnector, SocialPublisher,
     }
 
     // توكن طويل (60 يوم) → توكنات الصفحات اللي جاية منه مابتنتهيش
+    let userTokenExpiresAt: Date | null = null;
     if (appId && secret) {
       try {
         const q = new URLSearchParams({ grant_type: "fb_exchange_token", client_id: appId, client_secret: secret, fb_exchange_token: userToken });
         const r = await this.graph(`/oauth/access_token?${q.toString()}`);
         if (typeof r.access_token === "string") userToken = r.access_token;
+        if (Number(r.expires_in) > 0) userTokenExpiresAt = new Date(Date.now() + Number(r.expires_in) * 1000);
       } catch (err) {
         console.warn(`[social] long-lived token exchange skipped: ${(err as Error).message}`);
       }
@@ -113,7 +99,7 @@ export class MetaSocialGateway implements MetaAccountConnector, SocialPublisher,
         });
       }
     }
-    return out;
+    return { accounts: out, userToken, userTokenExpiresAt };
   }
 
   // ---------- النشر ----------
