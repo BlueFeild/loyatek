@@ -40,6 +40,8 @@ export interface DiscoveredAccount {
 // ربط Meta: الكود اللي رجع من نافذة فيسبوك → صفحات + حسابات انستجرام
 export interface MetaAccountConnector {
   discoverAccounts(login: { code: string } | { accessToken: string }): Promise<DiscoveredAccount[]>;
+  // نخلّي الصفحة تبعت تعليقاتها ورسايلها على الـ webhook بتاعنا (مش إجباري - لو فشل الصندوق بيتحدّث بالمزامنة)
+  subscribePage?(pageId: string, pageToken: string): Promise<void>;
 }
 
 export interface PublishAccount {
@@ -71,3 +73,51 @@ export class SocialPlatformError extends AppError {
     super(502, "SOCIAL_PLATFORM_ERROR", message);
   }
 }
+
+// ---------- صندوق التعليقات والرسايل ----------
+
+export type InboxKind = "COMMENT" | "DM";
+
+// تعليق أو رسالة جاية من المنصة (webhook أو مزامنة) بشكل موحّد
+export interface InboxEvent {
+  platform: "FACEBOOK" | "INSTAGRAM";
+  // الصفحة / حساب انستجرام اللي الحدث وصله
+  accountExternalId: string;
+  kind: InboxKind;
+  direction: "IN" | "OUT";
+  externalId: string;
+  threadKey: string;
+  parentExternalId: string | null;
+  postExternalId: string | null;
+  postCaption: string | null;
+  authorId: string | null;
+  authorName: string | null;
+  text: string;
+  createdAt: Date;
+}
+
+export interface InboxAccount {
+  platform: SocialPlatform;
+  externalId: string;
+  // انستجرام: صفحة فيسبوك المربوطة (الرسايل بتتبعت عن طريقها)
+  parentId: string | null;
+  accessToken: string;
+}
+
+// warnings = جزء ماقدرناش نجيبه (صلاحية ناقصة مثلًا) والباقي اتجاب عادي
+export interface RecentInbox {
+  events: InboxEvent[];
+  warnings: string[];
+}
+
+export interface SocialInboxGateway {
+  replyToComment(account: InboxAccount, commentId: string, text: string): Promise<{ id: string }>;
+  sendDirectMessage(account: InboxAccount, recipientId: string, text: string): Promise<{ id: string }>;
+  // آخر التعليقات والرسايل (لو الـ webhook لسه مش شغال أو فاتنا حاجة)
+  fetchRecent(account: InboxAccount): Promise<RecentInbox>;
+  // اسم العميل (رسايل الـ webhook مابيجيش فيها الاسم)
+  lookupName?(account: InboxAccount, userId: string): Promise<string | null>;
+}
+
+// Meta بتسمح بالرد على الرسايل الخاصة لحد 24 ساعة من آخر رسالة من العميل
+export const DM_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;

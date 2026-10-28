@@ -24,3 +24,19 @@ export const listPostsSchema = z.object({
 });
 
 export const uploadMediaSchema = z.object({ mimeType: z.string().min(3).max(100) });
+
+// ---------- صندوق التعليقات والرسايل ----------
+export const threadRefSchema = z.object({
+  accountId: z.string().uuid(),
+  kind: z.enum(["COMMENT", "DM"]),
+  threadKey: z.string().min(1).max(200),
+});
+
+export const threadListSchema = z.object({
+  kind: z.enum(["COMMENT", "DM"]).optional(),
+  accountId: z.string().uuid().optional(),
+});
+
+export const replySchema = threadRefSchema.extend({ text: z.string().trim().min(1, "Write the reply first").max(2000) });
+
+export const suggestSchema = threadRefSchema.extend({ dialect: z.enum(["qatari", "gulf", "msa", "egyptian", "english"]).optional() });

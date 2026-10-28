@@ -5,10 +5,11 @@ import { container } from "../../core/container";
 import { NotFoundError } from "../../core/errors";
 import { zodMessage } from "../../utils/validation";
 import { assetEtag, planAssetResponse } from "../ai/asset-http";
-import { connectMetaSchema, listPostsSchema, postInputSchema, uploadMediaSchema } from "./social.schemas";
+import { connectMetaSchema, listPostsSchema, postInputSchema, replySchema, suggestSchema, threadListSchema, threadRefSchema, uploadMediaSchema } from "./social.schemas";
+import { verifyMetaSignature } from "../whatsapp/webhook";
 import { SOCIAL_LIMITS } from "./social-types";
 
-const { socialAccountService, socialPostService } = container;
+const { socialAccountService, socialPostService, socialInboxService } = container;
 
 // النشر على السوشيال (جزء من استوديو الذكاء الاصطناعي) - الـ controller بيتأكد من البيانات بس
 export const socialRouter = Router();
@@ -102,4 +103,64 @@ publicSocialMediaRouter.get("/:key", async (req, res) => {
   }
   res.setHeader("Content-Length", String(m.data.length));
   res.end(m.data);
+});
+
+// ---------- صندوق التعليقات والرسايل ----------
+socialRouter.get("/inbox/threads", async (req, res) => {
+  const parsed = threadListSchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+  res.json({ threads: await socialInboxService.threads(req.auth!.tenantId, parsed.data), canSuggest: socialInboxService.canSuggest });
+});
+
+socialRouter.get("/inbox/unread", async (req, res) => {
+  res.json({ unread: await socialInboxService.unreadCount(req.auth!.tenantId) });
+});
+
+socialRouter.get("/inbox/thread", async (req, res) => {
+  const parsed = threadRefSchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+  res.json(await socialInboxService.thread(req.auth!.tenantId, parsed.data));
+});
+
+socialRouter.post("/inbox/sync", canPost, async (req, res) => {
+  res.json(await socialInboxService.sync(req.auth!.tenantId));
+});
+
+socialRouter.post("/inbox/reply", canPost, async (req, res) => {
+  const parsed = replySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+  const { text, ...ref } = parsed.data;
+  res.json(await socialInboxService.reply(req.auth!.tenantId, req.auth!.userId, ref, text));
+});
+
+socialRouter.post("/inbox/suggest", canPost, async (req, res) => {
+  const parsed = suggestSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+  const { dialect, ...ref } = parsed.data;
+  res.json(await socialInboxService.suggest(req.auth!.tenantId, req.auth!.userId, ref, dialect));
+});
+
+// ---------- Webhook المنصة لفيسبوك/انستجرام (object = page / instagram) ----------
+// نفس تطبيق Meta: Verify Token = META_WEBHOOK_VERIFY_TOKEN، والتوقيع بـ META_APP_SECRET
+export const publicSocialWebhookRouter = Router();
+
+publicSocialWebhookRouter.get("/", (req, res) => {
+  const expected = process.env.META_WEBHOOK_VERIFY_TOKEN?.trim();
+  if (!expected || req.query["hub.mode"] !== "subscribe" || req.query["hub.verify_token"] !== expected) return res.status(403).send("Forbidden");
+  res.status(200).type("text/plain").send(String(req.query["hub.challenge"] ?? ""));
+});
+
+publicSocialWebhookRouter.post("/", async (req: express.Request & { rawBody?: Buffer }, res) => {
+  const secret = process.env.META_APP_SECRET?.trim();
+  if (!secret || !verifyMetaSignature(req.rawBody, req.header("x-hub-signature-256"), secret)) {
+    console.warn(`[social-webhook] rejected: ${!secret ? "META_APP_SECRET is not set" : "signature mismatch (check META_APP_SECRET)"}`);
+    return res.sendStatus(401);
+  }
+  // نرد على Meta على طول (لازم في ثواني) وبعدين نسجّل
+  res.sendStatus(200);
+  try {
+    await socialInboxService.handleWebhook(req.body);
+  } catch (err) {
+    console.warn(`[social-webhook] processing failed: ${(err as Error)?.message}`);
+  }
 });

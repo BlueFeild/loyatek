@@ -20,6 +20,8 @@ const KIND_GUIDE: Record<CopyBrief["kind"], string> = {
   sms: "an SMS marketing message. HARD LIMIT: 70 characters for Arabic or 160 for English (one SMS segment), including the call to action. No hashtags and no emojis.",
   whatsapp:
     "a WhatsApp marketing message: a friendly greeting, the offer in 2-3 short lines and a call to action. Light emoji use. No hashtags.",
+  reply:
+    "a reply from the business to a customer's comment or direct message on social media (the topic is what the customer wrote). Warm, polite and short (1-3 lines), in the same language as the customer when possible; answer only with the facts given, otherwise invite them to message the business privately. Thank them for kind words. Never argue. No hashtags.",
 };
 
 export const COPYWRITER_SYSTEM = `You are a senior marketing copywriter for businesses in Qatar and the Gulf.

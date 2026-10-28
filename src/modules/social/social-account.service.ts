@@ -40,6 +40,12 @@ export class SocialAccountService {
       userId,
       found.map((a) => ({ ...a, accessToken: encryptToken(a.accessToken) }))
     );
+    // التعليقات والرسايل الجديدة توصل لوحدها (لو فشل، زرار "Check for new" بيجيبها)
+    if (this.meta.subscribePage) {
+      for (const p of found.filter((a) => a.platform === "FACEBOOK")) {
+        await this.meta.subscribePage(p.externalId, p.accessToken).catch((err) => console.warn(`[social] subscribing page ${p.externalId} to webhooks failed: ${(err as Error).message}`));
+      }
+    }
     const accounts = await this.store.listAccounts(tenantId);
     const hasInstagram = found.some((a) => a.platform === "INSTAGRAM");
     return {

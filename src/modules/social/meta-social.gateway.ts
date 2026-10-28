@@ -2,10 +2,14 @@ import { graphBase } from "../whatsapp/whatsapp.service";
 import {
   SocialPlatformError,
   type DiscoveredAccount,
+  type InboxAccount,
+  type InboxEvent,
   type MetaAccountConnector,
   type PublishAccount,
   type PublishContent,
   type PublishResult,
+  type RecentInbox,
+  type SocialInboxGateway,
   type SocialPublisher,
 } from "./social-types";
 
@@ -21,7 +25,7 @@ export interface MetaSocialOptions {
   maxWaitMs?: number;
 }
 
-export class MetaSocialGateway implements MetaAccountConnector, SocialPublisher {
+export class MetaSocialGateway implements MetaAccountConnector, SocialPublisher, SocialInboxGateway {
   private readonly pollMs: number;
   private readonly maxWaitMs: number;
 
@@ -152,6 +156,142 @@ export class MetaSocialGateway implements MetaAccountConnector, SocialPublisher 
       // البوست نزل خلاص - اللينك مش ضروري
     }
     return { externalPostId: mediaId, permalink };
+  }
+
+  // ---------- صندوق التعليقات والرسايل ----------
+
+  // الصفحة لازم "تشترك" في تطبيقنا عشان Meta تبعت تعليقاتها ورسايلها على الـ webhook
+  async subscribePage(pageId: string, pageToken: string): Promise<void> {
+    await this.graph(`/${pageId}/subscribed_apps`, { method: "POST", token: pageToken, body: { subscribed_fields: "feed,messages" } });
+  }
+
+  async replyToComment(a: InboxAccount, commentId: string, text: string) {
+    // فيسبوك: تعليق على التعليق. انستجرام: endpoint اسمه replies
+    const path = a.platform === "INSTAGRAM" ? `/${commentId}/replies` : `/${commentId}/comments`;
+    const r = await this.graph(path, { method: "POST", token: a.accessToken, body: { message: text } });
+    return { id: String(r.id) };
+  }
+
+  async sendDirectMessage(a: InboxAccount, recipientId: string, text: string) {
+    // رسايل انستجرام بتتبعت عن طريق صفحة فيسبوك المربوطة بيه
+    const pageId = a.platform === "INSTAGRAM" ? a.parentId : a.externalId;
+    if (!pageId) throw new SocialPlatformError("This Instagram account isn't linked to a Facebook Page — connect it again.");
+    const r = await this.graph(`/${pageId}/messages`, {
+      method: "POST",
+      token: a.accessToken,
+      body: { recipient: { id: recipientId }, messaging_type: "RESPONSE", message: { text } },
+    });
+    return { id: String(r.message_id ?? r.id) };
+  }
+
+  async lookupName(a: InboxAccount, userId: string): Promise<string | null> {
+    const fields = a.platform === "INSTAGRAM" ? "name,username" : "name";
+    const r = await this.graph(`/${encodeURIComponent(userId)}?fields=${fields}`, { token: a.accessToken });
+    const name = (a.platform === "INSTAGRAM" ? r.username ?? r.name : r.name) as unknown;
+    return typeof name === "string" && name ? name : null;
+  }
+
+  async fetchRecent(a: InboxAccount): Promise<RecentInbox> {
+    if (a.platform !== "FACEBOOK" && a.platform !== "INSTAGRAM") return { events: [], warnings: [] };
+    const parts = a.platform === "FACEBOOK" ? [this.fbComments(a), this.conversations(a, a.externalId, "messenger")] : [this.igComments(a), this.conversations(a, a.parentId, "instagram")];
+    const results = await Promise.allSettled(parts);
+    const ok = results.filter((r): r is PromiseFulfilledResult<InboxEvent[]> => r.status === "fulfilled");
+    // جزء فشل (صلاحية الرسايل لسه مش متاحة مثلًا) مايوقفش الباقي
+    if (ok.length === 0) throw (results[0] as PromiseRejectedResult).reason;
+    const warnings = results.filter((r): r is PromiseRejectedResult => r.status === "rejected").map((r) => (r.reason instanceof Error ? r.reason.message : "failed"));
+    return { events: ok.flatMap((r) => r.value), warnings };
+  }
+
+  private async fbComments(a: InboxAccount): Promise<InboxEvent[]> {
+    const posts = await this.graph(`/${a.externalId}/posts?fields=id,message&limit=10`, { token: a.accessToken });
+    const out: InboxEvent[] = [];
+    for (const p of Array.isArray(posts.data) ? posts.data : []) {
+      const fields = encodeURIComponent("id,message,from{id,name},created_time,parent{id}");
+      const r = await this.graph(`/${p.id}/comments?fields=${fields}&filter=stream&limit=50`, { token: a.accessToken });
+      for (const c of Array.isArray(r.data) ? r.data : []) {
+        if (!c?.id || !c.message) continue;
+        const parent = c.parent?.id ? String(c.parent.id) : null;
+        out.push({
+          platform: "FACEBOOK",
+          accountExternalId: a.externalId,
+          kind: "COMMENT",
+          direction: c.from?.id === a.externalId ? "OUT" : "IN",
+          externalId: String(c.id),
+          threadKey: parent ?? String(c.id),
+          parentExternalId: parent,
+          postExternalId: String(p.id),
+          postCaption: typeof p.message === "string" ? p.message.slice(0, 500) : null,
+          authorId: c.from?.id ?? null,
+          authorName: c.from?.name ?? null,
+          text: String(c.message),
+          createdAt: new Date(c.created_time ?? Date.now()),
+        });
+      }
+    }
+    return out;
+  }
+
+  private async igComments(a: InboxAccount): Promise<InboxEvent[]> {
+    const media = await this.graph(`/${a.externalId}/media?fields=id,caption&limit=10`, { token: a.accessToken });
+    const out: InboxEvent[] = [];
+    const one = (c: any, mediaId: string, caption: string | null, parent: string | null): InboxEvent => ({
+      platform: "INSTAGRAM",
+      accountExternalId: a.externalId,
+      kind: "COMMENT",
+      direction: c.from?.id === a.externalId ? "OUT" : "IN",
+      externalId: String(c.id),
+      threadKey: parent ?? String(c.id),
+      parentExternalId: parent,
+      postExternalId: mediaId,
+      postCaption: caption,
+      authorId: c.from?.id ?? null,
+      authorName: c.username ?? c.from?.username ?? null,
+      text: String(c.text),
+      createdAt: new Date(c.timestamp ?? Date.now()),
+    });
+    for (const m of Array.isArray(media.data) ? media.data : []) {
+      const caption = typeof m.caption === "string" ? m.caption.slice(0, 500) : null;
+      const fields = encodeURIComponent("id,text,username,from{id,username},timestamp,replies{id,text,username,from{id,username},timestamp}");
+      const r = await this.graph(`/${m.id}/comments?fields=${fields}&limit=50`, { token: a.accessToken });
+      for (const c of Array.isArray(r.data) ? r.data : []) {
+        if (!c?.id || !c.text) continue;
+        out.push(one(c, String(m.id), caption, null));
+        for (const rep of Array.isArray(c.replies?.data) ? c.replies.data : []) if (rep?.id && rep.text) out.push(one(rep, String(m.id), caption, String(c.id)));
+      }
+    }
+    return out;
+  }
+
+  private async conversations(a: InboxAccount, pageId: string | null, platform: "messenger" | "instagram"): Promise<InboxEvent[]> {
+    if (!pageId) return [];
+    const fields = encodeURIComponent("participants,messages.limit(20){id,message,from,created_time}");
+    const r = await this.graph(`/${pageId}/conversations?platform=${platform}&fields=${fields}&limit=20`, { token: a.accessToken });
+    const out: InboxEvent[] = [];
+    for (const conv of Array.isArray(r.data) ? r.data : []) {
+      const people: any[] = Array.isArray(conv.participants?.data) ? conv.participants.data : [];
+      const customer = people.find((p) => p?.id && p.id !== a.externalId && p.id !== pageId);
+      if (!customer) continue;
+      for (const m of Array.isArray(conv.messages?.data) ? conv.messages.data : []) {
+        if (!m?.id || !m.message) continue;
+        const fromUs = m.from?.id === a.externalId || m.from?.id === pageId;
+        out.push({
+          platform: a.platform === "INSTAGRAM" ? "INSTAGRAM" : "FACEBOOK",
+          accountExternalId: a.externalId,
+          kind: "DM",
+          direction: fromUs ? "OUT" : "IN",
+          externalId: String(m.id),
+          threadKey: String(customer.id),
+          parentExternalId: null,
+          postExternalId: null,
+          postCaption: null,
+          authorId: m.from?.id ?? null,
+          authorName: fromUs ? null : (customer.name ?? customer.username ?? m.from?.name ?? m.from?.username ?? null),
+          text: String(m.message),
+          createdAt: new Date(m.created_time ?? Date.now()),
+        });
+      }
+    }
+    return out;
   }
 
   // انستجرام بيجهّز الملف الأول (الفيديو ممكن ياخد دقيقة أو اتنين)

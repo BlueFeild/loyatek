@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 // "عقد" مولّد النصوص: أي مزوّد (Claude أو غيره) بيطبّقه، والخدمة مابتعرفش مين
-export const COPY_KINDS = ["caption", "ad", "product", "hashtags", "sms", "whatsapp"] as const;
+export const COPY_KINDS = ["caption", "ad", "product", "hashtags", "sms", "whatsapp", "reply"] as const;
 export const DIALECTS = ["qatari", "gulf", "msa", "egyptian", "english"] as const;
 export const TONES = ["friendly", "luxury", "playful", "professional", "urgent"] as const;
 export const PLATFORMS = ["instagram", "tiktok", "snapchat", "x", "facebook", "any"] as const;

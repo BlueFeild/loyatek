@@ -19,6 +19,8 @@ import { PrismaSocialRepository } from "../modules/social/social.repository";
 import { MetaSocialGateway } from "../modules/social/meta-social.gateway";
 import { SocialAccountService } from "../modules/social/social-account.service";
 import { SocialPostService } from "../modules/social/social-post.service";
+import { PrismaInboxRepository } from "../modules/social/social-inbox.repository";
+import { SocialInboxService } from "../modules/social/social-inbox.service";
 
 // المكان الوحيد اللي بيقرر "مين بيكلم مين" (Composition Root).
 // الخدمات بتاخد اللي محتاجاه من برّه، فسهل نغيّر مزوّد أو نختبر بنسخة وهمية
@@ -54,4 +56,5 @@ export const container = {
   campaignSender: new CampaignSender(new PrismaCampaignRepository(prisma), new MetaCampaignGateway()),
   socialAccountService: new SocialAccountService(socialStore, metaSocial),
   socialPostService: new SocialPostService(socialStore, metaSocial, publicApiBaseUrl),
+  socialInboxService: new SocialInboxService(new PrismaInboxRepository(prisma), metaSocial, { generator: providers.copy, credits: creditService, generations, profiles }),
 };
