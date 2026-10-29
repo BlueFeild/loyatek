@@ -383,16 +383,28 @@ describe("MetaSocialGateway (request shapes)", () => {
     await expect(g.publish({ platform: "FACEBOOK", externalId: "p2", accessToken: "tok" }, { caption: "hi", media: null })).rejects.toMatchObject({ needsReconnect: true });
   });
 
-  it("discoverAccounts returns pages and their Instagram accounts", async () => {
-    mockGraph((_m, path) => {
+  it("discoverAccounts swaps the browser token for a long one, then returns pages and their Instagram accounts", async () => {
+    process.env.META_APP_ID = "app1";
+    process.env.META_APP_SECRET = "secret1";
+    const calls = mockGraph((_m, path) => {
+      if (path.startsWith("/oauth/access_token")) return path.includes("fb_exchange_token=user-token") ? { access_token: "long-token", expires_in: 5184000 } : { error: { message: "bad" } };
       if (path.startsWith("/me/accounts")) {
         return { data: [{ id: "p1", name: "Cafe", access_token: "PT", instagram_business_account: { id: "ig1", username: "cafe.qa" } }, { id: "p2", name: "Other", access_token: "PT2" }] };
       }
       return { error: { message: "no" } };
     });
-    const list = await new MetaSocialGateway().discoverAccounts({ accessToken: "user-token" });
-    expect(list.map((a) => `${a.platform}:${a.externalId}:${a.parentId ?? ""}`)).toEqual(["FACEBOOK:p1:", "INSTAGRAM:ig1:p1", "FACEBOOK:p2:"]);
-    expect(list[1].accessToken).toBe("PT");
+    try {
+      const c = await new MetaSocialGateway().connect({ accessToken: "user-token" });
+      expect(c.accounts.map((a) => `${a.platform}:${a.externalId}:${a.parentId ?? ""}`)).toEqual(["FACEBOOK:p1:", "INSTAGRAM:ig1:p1", "FACEBOOK:p2:"]);
+      expect(c.accounts[1].accessToken).toBe("PT");
+      expect(c.userToken).toBe("long-token");
+      expect(calls.filter((x) => x.path.startsWith("/me/accounts")).map((x) => x.auth)).toEqual(["Bearer long-token"]);
+      // توكن من تطبيق تاني (التبديل بسرّنا فشل) → مرفوض
+      await expect(new MetaSocialGateway().connect({ accessToken: "foreign-token" })).rejects.toThrow(/didn't accept this login/);
+    } finally {
+      delete process.env.META_APP_ID;
+      delete process.env.META_APP_SECRET;
+    }
   });
 });
 

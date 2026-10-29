@@ -64,8 +64,12 @@ export class MetaSocialGateway implements MetaAccountConnector, SocialPublisher,
         if (typeof r.access_token === "string") userToken = r.access_token;
         if (Number(r.expires_in) > 0) userTokenExpiresAt = new Date(Date.now() + Number(r.expires_in) * 1000);
       } catch (err) {
+        // توكن جاي من الشاشة: التبديل بسر تطبيقنا هو اللي بيثبت إنه طالع لتطبيقنا (مش من تطبيق تاني) → لازم ينجح
+        if (!("code" in login)) throw new SocialPlatformError(`Facebook didn't accept this login — press Connect again. (${(err as Error).message})`);
         console.warn(`[social] long-lived token exchange skipped: ${(err as Error).message}`);
       }
+    } else if (!("code" in login)) {
+      throw new SocialPlatformError("Facebook login isn't set up on the server yet.");
     }
 
     const fields = "id,name,access_token,picture{url},instagram_business_account{id,username,name,profile_picture_url}";
