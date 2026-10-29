@@ -19,6 +19,10 @@ export function geminiTextModels(env: NodeJS.ProcessEnv = process.env): string[]
   return [...new Set([primary, fallback].filter((m) => m && m !== "none"))];
 }
 
+// نداءات الكتابة: من غير إعادة محاولة جوه المكتبة (كانت بتستنى لحد دقايق - الزرار فضل "Writing…" لايف)
+// ومهلة 40 ثانية. لو الموديل الأساسي زحمة بنروح للبديل بنفسنا (withModelFallback)
+export const GEMINI_TEXT_HTTP = { timeout: 40_000, retryOptions: { attempts: 1 } };
+
 const BUSY = new Set([429, 500, 502, 503, 504]);
 
 // يجرب الموديلات بالترتيب: لو جوجل قالت "زحمة/حد" نروح للي بعده، أي خطأ تاني يطلع على طول

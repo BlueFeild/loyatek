@@ -30,6 +30,10 @@ export function translateGeminiError(err: unknown, what: string): Error {
     console.error(`[ai] Gemini ${what} server error ${status}: ${message}`);
     return new ServiceUnavailableError("Google's AI is very busy right now — please try again in a minute (you were not charged).");
   }
+  if (/abort|timed? ?out|timeout/i.test(message)) {
+    console.error(`[ai] Gemini ${what} timed out: ${message}`);
+    return new ServiceUnavailableError("Google's AI took too long to answer — please try again (you were not charged).");
+  }
   console.error(`[ai] Gemini ${what} call failed:`, err);
   return new ServiceUnavailableError("Couldn't reach the AI service — please try again.");
 }

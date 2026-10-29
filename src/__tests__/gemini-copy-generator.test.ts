@@ -32,6 +32,12 @@ describe("GeminiCopyGenerator", () => {
     expect(seen[0].config).toMatchObject({ responseMimeType: "application/json", responseJsonSchema: { required: ["variants"] } });
     expect(seen[0].config.systemInstruction).toMatch(/Never invent prices/);
     expect(seen[0].contents).toContain("Doha Cafe");
+    // مفيش إعادة محاولة جوه المكتبة (كانت بتعلّق الزرار دقايق) + مهلة
+    expect(seen[0].config.httpOptions).toEqual({ timeout: 40_000, retryOptions: { attempts: 1 } });
+  });
+  it("a timeout becomes a clear message (not charged)", async () => {
+    const gen = new GeminiCopyGenerator(stubClient(async () => { throw new Error("The operation was aborted due to timeout"); }, []), "m");
+    await expect(gen.generate(brief, biz)).rejects.toThrow(/took too long/);
   });
   it("blocked prompt → 422", async () => {
     const gen = new GeminiCopyGenerator(stubClient(async () => ({ promptFeedback: { blockReason: "SAFETY" }, text: undefined }), []), "m");

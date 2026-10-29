@@ -3,7 +3,7 @@ import { AppError } from "../../core/errors";
 import { copyResultSchema, type BusinessContext, type CopyBrief, type CopyGenerator, type CopyResult } from "./copy-generator";
 import { buildCopyPrompt, COPYWRITER_SYSTEM } from "./copywriter.prompts";
 import { COPY_OUTPUT_SCHEMA } from "./copy-output-schema";
-import { defaultGeminiClient, geminiTextModels, withModelFallback } from "./gemini-client";
+import { defaultGeminiClient, GEMINI_TEXT_HTTP, geminiTextModels, withModelFallback } from "./gemini-client";
 import { translateGeminiError } from "./gemini-errors";
 import { parseStructured } from "./structured-output";
 
@@ -28,7 +28,7 @@ export class GeminiCopyGenerator implements CopyGenerator {
         this.client.models.generateContent({
           model,
           contents: buildCopyPrompt(brief, business),
-          config: { systemInstruction: COPYWRITER_SYSTEM, responseMimeType: "application/json", responseJsonSchema: COPY_OUTPUT_SCHEMA },
+          config: { systemInstruction: COPYWRITER_SYSTEM, responseMimeType: "application/json", responseJsonSchema: COPY_OUTPUT_SCHEMA, httpOptions: GEMINI_TEXT_HTTP },
         })
       );
       if (response.promptFeedback?.blockReason) {
