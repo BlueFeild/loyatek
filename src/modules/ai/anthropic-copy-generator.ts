@@ -1,10 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { AppError } from "../../core/errors";
-import { copyResultSchema, type BusinessContext, type CopyBrief, type CopyGenerator, type CopyResult } from "./copy-generator";
+import { AppError, ServiceUnavailableError } from "../../core/errors";
+import { copyResultSchema, sanitizeCopyResult, type BusinessContext, type CopyBrief, type CopyGenerator, type CopyResult } from "./copy-generator";
 import { buildCopyPrompt, COPYWRITER_SYSTEM } from "./copywriter.prompts";
 import { COPY_OUTPUT_SCHEMA } from "./copy-output-schema";
 import { anthropicModel, responseText, translateAnthropicError } from "./anthropic-shared";
-import { parseStructured } from "./structured-output";
+import { parseStructured, UNEXPECTED_AI_ANSWER } from "./structured-output";
 
 // تطبيق CopyGenerator باستخدام Claude. المفتاح ANTHROPIC_API_KEY في Railway Variables بس
 export class AnthropicCopyGenerator implements CopyGenerator {
@@ -33,6 +33,8 @@ export class AnthropicCopyGenerator implements CopyGenerator {
     if (response.stop_reason === "refusal") {
       throw new AppError(422, "AI_REFUSED", "The AI couldn't write this one — please rephrase the topic.");
     }
-    return parseStructured(copyResultSchema, responseText(response));
+    const clean = sanitizeCopyResult(parseStructured(copyResultSchema, responseText(response)));
+    if (!clean) throw new ServiceUnavailableError(UNEXPECTED_AI_ANSWER);
+    return clean;
   }
 }

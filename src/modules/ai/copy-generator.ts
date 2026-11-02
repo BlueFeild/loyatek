@@ -34,3 +34,36 @@ export interface CopyGenerator {
   readonly model: string;
   generate(brief: CopyBrief, business: BusinessContext): Promise<CopyResult>;
 }
+
+// الموديل أحيانًا "بيسرّب" كلام جوه الحقول (اتشاف لايف 2026-11-02 من Gemini: هاشتاج فيه `','#...']}]}```Correcting...`)
+// فبننضّف أي رد قبل ما يوصل للتاجر: النص يتقص عند أول ``` أو بقايا JSON، والهاشتاجات = كلمات بس (#كلمة).
+const LEAK_MARKERS = ["```", "']}", '"]}', "']", "}]}"];
+const HASHTAG_TOKEN = /^[\p{L}\p{N}_]{1,60}$/u;
+
+function cleanCopyText(text: string): string {
+  let out = text;
+  for (const marker of LEAK_MARKERS) {
+    const at = out.indexOf(marker);
+    if (at >= 0) out = out.slice(0, at);
+  }
+  return out.trim();
+}
+
+function cleanHashtags(items: string[]): string[] {
+  const seen = new Set<string>();
+  for (const item of items) {
+    for (const piece of cleanCopyText(item).split(/[\s,'"`\[\]{}()]+/)) {
+      const word = piece.replace(/^#+/, "");
+      if (HASHTAG_TOKEN.test(word)) seen.add(`#${word}`);
+    }
+  }
+  return [...seen].slice(0, 30);
+}
+
+// يرجّع null لو مفيش ولا نسخة سليمة (الخدمة ساعتها بترجّع النقطة وتقول "حاول تاني")
+export function sanitizeCopyResult(result: CopyResult): CopyResult | null {
+  const variants = result.variants
+    .map((v) => ({ text: cleanCopyText(v.text), hashtags: cleanHashtags(v.hashtags) }))
+    .filter((v) => v.text.length > 0);
+  return variants.length ? { variants } : null;
+}

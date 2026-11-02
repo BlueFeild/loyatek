@@ -1,11 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
-import { AppError } from "../../core/errors";
-import { copyResultSchema, type BusinessContext, type CopyBrief, type CopyGenerator, type CopyResult } from "./copy-generator";
+import { AppError, ServiceUnavailableError } from "../../core/errors";
+import { copyResultSchema, sanitizeCopyResult, type BusinessContext, type CopyBrief, type CopyGenerator, type CopyResult } from "./copy-generator";
 import { buildCopyPrompt, COPYWRITER_SYSTEM } from "./copywriter.prompts";
 import { COPY_OUTPUT_SCHEMA } from "./copy-output-schema";
 import { defaultGeminiClient, GEMINI_TEXT_HTTP, geminiTextModels, withModelFallback } from "./gemini-client";
 import { translateGeminiError } from "./gemini-errors";
-import { parseStructured } from "./structured-output";
+import { parseStructured, UNEXPECTED_AI_ANSWER } from "./structured-output";
 
 // بديل مجاني/أرخص: Google Gemini (المفتاح GEMINI_API_KEY في Railway Variables بس).
 // ملحوظة: في باقة Gemini المجانية جوجل ممكن تستخدم البيانات لتحسين خدماتها - للتجربة بس
@@ -39,6 +39,8 @@ export class GeminiCopyGenerator implements CopyGenerator {
       throw translateGeminiError(err, "writing");
     }
 
-    return parseStructured(copyResultSchema, text);
+    const clean = sanitizeCopyResult(parseStructured(copyResultSchema, text));
+    if (!clean) throw new ServiceUnavailableError(UNEXPECTED_AI_ANSWER);
+    return clean;
   }
 }
