@@ -35,11 +35,18 @@ import {
   type StoredCard,
 } from "./rich-templates";
 import { embeddedSignupConfig, exchangeSignupCode, findWabaPhoneNumber, registerPhoneNumber, subscribeAppToWaba } from "./embedded-signup";
+import { contactBookRouter } from "./contact-book.routes";
+import { PrismaContactBookRepository } from "./contact-book.repository";
+import { normalizePhone, normalizeTags } from "./contact-book.service";
+import { summarizeCampaign } from "./campaign-report";
 import { BOOKING_TEMPLATE_PURPOSES, ensureBookingTemplates, getApprovedBookingTemplate, type BookingTemplatePurpose } from "./booking-templates";
 
 export const whatsappRouter = Router();
 
 whatsappRouter.use(requireAuth);
+
+// دفتر جهات الاتصال (تاجز + إلغاء اشتراك) - /api/whatsapp/contact-book
+whatsappRouter.use("/contact-book", contactBookRouter);
 
 // --- Settings (ربط حساب Meta الحقيقي) ---
 
@@ -512,7 +519,10 @@ whatsappRouter.get("/campaigns", async (req, res) => {
     prisma.whatsappCampaign.findMany({
       where: { tenantId },
       orderBy: { createdAt: "desc" },
-      select: { id: true, tenantId: true, name: true, segmentDesc: true, templateText: true, status: true, kind: true, templateId: true, sentCount: true, failedCount: true, createdAt: true },
+      select: {
+        id: true, tenantId: true, name: true, segmentDesc: true, templateText: true, status: true, kind: true, templateId: true, sentCount: true, failedCount: true,
+        scheduledAt: true, audienceTags: true, audienceMatch: true, skippedCount: true, lastError: true, createdAt: true,
+      },
     }),
     prisma.$queryRaw<{ id: string; recipientCount: number; hasAudio: boolean }[]>`
       SELECT "id", COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof("recipients") = 'array' THEN "recipients" ELSE '[]'::jsonb END), 0)::int AS "recipientCount",
@@ -520,7 +530,19 @@ whatsappRouter.get("/campaigns", async (req, res) => {
       FROM "whatsapp_campaigns" WHERE "tenantId" = ${tenantId}`,
   ]);
   const byId = new Map(counts.map((c) => [c.id, c]));
-  res.json(campaigns.map((c) => ({ ...c, recipientCount: byId.get(c.id)?.recipientCount ?? 0, hasAudio: byId.get(c.id)?.hasAudio ?? false })));
+  // جمهور بالتاجز: العدد = المشتركين اللي عليهم التاجز دلوقتي
+  const tagCounts = new Map<string, number>();
+  for (const c of campaigns) {
+    if (c.audienceTags.length > 0) tagCounts.set(c.id, (await container.contactBookService.audienceCount(tenantId, c.audienceTags, c.audienceMatch === "all" ? "all" : "any")).count);
+  }
+  res.json(
+    campaigns.map((c) => ({
+      ...c,
+      audienceSource: c.audienceTags.length > 0 ? "tags" : "excel",
+      recipientCount: tagCounts.get(c.id) ?? byId.get(c.id)?.recipientCount ?? 0,
+      hasAudio: byId.get(c.id)?.hasAudio ?? false,
+    }))
+  );
 });
 
 const createCampaignSchema = z.object({
@@ -620,9 +642,16 @@ whatsappRouter.post("/campaigns/:id/recipients/upload", requireRole("OWNER", "AD
   // مش وقت الإرسال (القفل بيمنع إن قايمة جديدة تتحط وحملة بتتبعت)
   const updated = await prisma.whatsappCampaign.updateMany({
     where: { id: campaign.id, status: { not: "SENDING" } },
-    data: { recipients, sentCount: 0, failedCount: 0, status: "DRAFT" },
+    data: { recipients, sentCount: 0, failedCount: 0, skippedCount: 0, status: "DRAFT", audienceTags: [], scheduledAt: null, lastError: null },
   });
   if (updated.count === 0) return res.status(409).json({ error: "This campaign is being sent right now — wait until it finishes." });
+  // الأرقام دي بتتحفظ في دفتر جهات الاتصال كمان (عشان تتقسم بالتاجز بعد كده)
+  const book: { phone: string; name: string | null }[] = [];
+  for (const r of recipients as { phone: string; name: string }[]) {
+    const phone = normalizePhone(r.phone);
+    if (phone) book.push({ phone, name: r.name && r.name !== "Customer" ? r.name : null });
+  }
+  await new PrismaContactBookRepository(prisma).upsertMany(req.auth!.tenantId, book, "campaign").catch(() => {});
   res.json({ ok: true, recipientCount: recipients.length });
 });
 
@@ -630,10 +659,18 @@ whatsappRouter.post("/campaigns/:id/recipients/upload", requireRole("OWNER", "AD
 whatsappRouter.get("/campaigns/:id/estimate", async (req, res) => {
   const campaign = await prisma.whatsappCampaign.findFirst({
     where: { id: req.params.id, tenantId: req.auth!.tenantId },
-    select: { recipients: true, template: { select: { status: true, category: true } } },
+    select: { recipients: true, audienceTags: true, audienceMatch: true, template: { select: { status: true, category: true } } },
   });
   if (!campaign) return res.status(404).json({ error: "Campaign not found" });
-  const recipients = Array.isArray(campaign.recipients) ? (campaign.recipients as { phone: string }[]) : [];
+  const recipients =
+    campaign.audienceTags.length > 0
+      ? await prisma.whatsappContact.findMany({
+          where: { tenantId: req.auth!.tenantId, optedOut: false, tags: campaign.audienceMatch === "all" ? { hasEvery: campaign.audienceTags } : { hasSome: campaign.audienceTags } },
+          select: { phone: true },
+        })
+      : Array.isArray(campaign.recipients)
+        ? (campaign.recipients as { phone: string }[])
+        : [];
   // من غير قالب معتمد بنبعت hello_world وده UTILITY
   const category = categoryForTemplate(campaign.template?.status === "APPROVED" ? campaign.template.category : "UTILITY");
   const estimator = await container.metaRatesService.estimator();
@@ -644,6 +681,59 @@ whatsappRouter.get("/campaigns/:id/estimate", async (req, res) => {
 // الشاشة بتحدّث القايمة كل شوية لحد ما الحالة تبقى SENT / FAILED
 whatsappRouter.post("/campaigns/:id/send", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   res.status(202).json(await container.campaignSender.start(req.auth!.tenantId, req.params.id));
+});
+
+// الجمهور: ملف الإكسل، أو المشتركين في دفتر جهات الاتصال اللي عليهم تاجز معينة
+const audienceSchema = z.object({ source: z.enum(["excel", "tags"]), tags: z.array(z.string().max(60)).max(20).optional(), match: z.enum(["any", "all"]).optional() });
+
+whatsappRouter.patch("/campaigns/:id/audience", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  const parsed = audienceSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Choose the Excel list or at least one tag." });
+  const tags = parsed.data.source === "tags" ? normalizeTags(parsed.data.tags ?? []) : [];
+  if (parsed.data.source === "tags" && tags.length === 0) return res.status(400).json({ error: "Pick at least one tag." });
+  const match = parsed.data.match ?? "any";
+  // حملة اتبعتت ترجع مسودة بالجمهور الجديد (عشان تتبعت تاني لناس تانيين)
+  const r = await prisma.whatsappCampaign.updateMany({
+    where: { id: req.params.id, tenantId: req.auth!.tenantId, status: { not: "SENDING" } },
+    data: { audienceTags: tags, audienceMatch: match, status: "DRAFT", scheduledAt: null, sentCount: 0, failedCount: 0, skippedCount: 0, lastError: null },
+  });
+  if (r.count === 0) return res.status(409).json({ error: "Campaign not found or being sent right now." });
+  const count = tags.length ? (await container.contactBookService.audienceCount(req.auth!.tenantId, tags, match)).count : null;
+  res.json({ ok: true, audienceTags: tags, audienceMatch: match, recipientCount: count });
+});
+
+const scheduleSchema = z.object({ scheduledAt: z.string().datetime({ offset: true }) });
+
+whatsappRouter.post("/campaigns/:id/schedule", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  const parsed = scheduleSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Pick a date and time." });
+  res.json(await container.campaignSender.schedule(req.auth!.tenantId, req.params.id, new Date(parsed.data.scheduledAt)));
+});
+
+whatsappRouter.post("/campaigns/:id/unschedule", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  res.json(await container.campaignSender.unschedule(req.auth!.tenantId, req.params.id));
+});
+
+// تقرير الحملة: اتبعت / اتسلّم / اتقرا / فشل / رد (من حالات Meta على الـ webhook)
+whatsappRouter.get("/campaigns/:id/report", async (req, res) => {
+  const tenantId = req.auth!.tenantId;
+  const campaign = await prisma.whatsappCampaign.findFirst({ where: { id: req.params.id, tenantId }, select: { id: true, skippedCount: true } });
+  if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+  const messages = await prisma.whatsappMessage.findMany({
+    where: { tenantId, campaignId: campaign.id, direction: "OUT" },
+    orderBy: { createdAt: "asc" },
+    select: { contactPhone: true, contactName: true, status: true, error: true, createdAt: true },
+  });
+  const firstReplyAt = new Map<string, Date>();
+  if (messages.length > 0) {
+    const replies = await prisma.whatsappMessage.findMany({
+      where: { tenantId, direction: "IN", contactPhone: { in: [...new Set(messages.map((m) => m.contactPhone))] }, createdAt: { gte: messages[0].createdAt } },
+      orderBy: { createdAt: "asc" },
+      select: { contactPhone: true, createdAt: true },
+    });
+    for (const r of replies) if (!firstReplyAt.has(r.contactPhone)) firstReplyAt.set(r.contactPhone, r.createdAt);
+  }
+  res.json(summarizeCampaign(messages, firstReplyAt, campaign.skippedCount));
 });
 
 // --- Message Templates (قوالب رسائل حقيقية بترفع لـ Meta للموافقة) ---

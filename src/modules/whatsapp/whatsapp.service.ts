@@ -163,6 +163,7 @@ export async function recordWhatsappMessage(input: {
   waMessageId?: string | null;
   status?: string;
   error?: string | null;
+  campaignId?: string | null;
 }) {
   const data = {
     tenantId: input.tenantId,
@@ -174,6 +175,7 @@ export async function recordWhatsappMessage(input: {
     waMessageId: input.waMessageId || null,
     status: input.status ?? (input.direction === "IN" ? "received" : "sent"),
     error: input.error ?? null,
+    campaignId: input.campaignId ?? null,
   };
   try {
     if (data.waMessageId) {

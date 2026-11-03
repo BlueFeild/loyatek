@@ -7,9 +7,15 @@ export const CAMPAIGN_LIMITS = {
   concurrency: 5, // كام رسالة في نفس الوقت (Meta بتحدد معدل الإرسال)
   progressEvery: 10, // نحدّث العدّاد في قاعدة البيانات كل كام رسالة
   staleAfterMs: 15 * 60_000, // حملة SENDING من غير أي تقدم المدة دي ← FAILED (تتبعت تاني)
+  minScheduleAheadMs: 60_000, // الجدولة لازم تكون بعد دقيقة على الأقل
+  maxScheduleAheadMs: 90 * 24 * 3600_000, // ولحد 90 يوم
+  dueBatch: 20, // كام حملة مجدولة نبدأها في كل لفّة
 };
 
 type Recipient = { phone: string; name: string };
+
+// كل اللي اتجهّز قبل الإرسال (نفس الفحوصات للإرسال دلوقتي وللجدولة)
+type Checked = { conn: MetaConnection; campaign: CampaignForSend; tpl: CampaignTemplate | null; vars: number; recipients: Recipient[]; skipped: number };
 
 // خطة الإرسال بعد التحضير: إزاي نبعت لكل مستلم
 type Plan =
@@ -21,24 +27,18 @@ type Plan =
 // والعدّاد بيتحدث كل شوية، والحالة النهائية SENT (أو FAILED لو كله فشل)
 export class CampaignSender {
   private readonly running = new Map<string, Promise<void>>();
+  private readonly limits: typeof CAMPAIGN_LIMITS;
 
   constructor(
     private readonly store: CampaignStore,
     private readonly gateway: CampaignGateway,
-    private readonly limits = CAMPAIGN_LIMITS
-  ) {}
+    limits: Partial<typeof CAMPAIGN_LIMITS> = {}
+  ) {
+    this.limits = { ...CAMPAIGN_LIMITS, ...limits };
+  }
 
   async start(tenantId: string, campaignId: string) {
-    const conn = await this.store.connection(tenantId);
-    if (!conn) throw new ValidationError("Connect a real Meta WhatsApp Business API account in Settings before sending campaigns.");
-    const campaign = await this.store.findForSend(tenantId, campaignId);
-    if (!campaign) throw new NotFoundError("Campaign not found");
-    if (campaign.recipients.length === 0) throw new ValidationError("Upload a recipient list (Excel file) before sending this campaign.");
-    if (campaign.kind === "VOICE" && !campaign.audioBase64) throw new ValidationError("This voice campaign has no recording attached.");
-    const tpl = campaign.kind === "TEXT" ? await this.approvedTemplate(conn, campaign) : null;
-    const vars = tpl ? templateVarCount(tpl.bodyText) : 0;
-    // {{1}} بيتملا باسم العميل من ملف الإكسل - أكتر من فراغ واحد مش مدعوم في الحملات
-    if (vars > 1) throw new ValidationError(`This template has ${vars} blanks — campaigns can fill only {{1}} (the customer's name). Use a template with at most one blank.`);
+    const { conn, campaign, tpl, vars, recipients, skipped } = await this.check(tenantId, campaignId);
 
     if (!(await this.store.claim(tenantId, campaign.id))) {
       throw new AppError(409, "CAMPAIGN_BUSY", "This campaign is already being sent or was already sent. Upload a new recipient list to send it again.");
@@ -51,11 +51,72 @@ export class CampaignSender {
       throw err;
     }
 
-    const work = this.deliver(conn, campaign, plan)
+    const work = this.deliver(conn, { ...campaign, recipients }, plan, skipped)
       .catch((err) => console.error(`[whatsapp] campaign ${campaign.id} crashed:`, err))
       .finally(() => this.running.delete(campaign.id));
     this.running.set(campaign.id, work);
-    return { ok: true as const, status: "SENDING" as const, total: campaign.recipients.length };
+    return { ok: true as const, status: "SENDING" as const, total: recipients.length, skipped };
+  }
+
+  // جدولة: نفس فحوصات الإرسال دلوقتي (عشان التاجر يعرف المشكلة قبل الميعاد مش بعده)
+  async schedule(tenantId: string, campaignId: string, at: Date, now = new Date()) {
+    const ahead = at.getTime() - now.getTime();
+    if (!Number.isFinite(ahead) || ahead < this.limits.minScheduleAheadMs) throw new ValidationError("Pick a time at least 1 minute from now.");
+    if (ahead > this.limits.maxScheduleAheadMs) throw new ValidationError("Campaigns can be scheduled up to 90 days ahead.");
+    const { recipients, skipped } = await this.check(tenantId, campaignId);
+    if (!(await this.store.schedule(tenantId, campaignId, at))) {
+      throw new AppError(409, "CAMPAIGN_BUSY", "This campaign is being sent or was already sent — it can't be scheduled.");
+    }
+    return { ok: true as const, status: "SCHEDULED" as const, scheduledAt: at.toISOString(), total: recipients.length, skipped };
+  }
+
+  async unschedule(tenantId: string, campaignId: string) {
+    if (!(await this.store.unschedule(tenantId, campaignId))) throw new AppError(409, "NOT_SCHEDULED", "This campaign isn't scheduled (it may already be sending).");
+    return { ok: true as const, status: "DRAFT" as const };
+  }
+
+  // كل دقيقة (jobs/campaign-scheduler.ts): الحملات اللي جه ميعادها تبدأ. لو فشلت (القالب اترفض،
+  // الربط اتشال، كل الناس ألغت الاشتراك) ← FAILED والسبب يبان للتاجر
+  async runDue(now = new Date()) {
+    const due = await this.store.dueScheduled(now, this.limits.dueBatch);
+    let started = 0;
+    let failed = 0;
+    for (const d of due) {
+      try {
+        await this.start(d.tenantId, d.id);
+        started++;
+      } catch (err) {
+        if (err instanceof AppError && err.code === "CAMPAIGN_BUSY") continue; // حد بدأها في نفس اللحظة
+        failed++;
+        await this.store.markFailed(d.id, err instanceof Error ? err.message : "Couldn't start the scheduled campaign");
+      }
+    }
+    return { started, failed };
+  }
+
+  // الفحوصات + الجمهور النهائي (من غير اللي ألغوا الاشتراك ومن غير تكرار)
+  private async check(tenantId: string, campaignId: string): Promise<Checked> {
+    const conn = await this.store.connection(tenantId);
+    if (!conn) throw new ValidationError("Connect a real Meta WhatsApp Business API account in Settings before sending campaigns.");
+    const campaign = await this.store.findForSend(tenantId, campaignId);
+    if (!campaign) throw new NotFoundError("Campaign not found");
+    const fromBook = campaign.audienceTags.length > 0;
+    const listed = fromBook ? await this.store.audience(tenantId, campaign.audienceTags, campaign.audienceMatch) : campaign.recipients;
+    if (listed.length === 0) {
+      throw new ValidationError(fromBook ? "No subscribed contacts have these tags yet — add contacts or pick other tags." : "Upload a recipient list (Excel file) or pick contact tags before sending this campaign.");
+    }
+    const unique = new Map<string, Recipient>();
+    for (const r of listed) if (r.phone && !unique.has(r.phone)) unique.set(r.phone, r);
+    const optedOut = await this.store.optedOutAmong(tenantId, [...unique.keys()]);
+    const recipients = [...unique.values()].filter((r) => !optedOut.has(r.phone));
+    const skipped = listed.length - recipients.length;
+    if (recipients.length === 0) throw new ValidationError("Everyone on this list has unsubscribed (replied STOP) — there's nobody left to send to.");
+    if (campaign.kind === "VOICE" && !campaign.audioBase64) throw new ValidationError("This voice campaign has no recording attached.");
+    const tpl = campaign.kind === "TEXT" ? await this.approvedTemplate(conn, campaign) : null;
+    const vars = tpl ? templateVarCount(tpl.bodyText) : 0;
+    // {{1}} بيتملا باسم العميل - أكتر من فراغ واحد مش مدعوم في الحملات
+    if (vars > 1) throw new ValidationError(`This template has ${vars} blanks — campaigns can fill only {{1}} (the customer's name). Use a template with at most one blank.`);
+    return { conn, campaign, tpl, vars, recipients, skipped };
   }
 
   // قبل عرض الحملات: اللي علّقت (السيرفر اتعاد تشغيله وهي بتتبعت) ← FAILED
@@ -100,7 +161,7 @@ export class CampaignSender {
     return { kind: "TEXT", tpl, vars, mediaIds };
   }
 
-  private async deliver(conn: MetaConnection, campaign: CampaignForSend, plan: Plan) {
+  private async deliver(conn: MetaConnection, campaign: CampaignForSend, plan: Plan, skipped: number) {
     let sent = 0;
     let failed = 0;
     let done = 0;
@@ -114,7 +175,7 @@ export class CampaignSender {
       await runPool(campaign.recipients, this.limits.concurrency, async (r) => {
         let ok = false;
         try {
-          ok = await this.sendOne(conn, campaign.tenantId, r, plan);
+          ok = await this.sendOne(conn, campaign.tenantId, campaign.id, r, plan);
         } catch (err) {
           console.error(`[whatsapp] campaign ${campaign.id} → ${r.phone}:`, err);
         }
@@ -124,11 +185,11 @@ export class CampaignSender {
       });
     } finally {
       await saving;
-      await this.store.finish(campaign.id, sent === 0 && failed > 0 ? "FAILED" : "SENT", sent, failed);
+      await this.store.finish(campaign.id, sent === 0 && failed > 0 ? "FAILED" : "SENT", sent, failed, skipped);
     }
   }
 
-  private async sendOne(conn: MetaConnection, tenantId: string, r: Recipient, plan: Plan): Promise<boolean> {
+  private async sendOne(conn: MetaConnection, tenantId: string, campaignId: string, r: Recipient, plan: Plan): Promise<boolean> {
     if (plan.kind === "VOICE") {
       // واتساب مايسمحش بصوت حر إلا للي كلّم الحساب في آخر 24 ساعة - متوقع إن بعضهم يفشل
       return (await this.gateway.sendAudio(conn, r.phone, plan.mediaId)).ok;
@@ -147,6 +208,7 @@ export class CampaignSender {
       waMessageId: result.ok ? result.messageId ?? null : null,
       ok: result.ok,
       error: result.ok ? null : result.error ?? null,
+      campaignId,
     });
     return result.ok;
   }

@@ -13,8 +13,38 @@ class MemoryCampaigns implements CampaignStore {
   inbox: OutgoingMessage[] = [];
   progressWrites: [number, number][] = [];
   connected = true;
+  book: { phone: string; name: string; tags: string[]; optedOut: boolean }[] = [];
+  scheduledAt = new Map<string, Date>();
+  failures = new Map<string, string>();
+  skippedWrites = new Map<string, number>();
   add(c: Partial<CampaignForSend> & { id: string }) {
-    this.campaigns.set(c.id, { tenantId: "t1", kind: "TEXT", status: "DRAFT", audioBase64: null, recipients: [], template: null, sentCount: 0, failedCount: 0, ...c });
+    this.campaigns.set(c.id, { tenantId: "t1", kind: "TEXT", status: "DRAFT", audioBase64: null, recipients: [], audienceTags: [], audienceMatch: "any", template: null, sentCount: 0, failedCount: 0, ...c });
+  }
+  async audience(_t: string, tags: string[], match: "any" | "all") {
+    return this.book.filter((b) => !b.optedOut && (match === "all" ? tags.every((t) => b.tags.includes(t)) : tags.some((t) => b.tags.includes(t)))).map((b) => ({ phone: b.phone, name: b.name }));
+  }
+  async optedOutAmong(_t: string, phones: string[]) {
+    return new Set(this.book.filter((b) => b.optedOut && phones.includes(b.phone)).map((b) => b.phone));
+  }
+  async schedule(tenantId: string, id: string, at: Date) {
+    const c = this.campaigns.get(id);
+    if (!c || c.tenantId !== tenantId || !["DRAFT", "READY", "FAILED", "SCHEDULED"].includes(c.status)) return false;
+    c.status = "SCHEDULED";
+    this.scheduledAt.set(id, at);
+    return true;
+  }
+  async unschedule(tenantId: string, id: string) {
+    const c = this.campaigns.get(id);
+    if (!c || c.tenantId !== tenantId || c.status !== "SCHEDULED") return false;
+    c.status = "DRAFT";
+    return true;
+  }
+  async dueScheduled(now: Date) {
+    return [...this.campaigns.values()].filter((c) => c.status === "SCHEDULED" && (this.scheduledAt.get(c.id)?.getTime() ?? 0) <= now.getTime()).map((c) => ({ id: c.id, tenantId: c.tenantId }));
+  }
+  async markFailed(id: string, error: string) {
+    this.campaigns.get(id)!.status = "FAILED";
+    this.failures.set(id, error);
   }
   async connection(): Promise<MetaConnection | null> {
     return this.connected ? { token: "tok", phoneNumberId: "pn" } : null;
@@ -30,7 +60,7 @@ class MemoryCampaigns implements CampaignStore {
   async claim(tenantId: string, id: string) {
     await tick();
     const c = this.campaigns.get(id);
-    if (!c || c.tenantId !== tenantId || !["DRAFT", "READY", "FAILED"].includes(c.status)) return false;
+    if (!c || c.tenantId !== tenantId || !["DRAFT", "READY", "SCHEDULED", "FAILED"].includes(c.status)) return false;
     c.status = "SENDING";
     return true;
   }
@@ -41,7 +71,8 @@ class MemoryCampaigns implements CampaignStore {
     this.progressWrites.push([sent, failed]);
     Object.assign(this.campaigns.get(id)!, { sentCount: sent, failedCount: failed });
   }
-  async finish(id: string, status: "SENT" | "FAILED", sent: number, failed: number) {
+  async finish(id: string, status: "SENT" | "FAILED", sent: number, failed: number, skipped = 0) {
+    this.skippedWrites.set(id, skipped);
     Object.assign(this.campaigns.get(id)!, { status, sentCount: sent, failedCount: failed });
   }
   async expireStale() {
@@ -118,7 +149,7 @@ describe("CampaignSender", () => {
     store.add({ id: "c1", recipients, template: tpl() });
     gateway.failFor = new Set([recipients[3].phone, recipients[7].phone]);
     const out = await sender.start("t1", "c1");
-    expect(out).toEqual({ ok: true, status: "SENDING", total: 23 });
+    expect(out).toEqual({ ok: true, status: "SENDING", total: 23, skipped: 0 });
     expect(store.campaigns.get("c1")!.status).toBe("SENDING");
     await sender.whenIdle();
     const c = store.campaigns.get("c1")!;
@@ -198,5 +229,63 @@ describe("CampaignSender", () => {
       now--;
     });
     expect(max).toBe(3);
+  });
+
+  it('skips people who unsubscribed and dedupes the list', async () => {
+    const { store, gateway, sender } = setup();
+    const list = people(4);
+    store.book = [{ phone: list[1].phone, name: 'x', tags: [], optedOut: true }];
+    store.add({ id: 'c1', recipients: [...list, list[0]] });
+    const out = await sender.start('t1', 'c1');
+    expect(out).toMatchObject({ total: 3, skipped: 2 });
+    await sender.whenIdle();
+    expect(gateway.sends.map((x) => x.to).sort()).toEqual([list[0].phone, list[2].phone, list[3].phone].sort());
+    expect(store.skippedWrites.get('c1')).toBe(2);
+    expect(store.inbox.every((m) => m.campaignId === 'c1')).toBe(true);
+  });
+  it('audience from contact tags (any / all), subscribed only', async () => {
+    const { store, gateway, sender } = setup();
+    store.book = [
+      { phone: '97450000001', name: 'A', tags: ['vip', 'doha'], optedOut: false },
+      { phone: '97450000002', name: 'B', tags: ['vip'], optedOut: false },
+      { phone: '97450000003', name: 'C', tags: ['vip', 'doha'], optedOut: true },
+    ];
+    store.add({ id: 'any', audienceTags: ['doha', 'vip'], audienceMatch: 'any' });
+    expect(await sender.start('t1', 'any')).toMatchObject({ total: 2 });
+    await sender.whenIdle();
+    store.add({ id: 'all', audienceTags: ['doha', 'vip'], audienceMatch: 'all' });
+    expect(await sender.start('t1', 'all')).toMatchObject({ total: 1 });
+    await sender.whenIdle();
+    store.add({ id: 'none', audienceTags: ['nobody'] });
+    await expect(sender.start('t1', 'none')).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/No subscribed contacts/) });
+    expect(gateway.sends).toHaveLength(3);
+  });
+  it('schedule: validated up front, sent by runDue when due, cancel works, failures recorded', async () => {
+    const { store, gateway, sender } = setup();
+    const now = new Date('2026-11-03T10:00:00Z');
+    store.add({ id: 'c1', recipients: people(3) });
+    await expect(sender.schedule('t1', 'c1', new Date(now.getTime() + 10_000), now)).rejects.toMatchObject({ status: 400 });
+    await expect(sender.schedule('t1', 'c1', new Date(now.getTime() + 100 * 86400_000), now)).rejects.toMatchObject({ status: 400 });
+    store.add({ id: 'pending', recipients: people(2), template: tpl({ status: 'PENDING' }) });
+    await expect(sender.schedule('t1', 'pending', new Date(now.getTime() + 3600_000), now)).rejects.toMatchObject({ message: expect.stringMatching(/isn't approved/) });
+    const at = new Date(now.getTime() + 3600_000);
+    expect(await sender.schedule('t1', 'c1', at, now)).toMatchObject({ status: 'SCHEDULED', total: 3 });
+    expect(await sender.runDue(now)).toEqual({ started: 0, failed: 0 });
+    expect(await sender.runDue(new Date(at.getTime() + 1000))).toEqual({ started: 1, failed: 0 });
+    await sender.whenIdle();
+    expect(store.campaigns.get('c1')).toMatchObject({ status: 'SENT', sentCount: 3 });
+    await expect(sender.schedule('t1', 'c1', at, now)).rejects.toMatchObject({ status: 409 });
+    store.add({ id: 'c2', recipients: people(1) });
+    await sender.schedule('t1', 'c2', at, now);
+    await sender.unschedule('t1', 'c2');
+    expect(store.campaigns.get('c2')!.status).toBe('DRAFT');
+    await expect(sender.unschedule('t1', 'c2')).rejects.toMatchObject({ status: 409 });
+    store.add({ id: 'c3', recipients: people(1) });
+    await sender.schedule('t1', 'c3', at, now);
+    store.connected = false;
+    expect(await sender.runDue(new Date(at.getTime() + 1000))).toEqual({ started: 0, failed: 1 });
+    expect(store.campaigns.get('c3')!.status).toBe('FAILED');
+    expect(store.failures.get('c3')).toMatch(/Connect/);
+    expect(gateway.sends).toHaveLength(3);
   });
 });

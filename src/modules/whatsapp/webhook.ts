@@ -3,6 +3,9 @@ import crypto from "crypto";
 import { prisma } from "../../config/db";
 import { recordWhatsappMessage, sendWhatsappTextMessage } from "./whatsapp.service";
 import { matchAutoReply, renderBotReply } from "./bot";
+import { statusesBelow } from "./campaign-report";
+import { OPT_REPLIES } from "./opt-out";
+import { container } from "../../core/container";
 
 // Webhook لـ Meta WhatsApp Cloud API - الطريق اللي Meta بتبعتلنا منه الرسايل
 // الجاية من العملاء وحالة توصيل رسايلنا. كل تاجر ليه لينك سري خاص بيه
@@ -159,13 +162,27 @@ export async function handleWebhook(tenantId: string, body: any) {
     if (batch.phoneNumberId && settings.metaPhoneNumberId && batch.phoneNumberId !== settings.metaPhoneNumberId) continue;
 
     for (const s of batch.statuses) {
-      await prisma.whatsappMessage.updateMany({ where: { tenantId, waMessageId: s.id }, data: { status: s.status, ...(s.error ? { error: s.error } : {}) } });
+      // الحالة بتتقدّم بس (sent ← delivered ← read) - Meta ممكن تبعت delivered متأخرة بعد read
+      const below = statusesBelow(s.status);
+      await prisma.whatsappMessage.updateMany({
+        where: { tenantId, waMessageId: s.id, ...(below ? { status: { in: below } } : {}) },
+        data: { status: s.status, ...(s.error ? { error: s.error } : {}) },
+      });
     }
 
     for (const m of batch.messages) {
       const already = await prisma.whatsappMessage.findUnique({ where: { waMessageId: m.id } });
       if (already) continue; // Meta بتعيد بعت نفس الرسالة أحيانًا
       await recordWhatsappMessage({ tenantId, direction: "IN", contactPhone: m.from, contactName: m.name, body: m.text, kind: m.type, waMessageId: m.id });
+      // دفتر جهات الاتصال + STOP / START (لو كده: نأكد للعميل ومانشغّلش البوت)
+      const intent = await container.contactBookService.handleInbound(tenantId, m.from, m.name ?? null, m.text).catch((err) => {
+        console.warn(`[whatsapp-webhook] contact book: ${(err as Error)?.message}`);
+        return null;
+      });
+      if (intent) {
+        await confirmOptChange(tenantId, m, intent);
+        continue;
+      }
       await runBot(tenantId, m);
     }
 
@@ -176,6 +193,24 @@ export async function handleWebhook(tenantId: string, body: any) {
       await recordWhatsappMessage({ tenantId, direction: "OUT", contactPhone: e.to, body: e.text, kind: "app", waMessageId: e.id, status: "sent" });
     }
   }
+}
+
+async function confirmOptChange(tenantId: string, m: IncomingMessage, intent: "OUT" | "IN") {
+  const settings = await prisma.whatsappSettings.findUnique({ where: { tenantId } });
+  if (!settings?.isConnected || !settings.metaAccessToken || !settings.metaPhoneNumberId) return;
+  const body = OPT_REPLIES[intent];
+  const result = await sendWhatsappTextMessage(settings.metaAccessToken, settings.metaPhoneNumberId, m.from, body);
+  await recordWhatsappMessage({
+    tenantId,
+    direction: "OUT",
+    contactPhone: m.from,
+    contactName: m.name,
+    body,
+    kind: intent === "OUT" ? "opt-out" : "opt-in",
+    waMessageId: result.messageId,
+    status: result.ok ? "sent" : "failed",
+    error: result.ok ? null : result.error,
+  });
 }
 
 function publicBase() {

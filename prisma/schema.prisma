@@ -121,6 +121,7 @@ model Tenant {
   whatsappTemplates WhatsappTemplate[]
   whatsappSettings WhatsappSettings?
   whatsappMessages WhatsappMessage[]
+  whatsappContacts WhatsappContact[]
   whatsappAutoReplies WhatsappAutoReply[]
   botFlowNodes    BotFlowNode[]
   whatsappContactNotes WhatsappContactNote[]
@@ -1190,11 +1191,37 @@ model WhatsappMessage {
   waMessageId  String?  @unique
   status       String   @default("sent")
   error        String?
+  // رسالة طالعة من حملة (عشان تقرير الحملة: اتبعت / اتسلّم / اتقرا / رد)
+  campaignId   String?
   createdAt    DateTime @default(now())
 
   @@index([tenantId, contactPhone, createdAt])
   @@index([tenantId, createdAt])
+  @@index([campaignId])
   @@map("whatsapp_messages")
+}
+
+// دفتر جهات اتصال واتساب لكل شركة: تاجز للتقسيم + إلغاء الاشتراك (Opt-out).
+// بيتملا من: إضافة يدوية، ملف إكسل، عملاء الحجز/المنيو/الولاء، وأي حد يبعت رسالة
+model WhatsappContact {
+  id            String    @id @default(uuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // أرقام بس مع كود الدولة (974...)
+  phone         String
+  name          String?
+  tags          String[]  @default([])
+  // ألغى الاشتراك (كتب STOP / إلغاء) - الحملات مابتوصلوش، رسايل الحجز العادية بتوصل
+  optedOut      Boolean   @default(false)
+  optedOutAt    DateTime?
+  source        String    @default("manual") // manual | import | inbound | customers | campaign
+  lastInboundAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, optedOut])
+  @@map("whatsapp_contacts")
 }
 
 // رد تلقائي: لو رسالة العميل فيها أي كلمة من keywords، البوت يرد بـ reply
@@ -1372,6 +1399,8 @@ model AiAsset {
 enum CampaignStatus {
   DRAFT
   READY
+  // متحدد لها ميعاد - الـ job بيبعتها لوحدها لما الميعاد ييجي
+  SCHEDULED
   SENDING
   SENT
   FAILED
@@ -1405,9 +1434,19 @@ model WhatsappCampaign {
   failedCount Int            @default(0)
   // وقت آخر تقدم في الإرسال (الإرسال في الخلفية) - لو فضل قديم يبقى السيرفر اتعاد تشغيله
   sendingAt   DateTime?
+  // ميعاد الإرسال (حالة SCHEDULED)
+  scheduledAt DateTime?
+  // الجمهور من دفتر جهات الاتصال بالتاجز (فاضي = قايمة الإكسل recipients). any = أي تاج، all = كل التاجز
+  audienceTags  String[]   @default([])
+  audienceMatch String     @default("any")
+  // اللي اتشالوا وقت الإرسال لأنهم ألغوا الاشتراك (Opt-out)
+  skippedCount  Int        @default(0)
+  // سبب آخر فشل (مثلًا حملة مجدولة القالب بتاعها اترفض قبل ميعادها)
+  lastError     String?    @db.Text
   createdAt   DateTime       @default(now())
 
   @@index([tenantId])
+  @@index([status, scheduledAt])
   @@map("whatsapp_campaigns")
 }
 
