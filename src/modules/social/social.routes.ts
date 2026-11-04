@@ -5,7 +5,7 @@ import { container } from "../../core/container";
 import { NotFoundError } from "../../core/errors";
 import { zodMessage } from "../../utils/validation";
 import { assetEtag, planAssetResponse } from "../ai/asset-http";
-import { connectMetaSchema, listPostsSchema, postInputSchema, replySchema, suggestSchema, threadListSchema, threadRefSchema, uploadMediaSchema } from "./social.schemas";
+import { commentRulePatchSchema, commentRuleSchema, connectMetaSchema, listPostsSchema, postInputSchema, replySchema, suggestSchema, threadListSchema, threadRefSchema, uploadMediaSchema } from "./social.schemas";
 import { verifyMetaSignature } from "../whatsapp/webhook";
 import { SOCIAL_LIMITS } from "./social-types";
 import { adsRouter } from "./ads.routes";
@@ -190,4 +190,26 @@ export const publicTikTokCallbackRouter = Router();
 publicTikTokCallbackRouter.get("/", async (req, res) => {
   const q = req.query as Record<string, string | undefined>;
   res.redirect(302, await socialAccountService.tiktokCallback({ code: q.code, state: q.state, error: q.error, error_description: q.error_description }));
+});
+
+// ---------- أتمتة التعليقات: كومنت فيه كلمة ← رسالة خاصة تلقائي ----------
+socialRouter.get("/comment-rules", async (req, res) => {
+  res.json(await container.commentAutomation.list(req.auth!.tenantId));
+});
+
+socialRouter.post("/comment-rules", canPost, async (req, res) => {
+  const parsed = commentRuleSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+  const d = parsed.data;
+  res.status(201).json(await container.commentAutomation.create(req.auth!.tenantId, { ...d, accountId: d.accountId ?? null, publicReply: d.publicReply ?? null }));
+});
+
+socialRouter.patch("/comment-rules/:id", canPost, async (req, res) => {
+  const parsed = commentRulePatchSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+  res.json(await container.commentAutomation.update(req.auth!.tenantId, req.params.id, parsed.data));
+});
+
+socialRouter.delete("/comment-rules/:id", canPost, async (req, res) => {
+  res.json(await container.commentAutomation.remove(req.auth!.tenantId, req.params.id));
 });

@@ -15,6 +15,8 @@ import { PrismaCampaignRepository } from "../modules/whatsapp/campaign.repositor
 import { MetaCampaignGateway } from "../modules/whatsapp/campaign-gateway";
 import { CampaignSender } from "../modules/whatsapp/campaign-sender.service";
 import { ContactBookService } from "../modules/whatsapp/contact-book.service";
+import { CommentAutomationService } from "../modules/social/comment-automation.service";
+import { PrismaCommentRuleRepository } from "../modules/social/comment-rules.repository";
 import { AiAgentService } from "../modules/whatsapp/ai-agent.service";
 import { MetaAgentMessenger, PrismaAiAgentRepository } from "../modules/whatsapp/ai-agent.repository";
 import { PrismaContactBookRepository } from "../modules/whatsapp/contact-book.repository";
@@ -64,6 +66,8 @@ function publicApiBaseUrl(): string {
   return `http://localhost:${process.env.PORT || 4000}`;
 }
 
+const commentAutomation = new CommentAutomationService(new PrismaCommentRuleRepository(prisma), metaSocial);
+
 export const container = {
   creditService,
   // لإضافة نقاط جوه transaction تانية (تفعيل اشتراك)
@@ -81,5 +85,6 @@ export const container = {
   socialAccountService: new SocialAccountService(socialStore, metaSocial, { tiktok, tokens: socialTokens, publicApiBaseUrl, frontendBaseUrl, adsAuth: socialAdsService }),
   socialPostService: new SocialPostService(socialStore, socialPublisher, publicApiBaseUrl, undefined, socialTokens),
   socialAdsService,
-  socialInboxService: new SocialInboxService(new PrismaInboxRepository(prisma), metaSocial, { generator: providers.copy, credits: creditService, generations, profiles }),
+  socialInboxService: new SocialInboxService(new PrismaInboxRepository(prisma), metaSocial, { generator: providers.copy, credits: creditService, generations, profiles }, undefined, commentAutomation),
+  commentAutomation,
 };

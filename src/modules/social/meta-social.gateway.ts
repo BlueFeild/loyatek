@@ -174,6 +174,14 @@ export class MetaSocialGateway implements MetaAccountConnector, SocialPublisher,
     return { id: String(r.message_id ?? r.id) };
   }
 
+  async privateReply(a: InboxAccount, commentId: string, text: string) {
+    // فيسبوك وانستجرام الاتنين: من الصفحة، والمستلم = رقم التعليق (Meta بتوصّلها لصاحبه)
+    const pageId = a.platform === "INSTAGRAM" ? a.parentId : a.externalId;
+    if (!pageId) throw new SocialPlatformError("This Instagram account isn't linked to a Facebook Page — connect it again.");
+    const r = await this.graph(`/${pageId}/messages`, { method: "POST", token: a.accessToken, body: { recipient: { comment_id: commentId }, message: { text } } });
+    return { id: String(r.message_id ?? r.id) };
+  }
+
   async lookupName(a: InboxAccount, userId: string): Promise<string | null> {
     const fields = a.platform === "INSTAGRAM" ? "name,username" : "name";
     const r = await this.graph(`/${encodeURIComponent(userId)}?fields=${fields}`, { token: a.accessToken });

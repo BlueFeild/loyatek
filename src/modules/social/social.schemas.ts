@@ -80,3 +80,14 @@ export const boostSchema = z.object({
 export const adBudgetSchema = z.object({ dailyBudget: z.number().positive("Enter the daily budget").max(1_000_000) });
 
 export const citySearchSchema = z.object({ q: z.string().trim().min(2, "Type at least 2 letters").max(60) });
+
+// ---------- أتمتة التعليقات (كومنت فيه كلمة ← رسالة خاصة) ----------
+export const commentRuleSchema = z.object({
+  accountId: z.string().uuid().nullable().optional(),
+  name: z.string().trim().min(1, "Give the rule a name").max(80),
+  keywords: z.array(z.string().trim().max(60)).max(20).default([]),
+  dmText: z.string().trim().min(1, "Write the private message").max(1000),
+  publicReply: z.string().trim().max(500).nullable().optional(),
+  enabled: z.boolean().default(true),
+});
+export const commentRulePatchSchema = commentRuleSchema.partial();

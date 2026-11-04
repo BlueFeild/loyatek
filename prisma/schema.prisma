@@ -134,6 +134,7 @@ model Tenant {
   socialMedia     SocialMedia[]
   socialPosts     SocialPost[]
   socialMessages  SocialMessage[]
+  socialCommentRules SocialCommentRule[]
   socialAdsAuth   SocialAdsAuth?
   socialAdCampaigns SocialAdCampaign[]
   socialAdEvents  SocialAdEvent[]
@@ -2065,6 +2066,42 @@ model SocialPostTarget {
   @@unique([postId, accountId])
   @@index([accountId])
   @@map("social_post_targets")
+}
+
+// أتمتة التعليقات: حد كتب كومنت فيه كلمة معيّنة ← رسالة خاصة تلقائي (Private Reply) + رد على التعليق اختياري.
+// accountId فاضي = كل الحسابات، keywords فاضية = أي تعليق. كل شخص بياخد الرسالة مرة واحدة للقاعدة
+model SocialCommentRule {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId   String?
+  name        String
+  keywords    String[] @default([])
+  dmText      String   @db.Text
+  publicReply String?  @db.Text
+  enabled     Boolean  @default(true)
+  sentCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  hits SocialCommentRuleHit[]
+
+  @@index([tenantId])
+  @@map("social_comment_rules")
+}
+
+model SocialCommentRuleHit {
+  id        String            @id @default(uuid())
+  ruleId    String
+  rule      SocialCommentRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  commentId String
+  authorId  String
+  ok        Boolean           @default(true)
+  error     String?
+  createdAt DateTime          @default(now())
+
+  @@unique([ruleId, authorId])
+  @@unique([ruleId, commentId])
+  @@map("social_comment_rule_hits")
 }
 
 // تعليقات ورسايل فيسبوك/انستجرام (الجاية من العملاء وردود التاجر) - صندوق واحد

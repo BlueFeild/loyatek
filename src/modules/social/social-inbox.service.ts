@@ -9,6 +9,7 @@ import type { InboxAccountRow, InboxStore } from "./social-inbox.repository";
 import { DM_REPLY_WINDOW_MS, SocialPlatformError, type InboxEvent, type InboxKind, type SocialInboxGateway } from "./social-types";
 import { decryptToken } from "./token-crypto";
 import { parseSocialWebhook } from "./social-webhook.parser";
+import type { CommentAutomationService } from "./comment-automation.service";
 
 export interface ThreadRef {
   accountId: string;
@@ -23,7 +24,9 @@ export class SocialInboxService {
     private readonly store: InboxStore,
     private readonly gateway: SocialInboxGateway,
     private readonly ai: { generator: CopyGenerator | null; credits: CreditService; generations: GenerationStore; profiles: BusinessProfileReader },
-    private readonly now: () => Date = () => new Date()
+    private readonly now: () => Date = () => new Date(),
+    // "كومنت فيه كلمة ← رسالة خاصة تلقائي" (اختياري)
+    private readonly automation: CommentAutomationService | null = null
   ) {}
 
   // ---------- الاستقبال ----------
@@ -44,6 +47,13 @@ export class SocialInboxService {
       }
       await this.fillNames(owner.tenantId, owner.id, list);
       saved += await this.store.record(owner.tenantId, owner.id, list);
+      // الأتمتة من الـ webhook بس (المزامنة اليدوية بتجيب تعليقات قديمة - مانبعتلهاش)
+      if (this.automation) {
+        const account = await this.store.account(owner.tenantId, owner.id);
+        if (account && account.status === "ACTIVE") {
+          await this.automation.run(owner.tenantId, owner.id, this.toInbox(account), list).catch((err) => console.warn(`[social-auto] ${(err as Error)?.message}`));
+        }
+      }
     }
     return { received: events.length, saved };
   }

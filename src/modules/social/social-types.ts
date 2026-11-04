@@ -181,6 +181,8 @@ export interface RecentInbox {
 export interface SocialInboxGateway {
   replyToComment(account: InboxAccount, commentId: string, text: string): Promise<{ id: string }>;
   sendDirectMessage(account: InboxAccount, recipientId: string, text: string): Promise<{ id: string }>;
+  // رسالة خاصة لصاحب تعليق (Private Reply - مرة واحدة لكل تعليق، خلال 7 أيام منه)
+  privateReply?(account: InboxAccount, commentId: string, text: string): Promise<{ id: string }>;
   // آخر التعليقات والرسايل (لو الـ webhook لسه مش شغال أو فاتنا حاجة)
   fetchRecent(account: InboxAccount): Promise<RecentInbox>;
   // اسم العميل (رسايل الـ webhook مابيجيش فيها الاسم)
