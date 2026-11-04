@@ -16,7 +16,7 @@ import { MetaCampaignGateway } from "../modules/whatsapp/campaign-gateway";
 import { CampaignSender } from "../modules/whatsapp/campaign-sender.service";
 import { ContactBookService } from "../modules/whatsapp/contact-book.service";
 import { PrismaContactBookRepository } from "../modules/whatsapp/contact-book.repository";
-import { getUnifiedContacts } from "../modules/whatsapp/whatsapp.service";
+import { getConversationContacts, getUnifiedContacts } from "../modules/whatsapp/whatsapp.service";
 import { getPlatformConfig } from "../utils/platform-config";
 import { PrismaSocialRepository } from "../modules/social/social.repository";
 import { MetaSocialGateway } from "../modules/social/meta-social.gateway";
@@ -74,7 +74,7 @@ export const container = {
   accountAuditService: new AccountAuditService(providers.auditor, creditService, generations, profiles),
   metaRatesService: new MetaRatesService(new PrismaMetaRatesStore(prisma)),
   campaignSender: new CampaignSender(new PrismaCampaignRepository(prisma), new MetaCampaignGateway()),
-  contactBookService: new ContactBookService(new PrismaContactBookRepository(prisma), { customers: getUnifiedContacts }),
+  contactBookService: new ContactBookService(new PrismaContactBookRepository(prisma), { customers: async (tenantId: string) => [...(await getUnifiedContacts(tenantId)), ...(await getConversationContacts(tenantId))] }),
   socialAccountService: new SocialAccountService(socialStore, metaSocial, { tiktok, tokens: socialTokens, publicApiBaseUrl, frontendBaseUrl, adsAuth: socialAdsService }),
   socialPostService: new SocialPostService(socialStore, socialPublisher, publicApiBaseUrl, undefined, socialTokens),
   socialAdsService,

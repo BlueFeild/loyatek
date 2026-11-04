@@ -50,7 +50,7 @@ export interface CustomerSource {
   customers(tenantId: string): Promise<{ name: string; phone: string; sources: string[] }[]>;
 }
 
-const SOURCE_TAG: Record<string, string> = { "Wallet Member": "loyalty", "Booking Customer": "booking", "Catalog Customer": "orders" };
+const SOURCE_TAG: Record<string, string> = { "Wallet Member": "loyalty", "Booking Customer": "booking", "Catalog Customer": "orders", "WhatsApp Chat": "whatsapp" };
 
 export class ContactBookService {
   constructor(
@@ -101,7 +101,7 @@ export class ContactBookService {
     return { ...r, invalid, total: contacts.length };
   }
 
-  // عملاء الحجز / المنيو / الولاء ← الدفتر، وكل واحد ياخد تاج بمصدره (booking / orders / loyalty)
+  // عملاء الحجز / المنيو / الولاء + أي حد في محادثات واتساب ← الدفتر، وكل واحد ياخد تاج بمصدره (booking / orders / loyalty / whatsapp)
   async syncCustomers(tenantId: string) {
     const list = await this.customers.customers(tenantId);
     const contacts: ContactInput[] = [];

@@ -443,3 +443,15 @@ export async function uploadTemplateHeaderImage(
     return { ok: false, error: `Could not upload image to Meta: ${errorMessage(err)}` };
   }
 }
+
+// كل الأرقام اللي في محادثات واتساب (اتبعتلهم أو بعتوا) - بآخر اسم معروف. بتتسحب لدفتر جهات الاتصال
+export async function getConversationContacts(tenantId: string): Promise<UnifiedContact[]> {
+  const rows = await prisma.whatsappMessage.findMany({
+    where: { tenantId },
+    orderBy: { createdAt: "desc" },
+    distinct: ["contactPhone"],
+    select: { contactPhone: true, contactName: true, createdAt: true },
+    take: 20_000,
+  });
+  return rows.map((r) => ({ name: r.contactName ?? "", phone: r.contactPhone, sources: ["WhatsApp Chat"], lastActivity: r.createdAt }));
+}
