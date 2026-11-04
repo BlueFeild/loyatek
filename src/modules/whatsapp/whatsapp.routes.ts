@@ -40,6 +40,7 @@ import { aiAgentRouter } from "./ai-agent.routes";
 import { PrismaContactBookRepository } from "./contact-book.repository";
 import { normalizePhone, normalizeTags } from "./contact-book.service";
 import { summarizeCampaign } from "./campaign-report";
+import { summarizeWhatsapp } from "./analytics";
 import { BOOKING_TEMPLATE_PURPOSES, ensureBookingTemplates, getApprovedBookingTemplate, type BookingTemplatePurpose } from "./booking-templates";
 
 export const whatsappRouter = Router();
@@ -459,6 +460,27 @@ whatsappRouter.post("/conversations/:phone/template", requireRole("OWNER", "ADMI
   if (!result.ok) return res.status(400).json({ error: result.error, message: row });
   await container.aiAgentService.humanReplied(tenantId, phone).catch(() => {});
   res.json(row);
+});
+
+// إحصائيات حقيقية من الرسايل المتسجلة (آخر 7 / 30 / 90 يوم) بتوقيت الشركة
+whatsappRouter.get("/analytics", async (req, res) => {
+  const tenantId = req.auth!.tenantId;
+  const days = [7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 30;
+  const now = new Date();
+  const since = new Date(now.getTime() - days * 86400_000);
+  const [messages, newContacts, optedOut, needsPerson, booking] = await Promise.all([
+    prisma.whatsappMessage.findMany({
+      where: { tenantId, createdAt: { gte: since } },
+      select: { contactPhone: true, direction: true, kind: true, status: true, createdAt: true },
+      orderBy: { createdAt: "asc" },
+      take: 50_000,
+    }),
+    prisma.whatsappContact.count({ where: { tenantId, createdAt: { gte: since } } }),
+    prisma.whatsappContact.count({ where: { tenantId, optedOut: true } }),
+    prisma.whatsappConversation.count({ where: { tenantId, status: "handoff" } }),
+    prisma.bookingSettings.findUnique({ where: { tenantId }, select: { timezone: true } }),
+  ]);
+  res.json(summarizeWhatsapp(messages, { days, now, timeZone: booking?.timezone || "Asia/Qatar", newContacts, optedOut, needsPerson }));
 });
 
 // حالة المحادثة: open / handoff (محتاجة موظف) / closed + مسؤول + رجوع الموظف الذكي
