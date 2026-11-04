@@ -122,6 +122,8 @@ model Tenant {
   whatsappSettings WhatsappSettings?
   whatsappMessages WhatsappMessage[]
   whatsappContacts WhatsappContact[]
+  whatsappAiAgent WhatsappAiAgent?
+  whatsappConversations WhatsappConversation[]
   whatsappAutoReplies WhatsappAutoReply[]
   botFlowNodes    BotFlowNode[]
   whatsappContactNotes WhatsappContactNote[]
@@ -1199,6 +1201,44 @@ model WhatsappMessage {
   @@index([tenantId, createdAt])
   @@index([campaignId])
   @@map("whatsapp_messages")
+}
+
+// موظف الذكاء الاصطناعي على واتساب: بيرد على العملاء من بيانات الشركة الحقيقية (المنيو، الخدمات،
+// الأسعار، اللينكات) + معلومات بيكتبها التاجر. بيحوّل لموظف لو مايعرفش أو العميل طلب
+model WhatsappAiAgent {
+  id                String   @id @default(uuid())
+  tenantId          String   @unique
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  enabled           Boolean  @default(false)
+  // معلومات التاجر: مواعيد، عنوان، توصيل، سياسات، أسئلة متكررة...
+  knowledge         String   @default("") @db.Text
+  // auto = بلغة/لهجة العميل نفسه، أو لهجة ثابتة (qatari, gulf, msa, egyptian, english)
+  dialect           String   @default("auto")
+  // أقصى عدد ردود للمحادثة الواحدة في الساعة (حماية النقاط من أي لف)
+  maxRepliesPerHour Int      @default(8)
+  updatedAt         DateTime @updatedAt
+
+  @@map("whatsapp_ai_agents")
+}
+
+// حالة كل محادثة واتساب: مفتوحة / محتاجة موظف / اتقفلت + مين مسؤول عنها + الذكاء الاصطناعي واقف ولا لأ
+model WhatsappConversation {
+  id               String    @id @default(uuid())
+  tenantId         String
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone            String
+  status           String    @default("open") // open | handoff | closed
+  assignedToUserId String?
+  handoffReason    String?
+  // التاجر رد بنفسه ← الموظف الذكي يسكت على المحادثة دي لحد الوقت ده
+  aiPausedUntil    DateTime?
+  lastInboundAt    DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, status])
+  @@map("whatsapp_conversations")
 }
 
 // دفتر جهات اتصال واتساب لكل شركة: تاجز للتقسيم + إلغاء الاشتراك (Opt-out).

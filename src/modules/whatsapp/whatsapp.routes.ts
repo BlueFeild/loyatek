@@ -36,6 +36,7 @@ import {
 } from "./rich-templates";
 import { embeddedSignupConfig, exchangeSignupCode, findWabaPhoneNumber, registerPhoneNumber, subscribeAppToWaba } from "./embedded-signup";
 import { contactBookRouter } from "./contact-book.routes";
+import { aiAgentRouter } from "./ai-agent.routes";
 import { PrismaContactBookRepository } from "./contact-book.repository";
 import { normalizePhone, normalizeTags } from "./contact-book.service";
 import { summarizeCampaign } from "./campaign-report";
@@ -47,6 +48,8 @@ whatsappRouter.use(requireAuth);
 
 // دفتر جهات الاتصال (تاجز + إلغاء اشتراك) - /api/whatsapp/contact-book
 whatsappRouter.use("/contact-book", contactBookRouter);
+// موظف الذكاء الاصطناعي - /api/whatsapp/ai-agent
+whatsappRouter.use("/ai-agent", aiAgentRouter);
 
 // --- Settings (ربط حساب Meta الحقيقي) ---
 
@@ -348,7 +351,21 @@ whatsappRouter.get("/conversations", async (req, res) => {
       if (!c.lastInAt && m.direction === "IN") c.lastInAt = m.createdAt;
     }
   }
-  res.json(Array.from(byPhone.values()));
+  // حالة كل محادثة (مفتوحة / محتاجة موظف / اتقفلت) + المسؤول + هل الموظف الذكي ساكت عليها
+  const states = await container.aiAgentService.conversationStates(tenantId, [...byPhone.keys()]);
+  const now = Date.now();
+  const status = typeof req.query.status === "string" ? req.query.status : "";
+  const list = Array.from(byPhone.values()).map((c) => {
+    const s = states.get(c.phone);
+    return {
+      ...c,
+      status: s?.status ?? "open",
+      assignedToUserId: s?.assignedToUserId ?? null,
+      handoffReason: s?.handoffReason ?? null,
+      aiPaused: Boolean(s?.aiPausedUntil && s.aiPausedUntil.getTime() > now),
+    };
+  });
+  res.json(status ? list.filter((c) => c.status === status) : list);
 });
 
 whatsappRouter.get("/conversations/:phone/messages", async (req, res) => {
@@ -376,6 +393,8 @@ whatsappRouter.post("/conversations/:phone/reply", requireRole("OWNER", "ADMIN",
     error: result.ok ? null : result.error,
   });
   if (!result.ok) return res.status(400).json({ error: result.error, message: row });
+  // موظف رد بنفسه ← الموظف الذكي يسكت على المحادثة دي شوية
+  await container.aiAgentService.humanReplied(req.auth!.tenantId, phone).catch(() => {});
   res.json(row);
 });
 
@@ -438,7 +457,32 @@ whatsappRouter.post("/conversations/:phone/template", requireRole("OWNER", "ADMI
     error: result.ok ? null : result.error,
   });
   if (!result.ok) return res.status(400).json({ error: result.error, message: row });
+  await container.aiAgentService.humanReplied(tenantId, phone).catch(() => {});
   res.json(row);
+});
+
+// حالة المحادثة: open / handoff (محتاجة موظف) / closed + مسؤول + رجوع الموظف الذكي
+const conversationPatchSchema = z.object({
+  status: z.enum(["open", "handoff", "closed"]).optional(),
+  assignedToUserId: z.string().uuid().nullable().optional(),
+  resumeAi: z.boolean().optional(),
+});
+
+whatsappRouter.patch("/conversations/:phone", requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async (req, res) => {
+  const parsed = conversationPatchSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid conversation update" });
+  const phone = req.params.phone.replace(/[^\d]/g, "");
+  if (phone.length < 7 || phone.length > 15) return res.status(400).json({ error: "Invalid number" });
+  const tenantId = req.auth!.tenantId;
+  // المسؤول لازم يكون من فريق نفس الشركة
+  if (parsed.data.assignedToUserId) {
+    try {
+      await assertTenantOwns(tenantId, { userIds: [parsed.data.assignedToUserId] });
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message });
+    }
+  }
+  res.json(await container.aiAgentService.updateConversation(tenantId, phone, parsed.data));
 });
 
 // --- Bot Flow Builder ---

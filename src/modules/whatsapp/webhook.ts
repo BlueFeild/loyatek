@@ -183,6 +183,14 @@ export async function handleWebhook(tenantId: string, body: any) {
         await confirmOptChange(tenantId, m, intent);
         continue;
       }
+      // الموظف الذكي الأول (لو مفعّل)؛ لو المحادثة مع موظف بشري محدش يرد؛ غير كده البوت العادي بالكلمات
+      const outcome = await container.aiAgentService
+        .handleInbound(tenantId, { phone: m.from.replace(/[^\d]/g, ""), name: m.name ?? null, text: m.text, type: m.type })
+        .catch((err) => {
+          console.warn(`[whatsapp-webhook] ai agent: ${(err as Error)?.message}`);
+          return "skipped" as const;
+        });
+      if (outcome !== "skipped") continue;
       await runBot(tenantId, m);
     }
 

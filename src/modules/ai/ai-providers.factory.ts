@@ -6,12 +6,16 @@ import { FakeAccountAuditor, FakeImageGenerator, FakeVideoGenerator } from "./fa
 import { GeminiCopyGenerator } from "./gemini-copy-generator";
 import { GeminiAccountAuditor, GeminiImageGenerator, GeminiVideoGenerator } from "./gemini-media-providers";
 import type { AccountAuditor, ImageGenerator, VideoGenerator } from "./media-types";
+import type { AgentResponder } from "./agent-types";
+import { AnthropicAgentResponder, FakeAgentResponder, GeminiAgentResponder } from "./agent-responders";
 
 export interface AiProviders {
   copy: CopyGenerator | null;
   image: ImageGenerator | null;
   video: VideoGenerator | null;
   auditor: AccountAuditor | null;
+  // موظف واتساب الذكي (نفس مزوّد الكتابة)
+  agent: AgentResponder | null;
 }
 
 // اختيار المزوّدين من Railway Variables:
@@ -21,7 +25,7 @@ export interface AiProviders {
 export function makeAiProviders(env: NodeJS.ProcessEnv = process.env): AiProviders {
   const provider = (env.AI_PROVIDER ?? "").trim().toLowerCase();
   if (provider === "fake") {
-    return { copy: new FakeCopyGenerator(), image: new FakeImageGenerator(), video: new FakeVideoGenerator(), auditor: new FakeAccountAuditor() };
+    return { copy: new FakeCopyGenerator(), image: new FakeImageGenerator(), video: new FakeVideoGenerator(), auditor: new FakeAccountAuditor(), agent: new FakeAgentResponder() };
   }
   const hasClaude = Boolean(env.ANTHROPIC_API_KEY?.trim());
   const hasGemini = Boolean(env.GEMINI_API_KEY?.trim());
@@ -32,6 +36,7 @@ export function makeAiProviders(env: NodeJS.ProcessEnv = process.env): AiProvide
     auditor: textProvider === "anthropic" ? new AnthropicAccountAuditor() : textProvider === "gemini" ? new GeminiAccountAuditor() : null,
     image: hasGemini ? new GeminiImageGenerator() : null,
     video: hasGemini ? new GeminiVideoGenerator() : null,
+    agent: textProvider === "anthropic" ? new AnthropicAgentResponder() : textProvider === "gemini" ? new GeminiAgentResponder() : null,
   };
 }
 

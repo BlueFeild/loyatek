@@ -4,6 +4,7 @@ export const AI_COSTS = {
   image: 3, // صورة واحدة
   video: 20, // فيديو قصير
   audit: 5, // تقرير تحليل حساب واحد
+  agent: 1, // رد واحد من موظف واتساب الذكي
 } as const;
 
 export type AiTool = keyof typeof AI_COSTS;
