@@ -64,6 +64,25 @@ export class FlowService {
     return this.store.responses(tenantId, id, 200);
   }
 
+  // "جرّب السيناريو": نفس المحرّك على سيناريو لسه بيتكتب - مفيش إرسال ولا حفظ
+  async test(tenantId: string, raw: unknown, state: { nodeId: string; answers: Record<string, string> } | null, msg: { text: string; replyId: string | null }) {
+    const input = this.validate(raw);
+    const flow = { id: "draft", sortOrder: 0, ...input, enabled: true };
+    const now = this.now();
+    const decision = decideFlow([flow], state ? { flowId: "draft", ...state, updatedAt: now } : null, msg, now);
+    if (decision.kind === "none") return { matched: false, messages: [], state: null, done: false, handoff: false, answers: state?.answers ?? {} };
+    const vars = { name: decision.answers.name ?? "Sara", ...(await this.store.vars(tenantId)) };
+    return {
+      matched: true,
+      messages: decision.send.map((node) => renderFlowNode(node, renderBotReply(node.text, vars), decision.retry)),
+      state: decision.session,
+      done: decision.completed,
+      handoff: decision.handoff,
+      answers: decision.answers,
+      tags: decision.tags,
+    };
+  }
+
   // true = السيناريو رد (الموظف الذكي والبوت مايردوش)
   async handleInbound(tenantId: string, m: FlowInbound): Promise<boolean> {
     if (!["text", "button", "interactive"].includes(m.type)) return false;

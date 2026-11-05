@@ -17,6 +17,20 @@ flowRouter.post("/", editors, async (req, res) => {
   res.status(201).json(await container.flowService.create(req.auth!.tenantId, req.body));
 });
 
+// جرّب سيناريو (حتى لو لسه متحفظش) - مابيبعتش حاجة
+const testSchema = z.object({
+  flow: z.unknown(),
+  state: z.object({ nodeId: z.string().max(40), answers: z.record(z.string().max(500)) }).nullable().optional(),
+  text: z.string().max(1000).default(""),
+  replyId: z.string().max(80).nullable().optional(),
+});
+
+flowRouter.post("/test", editors, async (req, res) => {
+  const r = testSchema.safeParse(req.body);
+  if (!r.success) throw new ValidationError(r.error.issues[0]?.message ?? "Invalid request");
+  res.json(await container.flowService.test(req.auth!.tenantId, r.data.flow, r.data.state ?? null, { text: r.data.text, replyId: r.data.replyId ?? null }));
+});
+
 flowRouter.put("/:id", editors, async (req, res) => {
   res.json(await container.flowService.update(req.auth!.tenantId, req.params.id, req.body));
 });
