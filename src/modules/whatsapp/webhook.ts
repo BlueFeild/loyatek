@@ -146,6 +146,8 @@ platformWhatsappWebhookRouter.post("/", async (req: Request & { rawBody?: Buffer
     return res.sendStatus(401);
   }
   res.sendStatus(200);
+  // سطر واحد لكل إشعار (نوعه + الأرقام + العدد) من غير محتوى الرسايل - عشان نعرف Meta بعتت إيه
+  console.info(`[whatsapp-webhook] platform event: ${describeWebhook(req.body)}`);
   const phoneIds = Array.from(new Set(parseWebhookPayload(req.body).map((b) => b.phoneNumberId).filter((x): x is string => Boolean(x))));
   for (const phoneNumberId of phoneIds) {
     // الرقم بيبقى تبع حساب واحد عند Meta - لو اتربط بأكتر من شركة عندنا، آخر
@@ -170,6 +172,21 @@ platformWhatsappWebhookRouter.post("/", async (req: Request & { rawBody?: Buffer
     }
   }
 });
+
+// ملخّص للّوج: object + لكل تغيير field / waba / phone_number_id / عدد الرسايل والحالات (مفيش نصوص ولا أرقام عملاء)
+export function describeWebhook(body: any): string {
+  if (!body || typeof body !== "object") return "empty body";
+  const parts: string[] = [];
+  for (const entry of Array.isArray(body.entry) ? body.entry : []) {
+    for (const change of entry?.changes ?? []) {
+      const v = change?.value ?? {};
+      parts.push(
+        `field=${change?.field ?? "?"} waba=${entry?.id ?? "?"} phone_id=${v.metadata?.phone_number_id ?? "none"} messages=${(v.messages ?? []).length} statuses=${(v.statuses ?? []).length} echoes=${(v.message_echoes ?? []).length}`
+      );
+    }
+  }
+  return `object=${body.object ?? "?"} ${parts.join(" | ") || "no changes"}`;
+}
 
 export async function handleWebhook(tenantId: string, body: any) {
   const settings = await prisma.whatsappSettings.findUnique({ where: { tenantId } });
