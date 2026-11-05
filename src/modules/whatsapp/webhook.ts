@@ -28,6 +28,14 @@ export interface IncomingMessage {
   name?: string;
   text: string;
   type: string;
+  // العميل داس على إعلان Click-to-WhatsApp (Meta بتبعت referral مع أول رسالة)
+  referral?: AdReferral;
+}
+export interface AdReferral {
+  sourceId: string;
+  sourceType: string;
+  headline: string;
+  body: string;
 }
 export interface StatusUpdate {
   id: string;
@@ -66,7 +74,12 @@ export function parseWebhookPayload(body: any): WebhookBatch[] {
               : m.type === "interactive"
                 ? m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title ?? ""
                 : `[${m.type}]`;
-        messages.push({ from: String(m.from), id: String(m.id), name: names.get(String(m.from)) || undefined, text: String(text), type: String(m.type) });
+        const ref = m.referral;
+        const referral: AdReferral | undefined =
+          ref && (ref.source_id || ref.headline)
+            ? { sourceId: String(ref.source_id ?? ""), sourceType: String(ref.source_type ?? "ad"), headline: String(ref.headline ?? "").slice(0, 200), body: String(ref.body ?? "").slice(0, 500) }
+            : undefined;
+        messages.push({ from: String(m.from), id: String(m.id), name: names.get(String(m.from)) || undefined, text: String(text), type: String(m.type), ...(referral ? { referral } : {}) });
       }
       const echoes: EchoMessage[] = [];
       for (const m of value.message_echoes ?? []) {
@@ -174,6 +187,8 @@ export async function handleWebhook(tenantId: string, body: any) {
       const already = await prisma.whatsappMessage.findUnique({ where: { waMessageId: m.id } });
       if (already) continue; // Meta بتعيد بعت نفس الرسالة أحيانًا
       await recordWhatsappMessage({ tenantId, direction: "IN", contactPhone: m.from, contactName: m.name, body: m.text, kind: m.type, waMessageId: m.id });
+      // جه من إعلان ← بنسجّل الإعلان على المحادثة (يظهر في Team Inbox والإحصائيات وفي الإعلان نفسه)
+      if (m.referral) await recordAdSource(tenantId, m.from.replace(/[^\d]/g, ""), m.referral);
       // دفتر جهات الاتصال + STOP / START (لو كده: نأكد للعميل ومانشغّلش البوت)
       const intent = await container.contactBookService.handleInbound(tenantId, m.from, m.name ?? null, m.text).catch((err) => {
         console.warn(`[whatsapp-webhook] contact book: ${(err as Error)?.message}`);
@@ -185,7 +200,7 @@ export async function handleWebhook(tenantId: string, body: any) {
       }
       // الموظف الذكي الأول (لو مفعّل)؛ لو المحادثة مع موظف بشري محدش يرد؛ غير كده البوت العادي بالكلمات
       const outcome = await container.aiAgentService
-        .handleInbound(tenantId, { phone: m.from.replace(/[^\d]/g, ""), name: m.name ?? null, text: m.text, type: m.type })
+        .handleInbound(tenantId, { phone: m.from.replace(/[^\d]/g, ""), name: m.name ?? null, text: m.text, type: m.type, ad: m.referral ? { headline: m.referral.headline, body: m.referral.body } : null })
         .catch((err) => {
           console.warn(`[whatsapp-webhook] ai agent: ${(err as Error)?.message}`);
           return "skipped" as const;
@@ -201,6 +216,13 @@ export async function handleWebhook(tenantId: string, body: any) {
       await recordWhatsappMessage({ tenantId, direction: "OUT", contactPhone: e.to, body: e.text, kind: "app", waMessageId: e.id, status: "sent" });
     }
   }
+}
+
+async function recordAdSource(tenantId: string, phone: string, ref: AdReferral) {
+  const data = { sourceAdId: ref.sourceId || null, sourceAdHeadline: ref.headline || null, sourceAt: new Date() };
+  await prisma.whatsappConversation
+    .upsert({ where: { tenantId_phone: { tenantId, phone } }, create: { tenantId, phone, ...data }, update: data })
+    .catch((err) => console.warn(`[whatsapp-webhook] ad source: ${(err as Error)?.message}`));
 }
 
 async function confirmOptChange(tenantId: string, m: IncomingMessage, intent: "OUT" | "IN") {

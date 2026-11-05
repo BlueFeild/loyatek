@@ -364,6 +364,7 @@ whatsappRouter.get("/conversations", async (req, res) => {
       assignedToUserId: s?.assignedToUserId ?? null,
       handoffReason: s?.handoffReason ?? null,
       aiPaused: Boolean(s?.aiPausedUntil && s.aiPausedUntil.getTime() > now),
+      fromAd: s?.sourceAdHeadline || s?.sourceAt ? { headline: s.sourceAdHeadline ?? "", at: s.sourceAt ?? null } : null,
     };
   });
   res.json(status ? list.filter((c) => c.status === status) : list);
@@ -468,7 +469,7 @@ whatsappRouter.get("/analytics", async (req, res) => {
   const days = [7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 30;
   const now = new Date();
   const since = new Date(now.getTime() - days * 86400_000);
-  const [messages, newContacts, optedOut, needsPerson, booking] = await Promise.all([
+  const [messages, newContacts, optedOut, needsPerson, booking, fromAds] = await Promise.all([
     prisma.whatsappMessage.findMany({
       where: { tenantId, createdAt: { gte: since } },
       select: { contactPhone: true, direction: true, kind: true, status: true, createdAt: true },
@@ -479,8 +480,10 @@ whatsappRouter.get("/analytics", async (req, res) => {
     prisma.whatsappContact.count({ where: { tenantId, optedOut: true } }),
     prisma.whatsappConversation.count({ where: { tenantId, status: "handoff" } }),
     prisma.bookingSettings.findUnique({ where: { tenantId }, select: { timezone: true } }),
+    // محادثات بدأت من إعلان Click-to-WhatsApp في الفترة دي
+    prisma.whatsappConversation.count({ where: { tenantId, sourceAt: { gte: since } } }),
   ]);
-  res.json(summarizeWhatsapp(messages, { days, now, timeZone: booking?.timezone || "Asia/Qatar", newContacts, optedOut, needsPerson }));
+  res.json({ ...summarizeWhatsapp(messages, { days, now, timeZone: booking?.timezone || "Asia/Qatar", newContacts, optedOut, needsPerson }), fromAds });
 });
 
 // حالة المحادثة: open / handoff (محتاجة موظف) / closed + مسؤول + رجوع الموظف الذكي

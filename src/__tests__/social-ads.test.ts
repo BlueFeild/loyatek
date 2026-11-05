@@ -22,6 +22,10 @@ class MemoryAdsStore implements AdsStore {
   targets = new Map<string, BoostTarget & { tenantId: string }>();
   campaigns: AdCampaignRow[] = [];
   eventsLog: (AdEventView & { tenantId: string; campaignId: string })[] = [];
+  chats = new Map<string, number>();
+  async adChats(_t: string, ids: string[]) {
+    return new Map(ids.filter((i) => this.chats.has(i)).map((i) => [i, this.chats.get(i)!] as [string, number]));
+  }
 
   async saveAuth(tenantId: string, a: StoredAdsAuth & { connectedById: string | null }) {
     this.auth.set(tenantId, { accessToken: a.accessToken, tokenExpiresAt: a.tokenExpiresAt });
@@ -48,6 +52,7 @@ class MemoryAdsStore implements AdsStore {
       error: null,
       metaCampaignId: null,
       metaAdSetId: null,
+      conversations: 0,
       metaAdId: null,
       impressions: 0,
       reach: 0,
@@ -113,7 +118,7 @@ class FakeAdsPlatform implements AdsPlatform {
   }
   async getInsights() {
     this.insightsCalls++;
-    return { impressions: 5000, reach: 3200, clicks: 140, engagements: 410, spend: 55.5 };
+    return { impressions: 5000, reach: 3200, clicks: 140, engagements: 410, conversations: 0, spend: 55.5 };
   }
 }
 
@@ -123,7 +128,7 @@ function setup(nowRef = { now: new Date("2026-11-01T10:00:00Z") }) {
   const store = new MemoryAdsStore();
   const platform = new FakeAdsPlatform();
   store.auth.set(T1, { accessToken: encryptToken("user-token-1"), tokenExpiresAt: new Date("2026-12-30T00:00:00Z") });
-  const base = { status: "PUBLISHED", permalink: "https://fb.test/p", caption: "New iced latte", accountName: "Café", accountStatus: "ACTIVE" };
+  const base = { status: "PUBLISHED", permalink: "https://fb.test/p", caption: "New iced latte", accountName: "Café", accountStatus: "ACTIVE", media: { kind: "image", publicKey: "k1" } as { kind: string; publicKey: string } | null };
   store.targets.set(FB_TARGET, { ...base, tenantId: T1, targetId: FB_TARGET, externalPostId: "900_777", accountId: "acc-fb", platform: "FACEBOOK", accountExternalId: "900", accountParentId: null });
   store.targets.set(IG_TARGET, { ...base, tenantId: T1, targetId: IG_TARGET, externalPostId: "1789", accountId: "acc-ig", platform: "INSTAGRAM", accountExternalId: "17840", accountParentId: "900" });
   store.targets.set(DRAFT_TARGET, { ...base, tenantId: T1, targetId: DRAFT_TARGET, status: "PENDING", externalPostId: null, accountId: "acc-fb", platform: "FACEBOOK", accountExternalId: "900", accountParentId: null });
@@ -223,6 +228,33 @@ describe("SocialAdsService.boost", () => {
     await store.createCampaign({ tenantId: T1, accountId: "acc-fb", platform: "FACEBOOK", postExternalId: "900_777", permalink: null, caption: null, adAccountId: "act_100", adAccountName: null, currency: "QAR", objective: "REACH", dailyBudget: 50, startAt: new Date(), endAt: new Date(), targeting: TARGETING, createdById: null });
     store.campaigns[0].createdAt = new Date(nowRef.now.getTime() - 60 * 1000);
     await expect(service.boost(T1, "u", boostInput())).rejects.toMatchObject({ status: 409, code: "BOOST_IN_PROGRESS" });
+  });
+
+  it("WhatsApp ad: needs a connected WhatsApp number and a post with media; passes the public photo link", async () => {
+    const store = new MemoryAdsStore();
+    const platform = new FakeAdsPlatform();
+    store.auth.set(T1, { accessToken: encryptToken("user-token-1"), tokenExpiresAt: new Date("2026-12-30T00:00:00Z") });
+    const base = { status: "PUBLISHED", permalink: null, caption: "Book your shoot", accountName: "Studio", accountStatus: "ACTIVE", accountId: "acc-fb", platform: "FACEBOOK", accountExternalId: "900", accountParentId: null };
+    store.targets.set("photo", { ...base, tenantId: T1, targetId: "photo", externalPostId: "900_1", media: { kind: "image", publicKey: "abc" } });
+    store.targets.set("text", { ...base, tenantId: T1, targetId: "text", externalPostId: "900_2", media: null });
+    store.targets.set("igvideo", { ...base, tenantId: T1, targetId: "igvideo", externalPostId: "17", platform: "INSTAGRAM", accountExternalId: "178", accountParentId: "900", media: { kind: "video", publicKey: "v" } });
+    let connected = false;
+    const service = new SocialAdsService(store, platform, {
+      limits: async () => ({ maxDailyBudgetUsd: 100, maxDays: 30 }),
+      rates: async () => ({ USD: 1, QAR: 3.64 }),
+      now: () => new Date("2026-11-01T10:00:00Z"),
+      publicMediaUrl: (k) => `https://api.test/m/${k}`,
+      whatsappReady: async () => connected,
+    });
+    const wa = (targetId: string) => boostInput({ targetId, objective: "WHATSAPP" });
+    await expect(service.boost(T1, "u", wa("photo"))).rejects.toThrow(/Connect your WhatsApp number first/);
+    connected = true;
+    await expect(service.boost(T1, "u", wa("text"))).rejects.toThrow(/needs a post with a photo or a video/);
+    await expect(service.boost(T1, "u", wa("igvideo"))).rejects.toThrow(/work with photo posts/);
+    expect(platform.boosts).toHaveLength(0);
+    const c = await service.boost(T1, "u", wa("photo"));
+    expect(c.objective).toBe("WHATSAPP");
+    expect(platform.boosts[0].spec).toMatchObject({ objective: "WHATSAPP", mediaUrl: "https://api.test/m/abc", mediaKind: "IMAGE" });
   });
 });
 
@@ -352,6 +384,8 @@ describe("MetaAdsGateway (request shapes, fake fetch)", () => {
     instagramUserId: null,
     postExternalId: "900_777",
     caption: "Hi",
+    mediaUrl: null,
+    mediaKind: null,
     dailyBudgetMinor: 5000,
     startAt: new Date("2026-11-01T10:00:00Z"),
     endAt: new Date("2026-11-08T10:00:00Z"),
@@ -433,6 +467,43 @@ describe("MetaAdsGateway (request shapes, fake fetch)", () => {
         : { json: { effective_status: "DISAPPROVED", ad_review_feedback: { global: { "Text policy": "Your ad has too much text" } } } };
     const g = new MetaAdsGateway();
     expect(await g.getState("t", "a1")).toEqual({ metaStatus: "DISAPPROVED", reviewFeedback: "Your ad has too much text" });
-    expect(await g.getInsights("t", "c1")).toEqual({ impressions: 1200, reach: 900, clicks: 33, engagements: 80, spend: 12.4 });
+    expect(await g.getInsights("t", "c1")).toEqual({ impressions: 1200, reach: 900, clicks: 33, engagements: 80, conversations: 0, spend: 12.4 });
+  });
+
+  it("Click-to-WhatsApp: photo uploaded to the ad account, ad set optimises for conversations, creative has the WhatsApp button", async () => {
+    handler = (c) => (c.url.endsWith("/act_100/adimages") ? { json: { images: { bytes: { hash: "img-hash-1" } } } } : okIds(c));
+    await new MetaAdsGateway().createBoost("t", spec({ objective: "WHATSAPP", mediaUrl: "https://api.test/api/public/social/media/k1", mediaKind: "IMAGE" }));
+    expect(calls.map((c) => `${c.method} ${c.url.replace("https://graph.test", "")}`)).toEqual([
+      "POST /act_100/campaigns",
+      "POST /act_100/adsets",
+      "GET https://api.test/api/public/social/media/k1",
+      "POST /act_100/adimages",
+      "POST /act_100/adcreatives",
+      "POST /act_100/ads",
+      "POST /c1",
+    ]);
+    expect(calls[0].body.objective).toBe("OUTCOME_ENGAGEMENT");
+    expect(calls[1].body).toMatchObject({ optimization_goal: "CONVERSATIONS", destination_type: "WHATSAPP", promoted_object: { page_id: "900" } });
+    expect(typeof calls[3].body.bytes).toBe("string");
+    expect(calls[4].body).toMatchObject({
+      object_story_spec: {
+        page_id: "900",
+        link_data: { link: "https://api.whatsapp.com/send", message: "Hi", image_hash: "img-hash-1", call_to_action: { type: "WHATSAPP_MESSAGE", value: { app_destination: "WHATSAPP" } } },
+      },
+    });
+  });
+
+  it("Click-to-WhatsApp from a Facebook video uses the video with the WhatsApp button; Instagram adds the IG account", async () => {
+    handler = (c) => (c.url.endsWith("/act_100/adimages") ? { json: { images: { bytes: { hash: "h" } } } } : okIds(c));
+    await new MetaAdsGateway().createBoost("t", spec({ objective: "WHATSAPP", postExternalId: "555", mediaKind: "VIDEO", mediaUrl: "https://api.test/v.mp4" }));
+    expect(calls.find((c) => c.url.endsWith("/adcreatives"))!.body.object_story_spec.video_data).toMatchObject({ video_id: "555", call_to_action: { type: "WHATSAPP_MESSAGE" } });
+    calls = [];
+    await new MetaAdsGateway().createBoost("t", spec({ objective: "WHATSAPP", platform: "INSTAGRAM", instagramUserId: "17840", postExternalId: "1789", mediaUrl: "https://api.test/p.jpg", mediaKind: "IMAGE" }));
+    expect(calls.find((c) => c.url.endsWith("/adcreatives"))!.body.object_story_spec).toMatchObject({ page_id: "900", instagram_user_id: "17840", link_data: { image_hash: "h" } });
+  });
+
+  it("counts conversations started from the ad", async () => {
+    handler = () => ({ json: { data: [{ impressions: "10", reach: "9", clicks: "3", spend: "1", actions: [{ action_type: "link_click", value: "3" }, { action_type: "onsite_conversion.messaging_conversation_started_7d", value: "2" }] }] } });
+    expect((await new MetaAdsGateway().getInsights("t", "c1")).conversations).toBe(2);
   });
 });

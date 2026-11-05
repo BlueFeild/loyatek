@@ -22,6 +22,8 @@ export interface BoostTarget {
   // انستجرام: صفحة فيسبوك المربوطة بيه
   accountParentId: string | null;
   accountStatus: string;
+  // ملف البوست عندنا (لإعلان واتساب بنعمل الإعلان من نفس الصورة)
+  media: { kind: string; publicKey: string } | null;
 }
 
 export interface AdCampaignRow {
@@ -52,6 +54,7 @@ export interface AdCampaignRow {
   reach: number;
   clicks: number;
   engagements: number;
+  conversations: number;
   spend: number;
   syncedAt: Date | null;
   createdAt: Date;
@@ -78,7 +81,7 @@ export interface NewAdCampaign {
 export type AdCampaignPatch = Partial<
   Pick<
     AdCampaignRow,
-    "status" | "metaStatus" | "reviewFeedback" | "error" | "metaCampaignId" | "metaAdSetId" | "metaAdId" | "dailyBudget" | "impressions" | "reach" | "clicks" | "engagements" | "spend" | "syncedAt"
+    "status" | "metaStatus" | "reviewFeedback" | "error" | "metaCampaignId" | "metaAdSetId" | "metaAdId" | "dailyBudget" | "impressions" | "reach" | "clicks" | "engagements" | "conversations" | "spend" | "syncedAt"
   > & { metaCreativeId: string | null }
 >;
 
@@ -101,6 +104,8 @@ export interface AdsStore {
   listCampaigns(tenantId: string): Promise<AdCampaignRow[]>;
   addEvent(e: { tenantId: string; campaignId: string; userId: string | null; action: string; details?: Record<string, unknown> }): Promise<void>;
   events(tenantId: string, campaignId: string): Promise<AdEventView[]>;
+  // محادثات واتساب وصلت عندنا من الإعلانات دي (رقم الإعلان عند Meta ← العدد)
+  adChats(tenantId: string, metaAdIds: string[]): Promise<Map<string, number>>;
 }
 
 const campaignInclude = { account: { select: { name: true } } } as const;
@@ -134,6 +139,7 @@ function toRow(c: any): AdCampaignRow {
     reach: c.reach,
     clicks: c.clicks,
     engagements: c.engagements,
+    conversations: c.conversations ?? 0,
     spend: Number(c.spend),
     syncedAt: c.syncedAt,
     createdAt: c.createdAt,
@@ -143,6 +149,12 @@ function toRow(c: any): AdCampaignRow {
 // الوصول لقاعدة البيانات بس - كل حاجة بشركة صاحب الطلب
 export class PrismaAdsRepository implements AdsStore {
   constructor(private readonly db: PrismaClient) {}
+
+  async adChats(tenantId: string, metaAdIds: string[]) {
+    if (!metaAdIds.length) return new Map<string, number>();
+    const rows = await this.db.whatsappConversation.groupBy({ by: ["sourceAdId"], where: { tenantId, sourceAdId: { in: metaAdIds } }, _count: { _all: true } });
+    return new Map(rows.map((r) => [String(r.sourceAdId), r._count._all]));
+  }
 
   async saveAuth(tenantId: string, auth: StoredAdsAuth & { connectedById: string | null }) {
     await this.db.socialAdsAuth.upsert({ where: { tenantId }, create: { tenantId, ...auth }, update: auth });
@@ -160,7 +172,7 @@ export class PrismaAdsRepository implements AdsStore {
         status: true,
         externalPostId: true,
         permalink: true,
-        post: { select: { caption: true } },
+        post: { select: { caption: true, media: { select: { kind: true, publicKey: true } } } },
         account: { select: { id: true, name: true, platform: true, externalId: true, parentId: true, status: true } },
       },
     });
@@ -177,6 +189,7 @@ export class PrismaAdsRepository implements AdsStore {
       accountExternalId: t.account.externalId,
       accountParentId: t.account.parentId,
       accountStatus: t.account.status,
+      media: t.post.media ?? null,
     };
   }
 

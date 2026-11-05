@@ -1234,11 +1234,16 @@ model WhatsappConversation {
   // التاجر رد بنفسه ← الموظف الذكي يسكت على المحادثة دي لحد الوقت ده
   aiPausedUntil    DateTime?
   lastInboundAt    DateTime?
+  // العميل جه من إعلان Click-to-WhatsApp (رقم الإعلان عند Meta + عنوانه)
+  sourceAdId       String?
+  sourceAdHeadline String?
+  sourceAt         DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
   @@unique([tenantId, phone])
   @@index([tenantId, status])
+  @@index([tenantId, sourceAdId])
   @@map("whatsapp_conversations")
 }
 
@@ -2161,7 +2166,7 @@ model SocialAdCampaign {
   adAccountName  String?
   // عملة حساب الإعلانات (Meta بتحاسب بيها)
   currency       String
-  objective      String // REACH | ENGAGEMENT
+  objective      String // REACH | ENGAGEMENT | WHATSAPP
   dailyBudget    Decimal          @db.Decimal(18, 2)
   startAt        DateTime
   endAt          DateTime
@@ -2178,6 +2183,8 @@ model SocialAdCampaign {
   reach          Int              @default(0)
   clicks         Int              @default(0)
   engagements    Int              @default(0)
+  // محادثات واتساب اللي بدأت من الإعلان (من Meta)
+  conversations  Int              @default(0)
   spend          Decimal          @default(0) @db.Decimal(18, 2)
   syncedAt       DateTime?
   createdById    String?

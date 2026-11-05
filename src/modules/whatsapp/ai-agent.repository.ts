@@ -24,6 +24,9 @@ export interface ConversationState {
   handoffReason: string | null;
   aiPausedUntil: Date | null;
   lastInboundAt: Date | null;
+  // جه من إعلان Click-to-WhatsApp (عنوان الإعلان)
+  sourceAdHeadline?: string | null;
+  sourceAt?: Date | null;
 }
 
 export interface AiAgentStore {
@@ -46,8 +49,17 @@ export interface AgentMessenger {
   record(m: { tenantId: string; phone: string; name: string | null; body: string; waMessageId: string | null; ok: boolean; error: string | null }): Promise<void>;
 }
 
-const stateSelect = { phone: true, status: true, assignedToUserId: true, handoffReason: true, aiPausedUntil: true, lastInboundAt: true } as const;
-const asState = (r: { phone: string; status: string; assignedToUserId: string | null; handoffReason: string | null; aiPausedUntil: Date | null; lastInboundAt: Date | null }): ConversationState => ({
+const stateSelect = { phone: true, status: true, assignedToUserId: true, handoffReason: true, aiPausedUntil: true, lastInboundAt: true, sourceAdHeadline: true, sourceAt: true } as const;
+const asState = (r: {
+  phone: string;
+  status: string;
+  assignedToUserId: string | null;
+  handoffReason: string | null;
+  aiPausedUntil: Date | null;
+  lastInboundAt: Date | null;
+  sourceAdHeadline?: string | null;
+  sourceAt?: Date | null;
+}): ConversationState => ({
   ...r,
   status: r.status === "handoff" || r.status === "closed" ? r.status : "open",
 });

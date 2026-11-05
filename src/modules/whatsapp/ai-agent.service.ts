@@ -24,6 +24,8 @@ export interface InboundMessage {
   name: string | null;
   text: string;
   type: string;
+  // العميل جه دلوقتي من إعلان Click-to-WhatsApp (عنوان + كلام الإعلان)
+  ad?: { headline: string; body: string } | null;
 }
 
 export class AiAgentService {
@@ -110,7 +112,7 @@ export class AiAgentService {
     let reply;
     try {
       ({ result: reply } = await this.credits.chargeFor({ tenantId, cost: AGENT_RULES.cost, reason: "AI_AGENT", refId: randomUUID() }, () =>
-        this.responder!.reply({ business, history, message: m.text, customerName: m.name })
+        this.responder!.reply({ business, history, message: m.text, customerName: m.name, ad: m.ad ?? null })
       ));
     } catch (err) {
       // من غير نقاط أو المزوّد وقع: النقطة رجعت (chargeFor) والبوت العادي يرد

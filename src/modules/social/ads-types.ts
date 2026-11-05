@@ -1,6 +1,7 @@
 // الإعلانات المدفوعة ("تمويل بوست"): العقود اللي الخدمة بتعتمد عليها (مش على Meta نفسها) + ونسخة وهمية للاختبارات
 
-export const AD_OBJECTIVES = ["REACH", "ENGAGEMENT"] as const;
+// WHATSAPP = إعلان "Click-to-WhatsApp": الزرار بيفتح محادثة واتساب مع رقم الشركة
+export const AD_OBJECTIVES = ["REACH", "ENGAGEMENT", "WHATSAPP"] as const;
 export type AdObjective = (typeof AD_OBJECTIVES)[number];
 
 export const AD_GENDERS = ["all", "men", "women"] as const;
@@ -53,6 +54,9 @@ export interface BoostSpec {
   instagramUserId: string | null;
   postExternalId: string;
   caption: string | null;
+  // صورة البوست (لإعلان واتساب: الإعلان بيتعمل من جديد بالصورة + زرار "إرسال رسالة واتساب")
+  mediaUrl: string | null;
+  mediaKind: "IMAGE" | "VIDEO" | null;
   // بأصغر وحدة للعملة (سنت / درهم) زي ما Meta عايزة
   dailyBudgetMinor: number;
   startAt: Date;
@@ -78,6 +82,8 @@ export interface AdInsights {
   reach: number;
   clicks: number;
   engagements: number;
+  // محادثات واتساب/ماسنجر اللي بدأت من الإعلان (Meta: messaging_conversation_started_7d)
+  conversations: number;
   spend: number;
 }
 

@@ -14,6 +14,10 @@ export interface AdsLimits {
 export interface AdsServiceOptions {
   limits: () => Promise<AdsLimits>;
   rates: () => Promise<Rates>;
+  // لينك عام لملف البوست (Meta بتنزّل الصورة منه لإعلان واتساب)
+  publicMediaUrl?: (publicKey: string) => string;
+  // إعلان واتساب محتاج رقم واتساب متوصل في الشركة
+  whatsappReady?: (tenantId: string) => Promise<boolean>;
   now?: () => Date;
 }
 
@@ -72,6 +76,9 @@ export class SocialAdsService {
   private friendly(err: unknown): unknown {
     if (!(err instanceof SocialPlatformError)) return err;
     if (err.needsReconnect) return this.reconnectError();
+    if (/whatsapp/i.test(err.message)) {
+      return new ValidationError(`Meta: ${err.message} — make sure your WhatsApp Business number is linked to this Facebook Page (Page settings → Linked accounts → WhatsApp).`);
+    }
     if (err.platformCode === 200 || err.platformCode === 10 || err.platformCode === 294) {
       return this.reconnectError("Meta didn't allow ads for this connection yet — press “Connect Facebook & Instagram” again and allow ads (manage ads) in the Meta window.");
     }
@@ -132,6 +139,13 @@ export class SocialAdsService {
     if (target.accountStatus !== "ACTIVE") throw new ValidationError("This page needs to be connected again before you can boost its posts.");
     const pageId = target.platform === "INSTAGRAM" ? target.accountParentId : target.accountExternalId;
     if (!pageId) throw new ValidationError("This Instagram account isn't linked to a Facebook Page — connect it again.");
+    if (input.objective === "WHATSAPP") {
+      if (this.opts.whatsappReady && !(await this.opts.whatsappReady(tenantId))) {
+        throw new ValidationError("Connect your WhatsApp number first (WhatsApp page → connection) — the ad opens a chat with it.");
+      }
+      if (!target.media) throw new ValidationError("A WhatsApp ad needs a post with a photo or a video.");
+      if (target.platform === "INSTAGRAM" && target.media.kind !== "image") throw new ValidationError("For Instagram, WhatsApp ads work with photo posts — pick a photo post or use the Facebook video post.");
+    }
 
     // المدة والميعاد
     const days = input.days;
@@ -187,6 +201,8 @@ export class SocialAdsService {
           instagramUserId: target.platform === "INSTAGRAM" ? target.accountExternalId : null,
           postExternalId: target.externalPostId!,
           caption: target.caption || null,
+          mediaUrl: target.media && this.opts.publicMediaUrl ? this.opts.publicMediaUrl(target.media.publicKey) : null,
+          mediaKind: target.media ? (target.media.kind === "video" ? "VIDEO" : "IMAGE") : null,
           dailyBudgetMinor: toMinorUnits(daily),
           startAt,
           endAt,
@@ -249,7 +265,8 @@ export class SocialAdsService {
     const token = rows.some((r) => !FINAL.includes(r.status)) ? await this.tokenOrNull(tenantId) : null;
     // أول 10 بس بيتحدّثوا في الطلب الواحد (الباقي في المرة الجاية)
     const fresh = await Promise.all(rows.map((r, i) => (i < 10 ? this.refresh(r, token, false) : r)));
-    return { campaigns: fresh.map((r) => this.view(r)), overview: await this.overview(tenantId) };
+    const chats = await this.store.adChats(tenantId, fresh.filter((r) => r.objective === "WHATSAPP" && r.metaAdId).map((r) => r.metaAdId!));
+    return { campaigns: fresh.map((r) => ({ ...this.view(r), inboxChats: r.metaAdId ? chats.get(r.metaAdId) ?? 0 : 0 })), overview: await this.overview(tenantId) };
   }
 
   async get(tenantId: string, id: string) {

@@ -58,6 +58,9 @@ export function buildAgentPrompt(input: AgentInput): string {
     lines.push("\nConversation so far (oldest first):");
     for (const t of input.history.slice(-AGENT_LIMITS.historyTurns)) lines.push(`${t.from === "customer" ? "Customer" : "Business"}: ${t.text.slice(0, 500)}`);
   }
+  if (input.ad && (input.ad.headline || input.ad.body)) {
+    lines.push(`\nThe customer just tapped your ad on Facebook/Instagram: "${input.ad.headline}"${input.ad.body ? ` — ${input.ad.body.slice(0, 300)}` : ""}. Welcome them and help with what the ad offers (only with facts from the data).`);
+  }
   lines.push(`\nNew message from the customer${input.customerName ? ` (${input.customerName})` : ""}:\n${input.message.slice(0, 2000)}`);
   return lines.join("\n");
 }

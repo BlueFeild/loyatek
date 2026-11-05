@@ -20,7 +20,12 @@ const ACCOUNT_STATUS: Record<number, string> = {
 const GOALS = {
   REACH: { objective: "OUTCOME_AWARENESS", optimization: "REACH" },
   ENGAGEMENT: { objective: "OUTCOME_ENGAGEMENT", optimization: "POST_ENGAGEMENT" },
+  // Click-to-WhatsApp: Meta بتدوّر على ناس هتبدأ محادثة
+  WHATSAPP: { objective: "OUTCOME_ENGAGEMENT", optimization: "CONVERSATIONS" },
 } as const;
+
+const WHATSAPP_CTA = { type: "WHATSAPP_MESSAGE", value: { app_destination: "WHATSAPP" } };
+const CONVERSATION_ACTIONS = ["onsite_conversion.messaging_conversation_started_7d"];
 
 function targetingFor(t: AdTargeting, platform: BoostSpec["platform"]) {
   const geo: Record<string, unknown> = {};
@@ -60,8 +65,33 @@ export class MetaAdsGateway implements AdsPlatform {
       .map((c: any) => ({ key: String(c.key), name: [c.name, c.region].filter(Boolean).join(", "), country: String(c.country_code ?? "") }));
   }
 
+  // صورة البوست ← مكتبة صور حساب الإعلانات (Meta بتدّينا hash نستخدمه في الإعلان)
+  private async uploadImage(userToken: string, adAccountId: string, url: string): Promise<string> {
+    const res = await fetch(url);
+    if (!res.ok) throw new SocialPlatformError(`Couldn't read the post photo (${res.status}).`);
+    const bytes = Buffer.from(await res.arrayBuffer()).toString("base64");
+    const r = await metaGraph(`/${adAccountId}/adimages`, { method: "POST", token: userToken, body: { bytes } });
+    const first = r.images && typeof r.images === "object" ? (Object.values(r.images)[0] as any) : null;
+    if (!first?.hash) throw new SocialPlatformError("Meta didn't accept the post photo for the ad.");
+    return String(first.hash);
+  }
+
+  // إعلان واتساب: نفس الكلام والصورة/الفيديو + زرار "إرسال رسالة واتساب"
+  private async whatsappCreative(userToken: string, s: BoostSpec): Promise<Record<string, unknown>> {
+    const message = s.caption ?? "";
+    const ig = s.platform === "INSTAGRAM" && s.instagramUserId ? { instagram_user_id: s.instagramUserId } : {};
+    if (s.mediaKind === "VIDEO" && s.platform === "FACEBOOK" && !s.postExternalId.includes("_")) {
+      const v = await metaGraph(`/${s.postExternalId}?fields=picture`, { token: userToken });
+      return { object_story_spec: { page_id: s.pageId, ...ig, video_data: { video_id: s.postExternalId, image_url: v.picture, message, call_to_action: WHATSAPP_CTA } } };
+    }
+    if (!s.mediaUrl) throw new SocialPlatformError("A WhatsApp ad needs a post with a photo.");
+    const imageHash = await this.uploadImage(userToken, s.adAccountId, s.mediaUrl);
+    return { object_story_spec: { page_id: s.pageId, ...ig, link_data: { link: "https://api.whatsapp.com/send", message, image_hash: imageHash, call_to_action: WHATSAPP_CTA } } };
+  }
+
   // شكل الإعلان = البوست نفسه (بلايكاته وتعليقاته)
   private async creativeBody(userToken: string, s: BoostSpec): Promise<Record<string, unknown>> {
+    if (s.objective === "WHATSAPP") return this.whatsappCreative(userToken, s);
     if (s.platform === "INSTAGRAM") {
       if (!s.instagramUserId) throw new SocialPlatformError("This Instagram account isn't linked to a Facebook Page — connect it again.");
       return { object_id: s.pageId, instagram_user_id: s.instagramUserId, source_instagram_media_id: s.postExternalId };
@@ -97,6 +127,7 @@ export class MetaAdsGateway implements AdsPlatform {
           billing_event: "IMPRESSIONS",
           optimization_goal: goal.optimization,
           bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+          ...(s.objective === "WHATSAPP" ? { destination_type: "WHATSAPP", promoted_object: { page_id: s.pageId } } : {}),
           start_time: s.startAt.toISOString(),
           end_time: s.endAt.toISOString(),
           targeting: targetingFor(s.targeting, s.platform),
@@ -137,10 +168,12 @@ export class MetaAdsGateway implements AdsPlatform {
   }
 
   async getInsights(userToken: string, campaignId: string): Promise<AdInsights> {
-    const fields = "impressions,reach,clicks,spend,inline_post_engagement";
+    const fields = "impressions,reach,clicks,spend,inline_post_engagement,actions";
     const r = await metaGraph(`/${campaignId}/insights?fields=${fields}&date_preset=maximum`, { token: userToken });
     const row = Array.isArray(r.data) && r.data[0] ? r.data[0] : {};
     const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-    return { impressions: n(row.impressions), reach: n(row.reach), clicks: n(row.clicks), engagements: n(row.inline_post_engagement), spend: n(row.spend) };
+    const actions = Array.isArray(row.actions) ? row.actions : [];
+    const conversations = actions.filter((a: any) => CONVERSATION_ACTIONS.includes(a?.action_type)).reduce((sum: number, a: any) => sum + n(a.value), 0);
+    return { impressions: n(row.impressions), reach: n(row.reach), clicks: n(row.clicks), engagements: n(row.inline_post_engagement), conversations, spend: n(row.spend) };
   }
 }

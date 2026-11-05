@@ -50,6 +50,8 @@ export interface AgentInput {
   history: AgentTurn[];
   message: string;
   customerName: string | null;
+  // الرسالة دي جاية من إعلان (الموظف يعرف العميل مهتم بإيه)
+  ad?: { headline: string; body: string } | null;
 }
 
 export const agentReplySchema = z.object({

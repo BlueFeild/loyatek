@@ -55,6 +55,8 @@ const socialAdsService = new SocialAdsService(new PrismaAdsRepository(prisma), n
     return { maxDailyBudgetUsd: c.adsMaxDailyBudgetUsd, maxDays: c.adsMaxDays };
   },
   rates: getRates,
+  publicMediaUrl: (key) => `${publicApiBaseUrl()}/api/public/social/media/${key}`,
+  whatsappReady: async (tenantId) => Boolean((await prisma.whatsappSettings.findUnique({ where: { tenantId }, select: { isConnected: true } }))?.isConnected),
 });
 const frontendBaseUrl = () => (process.env.FRONTEND_BASE_URL || "https://digital.blue-field.co").replace(/\/+$/, "");
 
