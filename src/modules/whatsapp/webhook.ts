@@ -156,8 +156,11 @@ platformWhatsappWebhookRouter.post("/", async (req: Request & { rawBody?: Buffer
       take: 1,
       select: { tenantId: true },
     });
-    if (owners.length === 0) console.warn(`[whatsapp-webhook] message for phone number id ${phoneNumberId} but no connected company has it`);
-    for (const o of owners) {
+    // نفس الرقم ممكن يكون رقم إضافي (فرع) عند شركة
+    const extraOwners = owners.length ? [] : await container.whatsappNumbers.tenantsWithExtra(phoneNumberId);
+    const all = [...owners.map((o) => o.tenantId), ...extraOwners].map((tenantId) => ({ tenantId }));
+    if (all.length === 0) console.warn(`[whatsapp-webhook] message for phone number id ${phoneNumberId} but no connected company has it`);
+    for (const o of all) {
       try {
         // handleWebhook بيتجاهل أي رقم غير رقم التاجر ده
         await handleWebhook(o.tenantId, req.body);
@@ -174,8 +177,9 @@ export async function handleWebhook(tenantId: string, body: any) {
   await prisma.whatsappSettings.update({ where: { tenantId }, data: { lastWebhookAt: new Date() } });
 
   for (const batch of parseWebhookPayload(body)) {
-    // رسايل لرقم تاني غير رقم التاجر المتسجّل - بنتجاهلها
-    if (batch.phoneNumberId && settings.metaPhoneNumberId && batch.phoneNumberId !== settings.metaPhoneNumberId) continue;
+    // رسايل لرقم مش تبع التاجر (لا الأساسي ولا رقم إضافي متوصل) - بنتجاهلها
+    if (batch.phoneNumberId && !(await container.whatsappNumbers.ownsIncoming(tenantId, batch.phoneNumberId, settings.metaPhoneNumberId))) continue;
+    const viaNumber = batch.phoneNumberId ?? settings.metaPhoneNumberId ?? null;
 
     for (const s of batch.statuses) {
       // الحالة بتتقدّم بس (sent ← delivered ← read) - Meta ممكن تبعت delivered متأخرة بعد read
@@ -189,7 +193,7 @@ export async function handleWebhook(tenantId: string, body: any) {
     for (const m of batch.messages) {
       const already = await prisma.whatsappMessage.findUnique({ where: { waMessageId: m.id } });
       if (already) continue; // Meta بتعيد بعت نفس الرسالة أحيانًا
-      await recordWhatsappMessage({ tenantId, direction: "IN", contactPhone: m.from, contactName: m.name, body: m.text, kind: m.type, waMessageId: m.id });
+      await recordWhatsappMessage({ tenantId, direction: "IN", contactPhone: m.from, contactName: m.name, body: m.text, kind: m.type, waMessageId: m.id, phoneNumberId: viaNumber });
       // جه من إعلان ← بنسجّل الإعلان على المحادثة (يظهر في Team Inbox والإحصائيات وفي الإعلان نفسه)
       if (m.referral) await recordAdSource(tenantId, m.from.replace(/[^\d]/g, ""), m.referral);
       // دفتر جهات الاتصال + STOP / START (لو كده: نأكد للعميل ومانشغّلش البوت)
@@ -242,11 +246,12 @@ async function recordAdSource(tenantId: string, phone: string, ref: AdReferral) 
 }
 
 async function confirmOptChange(tenantId: string, m: IncomingMessage, intent: "OUT" | "IN") {
-  const settings = await prisma.whatsappSettings.findUnique({ where: { tenantId } });
-  if (!settings?.isConnected || !settings.metaAccessToken || !settings.metaPhoneNumberId) return;
+  const sender = await container.whatsappNumbers.senderFor(tenantId, { customerPhone: m.from });
+  if (!sender) return;
   const body = OPT_REPLIES[intent];
-  const result = await sendWhatsappTextMessage(settings.metaAccessToken, settings.metaPhoneNumberId, m.from, body);
+  const result = await sendWhatsappTextMessage(sender.token, sender.phoneNumberId, m.from, body);
   await recordWhatsappMessage({
+    phoneNumberId: sender.phoneNumberId,
     tenantId,
     direction: "OUT",
     contactPhone: m.from,
@@ -296,8 +301,12 @@ async function runBot(tenantId: string, m: IncomingMessage) {
   });
   if (!reply) return;
 
-  const result = await sendWhatsappTextMessage(settings.metaAccessToken, settings.metaPhoneNumberId, m.from, reply);
+  // الرد من نفس الرقم اللي العميل كتب عليه
+  const sender = await container.whatsappNumbers.senderFor(tenantId, { customerPhone: m.from });
+  if (!sender) return;
+  const result = await sendWhatsappTextMessage(sender.token, sender.phoneNumberId, m.from, reply);
   await recordWhatsappMessage({
+    phoneNumberId: sender.phoneNumberId,
     tenantId,
     direction: "OUT",
     contactPhone: m.from,

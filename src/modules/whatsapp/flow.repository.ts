@@ -41,9 +41,9 @@ export interface FlowStore {
 }
 
 export interface FlowMessenger {
-  connection(tenantId: string): Promise<{ token: string; phoneNumberId: string } | null>;
+  connection(tenantId: string, phone?: string): Promise<{ token: string; phoneNumberId: string } | null>;
   send(conn: { token: string; phoneNumberId: string }, to: string, m: InteractiveMessage): Promise<{ ok: boolean; messageId?: string; error?: string }>;
-  record(m: { tenantId: string; phone: string; name: string | null; body: string; waMessageId: string | null; ok: boolean; error: string | null }): Promise<void>;
+  record(m: { tenantId: string; phone: string; name: string | null; body: string; waMessageId: string | null; ok: boolean; error: string | null; phoneNumberId?: string | null }): Promise<void>;
 }
 
 const nodesOf = (raw: unknown): FlowNode[] => (Array.isArray(raw) ? (raw as FlowNode[]) : []);
@@ -175,19 +175,18 @@ export class PrismaFlowRepository implements FlowStore {
 
 // الإرسال الحقيقي (Meta) + التسجيل في Team Inbox كرسالة "flow"
 export class MetaFlowMessenger implements FlowMessenger {
-  constructor(private readonly db: PrismaClient) {}
+  constructor(private readonly senders: { senderFor(tenantId: string, opts: { customerPhone?: string | null }): Promise<{ token: string; phoneNumberId: string } | null> }) {}
 
-  async connection(tenantId: string) {
-    const s = await this.db.whatsappSettings.findUnique({ where: { tenantId }, select: { isConnected: true, metaAccessToken: true, metaPhoneNumberId: true } });
-    if (!s?.isConnected || !s.metaAccessToken || !s.metaPhoneNumberId) return null;
-    return { token: s.metaAccessToken, phoneNumberId: s.metaPhoneNumberId };
+  async connection(tenantId: string, phone?: string) {
+    const s = await this.senders.senderFor(tenantId, { customerPhone: phone });
+    return s ? { token: s.token, phoneNumberId: s.phoneNumberId } : null;
   }
 
   send(conn: { token: string; phoneNumberId: string }, to: string, m: InteractiveMessage) {
     return sendWhatsappInteractiveMessage(conn.token, conn.phoneNumberId, to, m);
   }
 
-  async record(m: { tenantId: string; phone: string; name: string | null; body: string; waMessageId: string | null; ok: boolean; error: string | null }) {
-    await recordWhatsappMessage({ tenantId: m.tenantId, direction: "OUT", contactPhone: m.phone, contactName: m.name, body: m.body, kind: "flow", waMessageId: m.waMessageId, status: m.ok ? "sent" : "failed", error: m.error });
+  async record(m: { tenantId: string; phone: string; name: string | null; body: string; waMessageId: string | null; ok: boolean; error: string | null; phoneNumberId?: string | null }) {
+    await recordWhatsappMessage({ tenantId: m.tenantId, direction: "OUT", contactPhone: m.phone, contactName: m.name, body: m.body, kind: "flow", waMessageId: m.waMessageId, status: m.ok ? "sent" : "failed", error: m.error, phoneNumberId: m.phoneNumberId });
   }
 }

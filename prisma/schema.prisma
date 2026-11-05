@@ -127,6 +127,7 @@ model Tenant {
   whatsappFlows WhatsappFlow[]
   whatsappFlowSessions WhatsappFlowSession[]
   whatsappFlowResponses WhatsappFlowResponse[]
+  whatsappNumbers WhatsappNumber[]
   whatsappAutoReplies WhatsappAutoReply[]
   botFlowNodes    BotFlowNode[]
   whatsappContactNotes WhatsappContactNote[]
@@ -1199,6 +1200,8 @@ model WhatsappMessage {
   error        String?
   // رسالة طالعة من حملة (عشان تقرير الحملة: اتبعت / اتسلّم / اتقرا / رد)
   campaignId   String?
+  // رقم الشركة اللي الرسالة وصلت عليه / اتبعتت منه (phone number id عند Meta) - null = قبل الأرقام المتعددة
+  phoneNumberId String?
   createdAt    DateTime @default(now())
 
   @@index([tenantId, contactPhone, createdAt])
@@ -2264,4 +2267,27 @@ model WhatsappFlowResponse {
 
   @@index([tenantId, flowId, completedAt])
   @@map("whatsapp_flow_responses")
+}
+
+// رقم واتساب إضافي لنفس الشركة (مثلًا رقم لكل فرع). الرقم الأساسي فاضل في WhatsappSettings.
+// accessToken فاضي = بنستخدم توكن الرقم الأساسي (نفس حساب Meta)، ولو موجود بيتخزن متشفّر
+model WhatsappNumber {
+  id                 String    @id @default(uuid())
+  tenantId           String
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  label              String
+  branchId           String?
+  phoneNumberId      String
+  wabaId             String?
+  displayPhoneNumber String?
+  accessToken        String?
+  isConnected        Boolean   @default(false)
+  lastVerifiedAt     DateTime?
+  lastError          String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([phoneNumberId])
+  @@map("whatsapp_numbers")
 }

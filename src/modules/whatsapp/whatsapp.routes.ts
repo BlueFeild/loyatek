@@ -38,6 +38,7 @@ import { embeddedSignupConfig, exchangeSignupCode, findWabaPhoneNumber, register
 import { contactBookRouter } from "./contact-book.routes";
 import { aiAgentRouter } from "./ai-agent.routes";
 import { flowRouter } from "./flow.routes";
+import { whatsappNumbersRouter } from "./whatsapp-numbers.routes";
 import { PrismaContactBookRepository } from "./contact-book.repository";
 import { normalizePhone, normalizeTags } from "./contact-book.service";
 import { summarizeCampaign } from "./campaign-report";
@@ -53,6 +54,7 @@ whatsappRouter.use("/contact-book", contactBookRouter);
 // موظف الذكاء الاصطناعي - /api/whatsapp/ai-agent
 whatsappRouter.use("/ai-agent", aiAgentRouter);
 whatsappRouter.use("/flows", flowRouter);
+whatsappRouter.use("/numbers", whatsappNumbersRouter);
 
 // --- Settings (ربط حساب Meta الحقيقي) ---
 
@@ -344,16 +346,19 @@ whatsappRouter.delete("/auto-replies/:id", requireRole("OWNER", "ADMIN", "MANAGE
 whatsappRouter.get("/conversations", async (req, res) => {
   const tenantId = req.auth!.tenantId;
   const recent = await prisma.whatsappMessage.findMany({ where: { tenantId }, orderBy: { createdAt: "desc" }, take: 500 });
-  const byPhone = new Map<string, { phone: string; name: string | null; lastMessage: string; lastAt: Date; lastDirection: string; lastInAt: Date | null }>();
+  const byPhone = new Map<string, { phone: string; name: string | null; lastMessage: string; lastAt: Date; lastDirection: string; lastInAt: Date | null; viaPhoneNumberId: string | null }>();
   for (const m of recent) {
     const c = byPhone.get(m.contactPhone);
     if (!c) {
-      byPhone.set(m.contactPhone, { phone: m.contactPhone, name: m.contactName, lastMessage: m.body, lastAt: m.createdAt, lastDirection: m.direction, lastInAt: m.direction === "IN" ? m.createdAt : null });
+      byPhone.set(m.contactPhone, { phone: m.contactPhone, name: m.contactName, lastMessage: m.body, lastAt: m.createdAt, lastDirection: m.direction, lastInAt: m.direction === "IN" ? m.createdAt : null, viaPhoneNumberId: m.direction === "IN" ? m.phoneNumberId : null });
     } else {
       if (!c.name && m.contactName) c.name = m.contactName;
       if (!c.lastInAt && m.direction === "IN") c.lastInAt = m.createdAt;
+      if (!c.viaPhoneNumberId && m.direction === "IN" && m.phoneNumberId) c.viaPhoneNumberId = m.phoneNumberId;
     }
   }
+  // أنهي رقم من أرقام الشركة المحادثة شغالة عليه (لو عندها أكتر من رقم)
+  const numberLabels = await container.whatsappNumbers.labelsByPhoneNumberId(tenantId);
   // حالة كل محادثة (مفتوحة / محتاجة موظف / اتقفلت) + المسؤول + هل الموظف الذكي ساكت عليها
   const states = await container.aiAgentService.conversationStates(tenantId, [...byPhone.keys()]);
   const now = Date.now();
@@ -367,6 +372,7 @@ whatsappRouter.get("/conversations", async (req, res) => {
       handoffReason: s?.handoffReason ?? null,
       aiPaused: Boolean(s?.aiPausedUntil && s.aiPausedUntil.getTime() > now),
       fromAd: s?.sourceAdHeadline || s?.sourceAt ? { headline: s.sourceAdHeadline ?? "", at: s.sourceAt ?? null } : null,
+      numberLabel: numberLabels.size > 1 && c.viaPhoneNumberId ? numberLabels.get(c.viaPhoneNumberId) ?? null : null,
     };
   });
   res.json(status ? list.filter((c) => c.status === status) : list);
@@ -382,11 +388,13 @@ whatsappRouter.get("/conversations/:phone/messages", async (req, res) => {
 whatsappRouter.post("/conversations/:phone/reply", requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async (req, res) => {
   const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
   if (!text || text.length > 4000) return res.status(400).json({ error: "Write a message (up to 4000 characters)." });
-  const s = await getOrCreateWhatsappSettings(req.auth!.tenantId);
-  if (!s.isConnected || !s.metaAccessToken || !s.metaPhoneNumberId) return res.status(400).json({ error: "Connect WhatsApp first." });
   const phone = req.params.phone.replace(/[^\d]/g, "");
-  const result = await sendWhatsappTextMessage(s.metaAccessToken, s.metaPhoneNumberId, phone, text);
+  // من نفس الرقم اللي العميل كتب عليه (أو رقم اختاره الموظف)
+  const sender = await container.whatsappNumbers.senderFor(req.auth!.tenantId, { customerPhone: phone, numberId: typeof req.body?.numberId === "string" ? req.body.numberId : null });
+  if (!sender) return res.status(400).json({ error: "Connect WhatsApp first." });
+  const result = await sendWhatsappTextMessage(sender.token, sender.phoneNumberId, phone, text);
   const row = await recordWhatsappMessage({
+    phoneNumberId: sender.phoneNumberId,
     tenantId: req.auth!.tenantId,
     direction: "OUT",
     contactPhone: phone,
@@ -421,8 +429,8 @@ whatsappRouter.post("/conversations/:phone/template", requireRole("OWNER", "ADMI
   const phone = req.params.phone.replace(/[^\d]/g, "");
   if (phone.length < 7 || phone.length > 15) return res.status(400).json({ error: "Enter the number with country code, e.g. 97455551234" });
   const tenantId = req.auth!.tenantId;
-  const s = await getOrCreateWhatsappSettings(tenantId);
-  if (!s.isConnected || !s.metaAccessToken || !s.metaPhoneNumberId) return res.status(400).json({ error: "Connect WhatsApp first." });
+  const sender = await container.whatsappNumbers.senderFor(tenantId, { customerPhone: phone, numberId: typeof req.body?.numberId === "string" ? req.body.numberId : null });
+  if (!sender) return res.status(400).json({ error: "Connect WhatsApp first." });
 
   const d = parsed.data;
   let name = "hello_world", language = "en_US", body = HELLO_WORLD_TEXT, params: string[] = [];
@@ -443,13 +451,14 @@ whatsappRouter.post("/conversations/:phone/template", requireRole("OWNER", "ADMI
   }
   let result: { ok: boolean; messageId?: string; error?: string };
   if (richTpl) {
-    const up = await uploadTemplateImages(s.metaAccessToken, s.metaPhoneNumberId, richTpl);
+    const up = await uploadTemplateImages(sender.token, sender.phoneNumberId, richTpl);
     if (!up.ok) return res.status(400).json({ error: `Couldn't prepare the template images: ${up.error}` });
-    result = await sendTemplateComponents(s.metaAccessToken, s.metaPhoneNumberId, phone, name, language, buildSendComponents(richTpl, up.mediaIds, params));
+    result = await sendTemplateComponents(sender.token, sender.phoneNumberId, phone, name, language, buildSendComponents(richTpl, up.mediaIds, params));
   } else {
-    result = await sendWhatsappTemplate(s.metaAccessToken, s.metaPhoneNumberId, phone, name, language, params);
+    result = await sendWhatsappTemplate(sender.token, sender.phoneNumberId, phone, name, language, params);
   }
   const row = await recordWhatsappMessage({
+    phoneNumberId: sender.phoneNumberId,
     tenantId,
     direction: "OUT",
     contactPhone: phone,

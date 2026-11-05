@@ -92,7 +92,7 @@ export class AiAgentService {
     if (!settings.enabled || !this.responder) return "skipped";
     if (!AGENT_RULES.replyTypes.has(m.type) || !m.text.trim()) return "skipped";
     if (!(await this.store.accountActive(tenantId))) return "skipped";
-    const conn = await this.messenger.connection(tenantId);
+    const conn = await this.messenger.connection(tenantId, m.phone);
     if (!conn) return "skipped";
 
     // حماية النقاط: محادثة بتلف (أو حد بيبعت كتير) ← تتحوّل لموظف
@@ -135,7 +135,7 @@ export class AiAgentService {
 
     if (text) {
       const sent = await this.messenger.sendText(conn, m.phone, text);
-      await this.messenger.record({ tenantId, phone: m.phone, name: m.name, body: text, waMessageId: sent.messageId ?? null, ok: sent.ok, error: sent.ok ? null : sent.error ?? null });
+      await this.messenger.record({ tenantId, phone: m.phone, name: m.name, body: text, waMessageId: sent.messageId ?? null, ok: sent.ok, error: sent.ok ? null : sent.error ?? null, phoneNumberId: conn.phoneNumberId });
     }
     if (handoff) await this.store.updateConversation(tenantId, m.phone, { status: "handoff", handoffReason: handoff });
     return "replied";

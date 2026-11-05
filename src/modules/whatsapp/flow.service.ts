@@ -74,7 +74,7 @@ export class FlowService {
     const decision = decideFlow(flows, session, { text: m.text, replyId: m.replyId }, this.now());
     if (decision.kind === "none") return false;
     if (!(await this.store.accountActive(tenantId))) return false;
-    const conn = await this.messenger.connection(tenantId);
+    const conn = await this.messenger.connection(tenantId, m.phone);
     if (!conn) return false;
 
     // {name} = الاسم اللي العميل كتبه في السيناريو (لو سألناه)، وإلا اسمه على واتساب
@@ -82,7 +82,7 @@ export class FlowService {
     for (const node of decision.send) {
       const msg = renderFlowNode(node, renderBotReply(node.text, vars), decision.retry);
       const sent = await this.messenger.send(conn, m.phone, msg);
-      await this.messenger.record({ tenantId, phone: m.phone, name: m.name, body: flowMessagePreview(msg), waMessageId: sent.messageId ?? null, ok: sent.ok, error: sent.ok ? null : sent.error ?? null });
+      await this.messenger.record({ tenantId, phone: m.phone, name: m.name, body: flowMessagePreview(msg), waMessageId: sent.messageId ?? null, ok: sent.ok, error: sent.ok ? null : sent.error ?? null, phoneNumberId: conn.phoneNumberId });
       if (!sent.ok) break;
     }
 

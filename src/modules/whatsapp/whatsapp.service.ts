@@ -164,6 +164,8 @@ export async function recordWhatsappMessage(input: {
   status?: string;
   error?: string | null;
   campaignId?: string | null;
+  // رقم الشركة (phone number id) اللي الرسالة وصلت عليه / اتبعتت منه
+  phoneNumberId?: string | null;
 }) {
   const data = {
     tenantId: input.tenantId,
@@ -176,6 +178,7 @@ export async function recordWhatsappMessage(input: {
     status: input.status ?? (input.direction === "IN" ? "received" : "sent"),
     error: input.error ?? null,
     campaignId: input.campaignId ?? null,
+    phoneNumberId: input.phoneNumberId ?? null,
   };
   try {
     if (data.waMessageId) {
