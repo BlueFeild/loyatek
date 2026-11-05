@@ -1,14 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import { AppError, ServiceUnavailableError } from "../../core/errors";
-import { AGENT_OUTPUT_SCHEMA, agentReplySchema, cleanAgentReply, type AgentInput, type AgentReply, type AgentResponder } from "./agent-types";
+import { AGENT_OUTPUT_SCHEMA, agentReplySchema, cleanAgentReply, type AgentInput, type AgentReply, type AgentResponder, type CleanAgentReply } from "./agent-types";
 import { AGENT_SYSTEM, buildAgentPrompt } from "./agent.prompts";
 import { anthropicModel, responseText, translateAnthropicError } from "./anthropic-shared";
 import { defaultGeminiClient, GEMINI_TEXT_HTTP, geminiTextModels, withModelFallback } from "./gemini-client";
 import { translateGeminiError } from "./gemini-errors";
 import { parseStructured, UNEXPECTED_AI_ANSWER } from "./structured-output";
 
-function finish(raw: AgentReply): AgentReply {
+function finish(raw: AgentReply): CleanAgentReply {
   const clean = cleanAgentReply(raw);
   if (!clean) throw new ServiceUnavailableError(UNEXPECTED_AI_ANSWER);
   return clean;
@@ -27,7 +27,7 @@ export class GeminiAgentResponder implements AgentResponder {
     this.model = this.models[0];
   }
 
-  async reply(input: AgentInput): Promise<AgentReply> {
+  async reply(input: AgentInput): Promise<CleanAgentReply> {
     let text: string | undefined;
     try {
       const response = await withModelFallback(this.models, (model) =>
@@ -53,7 +53,7 @@ export class AnthropicAgentResponder implements AgentResponder {
     readonly model: string = anthropicModel()
   ) {}
 
-  async reply(input: AgentInput): Promise<AgentReply> {
+  async reply(input: AgentInput): Promise<CleanAgentReply> {
     let response: Anthropic.Beta.BetaMessage;
     try {
       response = await this.client.beta.messages.create({
@@ -81,20 +81,31 @@ export class FakeAgentResponder implements AgentResponder {
   calls: AgentInput[] = [];
   failNext: Error | null = null;
 
-  async reply(input: AgentInput): Promise<AgentReply> {
+  async reply(input: AgentInput): Promise<CleanAgentReply> {
     this.calls.push(input);
     if (this.failNext) {
       const err = this.failNext;
       this.failNext = null;
       throw err;
     }
-    if (HUMAN_WORDS.test(input.message)) return { reply: "Sure — a team member will reply to you shortly 🙏", handoff: true, reason: "Customer asked for a person" };
+    if (HUMAN_WORDS.test(input.message)) return { reply: "Sure — a team member will reply to you shortly 🙏", handoff: true, reason: "Customer asked for a person", book: null };
+    // "book <YYYY-MM-DD> <hour>" (أو "book" بس = أول ميعاد فاضي) ← طلب حجز للاختبارات
+    const bookMatch = /\bbook(?:\s+(\d{4}-\d{2}-\d{2})\s+(\d{1,2}))?/i.exec(input.message);
+    const slots = input.business.booking;
+    if (bookMatch && slots?.canBookInChat) {
+      const day = bookMatch[1] ?? slots.days.find((d) => d.hours.length)?.date;
+      const hour = bookMatch[2] ? Number(bookMatch[2]) : slots.days.find((d) => d.date === day)?.hours[0];
+      if (day && hour !== undefined) {
+        return { reply: `Booked for ${day} at ${hour}:00 ✅`, handoff: false, reason: "", book: { date: day, hour, services: input.business.services.slice(0, 1).map((x) => x.name), name: input.customerName ?? "Guest" } };
+      }
+    }
     const first = input.business.menu[0] ?? null;
     const link = input.business.links.menu ?? input.business.links.booking;
     return {
       reply: `[${input.business.dialect}] ${input.business.name}: ${first ? `${first.name} is ${first.price}.` : "Hello!"}${link ? ` ${link}` : ""}`,
       handoff: false,
       reason: "",
+      book: null,
     };
   }
 }

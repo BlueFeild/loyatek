@@ -101,6 +101,8 @@ export class PrismaAiAgentRepository implements AiAgentStore {
         menu: tenant.slug && items.length ? `${base}/menu/${tenant.slug}` : null,
         links: tenant.slug ? `${base}/l/${tenant.slug}` : null,
       },
+      // المواعيد الفاضية بتتحط من AgentBooker في الخدمة
+      booking: null,
     };
   }
 

@@ -3,6 +3,8 @@ import { InsufficientCreditsError, NotFoundError, ServiceUnavailableError, Valid
 import { AGENT_DIALECTS, AGENT_LIMITS, type AgentDialect, type AgentResponder, type AgentTurn } from "../ai/agent-types";
 import { AI_COSTS } from "../ai/ai-pricing";
 import type { CreditService } from "../credits/credit.service";
+import type { AgentBooker, AgentBookResult } from "./agent-booking";
+import type { AgentBookingInfo } from "../ai/agent-types";
 import type { AgentMessenger, AgentSettings, AiAgentStore, ConversationState, ConversationStatus } from "./ai-agent.repository";
 
 export const AGENT_RULES = {
@@ -30,8 +32,16 @@ export class AiAgentService {
     private readonly messenger: AgentMessenger,
     private readonly responder: AgentResponder | null,
     private readonly credits: CreditService,
+    private readonly booker: AgentBooker | null = null,
     private readonly now: () => Date = () => new Date()
   ) {}
+
+  // بيانات الشركة + المواعيد الفاضية (لو الحجز من المحادثة متاح)
+  private async context(tenantId: string, settings: AgentSettings) {
+    const business = await this.store.businessContext(tenantId, settings);
+    if (business && this.booker) business.booking = await this.booker.info(tenantId, this.now()).catch(() => null);
+    return business;
+  }
 
   get isAvailable() {
     return this.responder !== null;
@@ -60,12 +70,13 @@ export class AiAgentService {
     const text = message.trim();
     if (!text) throw new ValidationError("Write a message to test with.");
     const settings = await this.store.settings(tenantId);
-    const business = await this.store.businessContext(tenantId, settings);
+    const business = await this.context(tenantId, settings);
     if (!business) throw new NotFoundError("Company not found");
     const { result, balance } = await this.credits.chargeFor({ tenantId, cost: AGENT_RULES.cost, reason: "AI_AGENT_TEST", userId, refId: randomUUID() }, () =>
       this.responder!.reply({ business, history: history.slice(-AGENT_RULES.maxHistory), message: text.slice(0, 2000), customerName: null })
     );
-    return { ...result, balance, creditsUsed: AGENT_RULES.cost };
+    // في التجربة مابنحجزش فعلًا - بنوري التاجر الحجز اللي كان هيتعمل
+    return { reply: result.reply, handoff: result.handoff, reason: result.reason, wouldBook: result.book, balance, creditsUsed: AGENT_RULES.cost };
   }
 
   // كل رسالة واتساب جاية من عميل (من الـ webhook)
@@ -89,7 +100,7 @@ export class AiAgentService {
       return "human";
     }
 
-    const business = await this.store.businessContext(tenantId, settings);
+    const business = await this.context(tenantId, settings);
     if (!business) return "skipped";
     const history = await this.store.history(tenantId, m.phone, AGENT_RULES.maxHistory + 1);
     // آخر رسالة في السجل هي الرسالة دي نفسها (اتسجلت قبل ما نوصل هنا)
@@ -107,9 +118,24 @@ export class AiAgentService {
       return "skipped";
     }
 
-    const sent = await this.messenger.sendText(conn, m.phone, reply.reply);
-    await this.messenger.record({ tenantId, phone: m.phone, name: m.name, body: reply.reply, waMessageId: sent.messageId ?? null, ok: sent.ok, error: sent.ok ? null : sent.error ?? null });
-    if (reply.handoff) await this.store.updateConversation(tenantId, m.phone, { status: "handoff", handoffReason: reply.reason || "The assistant passed this to the team" });
+    // الموظف طلب حجز ← نحجز فعلًا (نفس تحقق صفحة الحجز). نجح والتأكيد اتبعت = مفيش رسالة تانية
+    let text: string | null = reply.reply;
+    let handoff = reply.handoff ? reply.reason || "The assistant passed this to the team" : null;
+    if (reply.book && this.booker && business.booking?.canBookInChat) {
+      const result = await this.booker.book(tenantId, { ...reply.book, name: reply.book.name || m.name || "", phone: m.phone }, at);
+      if (result.ok) {
+        if (result.confirmationSent) text = null;
+      } else {
+        text = bookingProblemText(result, m.text, business.booking, business.links.booking, business.services.map((x) => x.name));
+        if (!["slot_not_free", "service_needed"].includes(result.error)) handoff = `The assistant couldn't finish a booking: ${result.error}`.slice(0, 300);
+      }
+    }
+
+    if (text) {
+      const sent = await this.messenger.sendText(conn, m.phone, text);
+      await this.messenger.record({ tenantId, phone: m.phone, name: m.name, body: text, waMessageId: sent.messageId ?? null, ok: sent.ok, error: sent.ok ? null : sent.error ?? null });
+    }
+    if (handoff) await this.store.updateConversation(tenantId, m.phone, { status: "handoff", handoffReason: handoff });
     return "replied";
   }
 
@@ -140,4 +166,23 @@ export class AiAgentService {
     }
     return this.store.updateConversation(tenantId, phone, data);
   }
+}
+
+const ARABIC = /[؀-ۿ]/;
+
+// الحجز ماتمّش ← رسالة واضحة بلغة العميل + أقرب مواعيد فاضية (من الداتا، مش من الموديل)
+export function bookingProblemText(result: Extract<AgentBookResult, { ok: false }>, customerText: string, info: AgentBookingInfo, bookingLink: string | null, services: string[]): string {
+  const ar = ARABIC.test(customerText);
+  const fmt = (h: number) => `${String(h).padStart(2, "0")}:00`;
+  const next = info.days.filter((d) => d.hours.length).slice(0, 2).map((d) => `${d.date}: ${d.hours.slice(0, 4).map(fmt).join(", ")}`).join("\n");
+  if (result.error === "service_needed") {
+    return ar ? `عشان أكمل الحجز، اختار الخدمة لو سمحت: ${services.join("، ")}` : `To finish the booking, please choose the service: ${services.join(", ")}`;
+  }
+  if (result.error === "slot_not_free") {
+    if (next) return ar ? `للأسف الميعاد ده مش متاح 🙏 أقرب مواعيد فاضية:\n${next}` : `Sorry, that time isn't available 🙏 The nearest free times:\n${next}`;
+    return ar ? `للأسف مفيش مواعيد فاضية الأيام الجاية 🙏${bookingLink ? ` تقدر تشوف المواعيد هنا: ${bookingLink}` : ""}` : `Sorry, there are no free times in the next days 🙏${bookingLink ? ` You can check here: ${bookingLink}` : ""}`;
+  }
+  return ar
+    ? `معلش، ماقدرتش أكمل الحجز من هنا 🙏 حد من الفريق هيكلمك حالًا${bookingLink ? `، أو احجز من هنا: ${bookingLink}` : "."}`
+    : `Sorry, I couldn't finish the booking here 🙏 A team member will contact you shortly${bookingLink ? `, or book here: ${bookingLink}` : "."}`;
 }

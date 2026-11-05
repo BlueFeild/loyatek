@@ -18,6 +18,7 @@ const business = (over: Partial<AgentBusinessContext> = {}): AgentBusinessContex
   bookingHours: null,
   links: { booking: null, menu: "https://x.test/menu/karak", links: null },
   dialect: "auto",
+  booking: null,
   ...over,
 });
 
@@ -207,7 +208,7 @@ describe("agent prompt + reply cleaning", () => {
     expect(buildAgentPrompt({ business: business({ menu: [], knowledge: "", links: { booking: null, menu: null, links: null } }), history: [], message: "x", customerName: null })).toContain("has not added any details");
   });
   it("cleans leaked JSON / code from the reply", () => {
-    expect(cleanAgentReply({ reply: 'Karak is 5 QAR ```json {"a":1}', handoff: false, reason: "" })).toEqual({ reply: "Karak is 5 QAR", handoff: false, reason: "" });
+    expect(cleanAgentReply({ reply: 'Karak is 5 QAR ```json {"a":1}', handoff: false, reason: "" })).toEqual({ reply: "Karak is 5 QAR", handoff: false, reason: "", book: null });
     expect(cleanAgentReply({ reply: "```", handoff: true, reason: "" })).toBeNull();
   });
 });
