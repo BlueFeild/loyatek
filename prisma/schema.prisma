@@ -124,6 +124,9 @@ model Tenant {
   whatsappContacts WhatsappContact[]
   whatsappAiAgent WhatsappAiAgent?
   whatsappConversations WhatsappConversation[]
+  whatsappFlows WhatsappFlow[]
+  whatsappFlowSessions WhatsappFlowSession[]
+  whatsappFlowResponses WhatsappFlowResponse[]
   whatsappAutoReplies WhatsappAutoReply[]
   botFlowNodes    BotFlowNode[]
   whatsappContactNotes WhatsappContactNote[]
@@ -2210,4 +2213,55 @@ model SocialAdEvent {
 
   @@index([campaignId, createdAt])
   @@map("social_ad_events")
+}
+
+// سيناريو واتساب (Flow Builder): كلمة بتبدأه ← خطوات (رسالة بأزرار / سؤال / تحويل لموظف) في nodes
+model WhatsappFlow {
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  enabled        Boolean  @default(true)
+  keywords       String[] @default([])
+  startNodeId    String
+  nodes          Json
+  sortOrder      Int      @default(0)
+  startedCount   Int      @default(0)
+  completedCount Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([tenantId])
+  @@map("whatsapp_flows")
+}
+
+// العميل واقف فين في السيناريو (واحد لكل رقم - بينتهي بعد 24 ساعة من غير رد)
+model WhatsappFlowSession {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone     String
+  flowId    String
+  nodeId    String
+  answers   Json     @default("{}")
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, phone])
+  @@map("whatsapp_flow_sessions")
+}
+
+// العميل خلّص السيناريو: اختياراته + إجاباته (زي فورم)
+model WhatsappFlowResponse {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  flowId      String
+  flowName    String
+  phone       String
+  name        String?
+  answers     Json
+  completedAt DateTime @default(now())
+
+  @@index([tenantId, flowId, completedAt])
+  @@map("whatsapp_flow_responses")
 }

@@ -30,6 +30,8 @@ export interface IncomingMessage {
   type: string;
   // العميل داس على إعلان Click-to-WhatsApp (Meta بتبعت referral مع أول رسالة)
   referral?: AdReferral;
+  // id الزرار / الاختيار اللي داس عليه (رسالة interactive أو زرار قالب)
+  replyId?: string;
 }
 export interface AdReferral {
   sourceId: string;
@@ -74,12 +76,13 @@ export function parseWebhookPayload(body: any): WebhookBatch[] {
               : m.type === "interactive"
                 ? m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title ?? ""
                 : `[${m.type}]`;
+        const replyId = m.type === "interactive" ? m.interactive?.button_reply?.id ?? m.interactive?.list_reply?.id : m.type === "button" ? m.button?.payload : undefined;
         const ref = m.referral;
         const referral: AdReferral | undefined =
           ref && (ref.source_id || ref.headline)
             ? { sourceId: String(ref.source_id ?? ""), sourceType: String(ref.source_type ?? "ad"), headline: String(ref.headline ?? "").slice(0, 200), body: String(ref.body ?? "").slice(0, 500) }
             : undefined;
-        messages.push({ from: String(m.from), id: String(m.id), name: names.get(String(m.from)) || undefined, text: String(text), type: String(m.type), ...(referral ? { referral } : {}) });
+        messages.push({ from: String(m.from), id: String(m.id), name: names.get(String(m.from)) || undefined, text: String(text), type: String(m.type), ...(referral ? { referral } : {}), ...(replyId ? { replyId: String(replyId) } : {}) });
       }
       const echoes: EchoMessage[] = [];
       for (const m of value.message_echoes ?? []) {
@@ -196,6 +199,19 @@ export async function handleWebhook(tenantId: string, body: any) {
       });
       if (intent) {
         await confirmOptChange(tenantId, m, intent);
+        continue;
+      }
+      // السيناريوهات (Flow Builder) الأول: كلمة بتبدأ سيناريو، أو العميل في نص سيناريو (داس زرار / بيجاوب سؤال)
+      const phone = m.from.replace(/[^\d]/g, "");
+      const byFlow = await container.flowService
+        .handleInbound(tenantId, { phone, name: m.name ?? null, text: m.text, type: m.type, replyId: m.replyId ?? null })
+        .catch((err) => {
+          console.warn(`[whatsapp-webhook] flow: ${(err as Error)?.message}`);
+          return false;
+        });
+      if (byFlow) {
+        // المحادثة اتسجلت (عشان الموظف الذكي يعرف إن العميل كتب)
+        await container.aiAgentService.noteInbound(tenantId, phone).catch(() => {});
         continue;
       }
       // الموظف الذكي الأول (لو مفعّل)؛ لو المحادثة مع موظف بشري محدش يرد؛ غير كده البوت العادي بالكلمات

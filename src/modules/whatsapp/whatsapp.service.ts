@@ -211,6 +211,32 @@ export async function sendWhatsappTextMessage(
   }
 }
 
+// رسالة بأزرار (حد أقصى 3) أو قايمة اختيارات (حد أقصى 10) - جوه نافذة الـ24 ساعة بس (العميل لسه كاتب)
+export type InteractiveMessage =
+  | { type: "text"; text: string }
+  | { type: "buttons"; text: string; buttons: { id: string; title: string }[] }
+  | { type: "list"; text: string; button: string; rows: { id: string; title: string }[] };
+
+export async function sendWhatsappInteractiveMessage(accessToken: string, phoneNumberId: string, toPhoneNumber: string, m: InteractiveMessage): Promise<SendMessageResult> {
+  if (m.type === "text") return sendWhatsappTextMessage(accessToken, phoneNumberId, toPhoneNumber, m.text);
+  const interactive =
+    m.type === "buttons"
+      ? { type: "button", body: { text: m.text.slice(0, 1024) }, action: { buttons: m.buttons.slice(0, 3).map((b) => ({ type: "reply", reply: { id: b.id, title: b.title.slice(0, 20) } })) } }
+      : { type: "list", body: { text: m.text.slice(0, 1024) }, action: { button: m.button.slice(0, 20), sections: [{ title: "Options", rows: m.rows.slice(0, 10).map((r) => ({ id: r.id, title: r.title.slice(0, 24) })) }] } };
+  try {
+    const res = await fetch(`${graphBase()}/${phoneNumberId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ messaging_product: "whatsapp", to: toPhoneNumber.replace(/[^\d]/g, ""), type: "interactive", interactive }),
+    });
+    const data = (await res.json()) as MetaGraphResponse;
+    if (!res.ok) return { ok: false, error: data?.error?.message || "Meta rejected the interactive message" };
+    return { ok: true, messageId: data?.messages?.[0]?.id };
+  } catch (err: unknown) {
+    return { ok: false, error: `Could not reach Meta: ${errorMessage(err)}` };
+  }
+}
+
 // رفع الملف الصوتي الحقيقي لسيرفرات Meta - خطوة لازمة قبل إرسال أي
 // رسالة صوتية، بترجّع media_id بيتم الإشارة له في كل رسالة إرسال بعد
 // كده (رفع واحد بس لكل حملة، مش لكل مستلم)

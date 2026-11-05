@@ -37,6 +37,7 @@ import {
 import { embeddedSignupConfig, exchangeSignupCode, findWabaPhoneNumber, registerPhoneNumber, subscribeAppToWaba } from "./embedded-signup";
 import { contactBookRouter } from "./contact-book.routes";
 import { aiAgentRouter } from "./ai-agent.routes";
+import { flowRouter } from "./flow.routes";
 import { PrismaContactBookRepository } from "./contact-book.repository";
 import { normalizePhone, normalizeTags } from "./contact-book.service";
 import { summarizeCampaign } from "./campaign-report";
@@ -51,6 +52,7 @@ whatsappRouter.use(requireAuth);
 whatsappRouter.use("/contact-book", contactBookRouter);
 // موظف الذكاء الاصطناعي - /api/whatsapp/ai-agent
 whatsappRouter.use("/ai-agent", aiAgentRouter);
+whatsappRouter.use("/flows", flowRouter);
 
 // --- Settings (ربط حساب Meta الحقيقي) ---
 

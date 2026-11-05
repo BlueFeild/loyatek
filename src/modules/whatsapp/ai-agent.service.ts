@@ -141,6 +141,11 @@ export class AiAgentService {
     return "replied";
   }
 
+  // رسالة جاية اترد عليها من مكان تاني (سيناريو) - بس نسجّل إن العميل كتب
+  async noteInbound(tenantId: string, phone: string) {
+    await this.store.touchInbound(tenantId, phone, this.now());
+  }
+
   // التاجر/الموظف رد بنفسه من Team Inbox ← الموظف الذكي يسكت شوية على المحادثة دي
   async humanReplied(tenantId: string, phone: string) {
     await this.store.updateConversation(tenantId, phone, { aiPausedUntil: new Date(this.now().getTime() + AGENT_RULES.humanPauseMs) });
