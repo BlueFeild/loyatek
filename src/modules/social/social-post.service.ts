@@ -4,10 +4,18 @@ import type { PostPatch, SocialStore } from "./social.repository";
 import type { PostInput } from "./social.schemas";
 import { SOCIAL_LIMITS, SOCIAL_MEDIA_TYPES, SocialPlatformError, type PostOptions, type SocialPublisher } from "./social-types";
 import { SocialTokenService } from "./social-token.service";
+import { BLUESKY_LIMITS, graphemeLength } from "./bluesky.gateway";
 
 // المنصات اللي النشر عليها شغال دلوقتي (سناب لسه)
-const PUBLISHABLE = new Set(["FACEBOOK", "INSTAGRAM", "TIKTOK"]);
+const PUBLISHABLE = new Set(["FACEBOOK", "INSTAGRAM", "TIKTOK", "BLUESKY"]);
 const TIKTOK_CAPTION_MAX = 2200;
+// أقصى مدة لتكرار البوست
+const REPEAT_MAX_DAYS = 366;
+
+// بعد ما بوست يخلص نشر (التكرار + الـ webhooks الخارجية)
+export interface PublishHooks {
+  afterPublish?(post: { id: string; tenantId: string; status: "PUBLISHED" | "PARTIAL" | "FAILED" }): Promise<void>;
+}
 
 // البوستات: كتابة / جدولة / نشر. النشر نفسه دايمًا في الخلفية (انستجرام بياخد وقت مع الفيديو):
 // "انشر دلوقتي" = SCHEDULED بميعاد دلوقتي + نبدأ على طول، والـ job بيلم أي بوست جه ميعاده
@@ -20,7 +28,8 @@ export class SocialPostService {
     // عنوان الباك إند العام (انستجرام لازم يجيب الصورة/الفيديو من لينك على النت)
     private readonly publicBaseUrl: () => string,
     private readonly now: () => Date = () => new Date(),
-    private readonly tokens: SocialTokenService = new SocialTokenService(store)
+    private readonly tokens: SocialTokenService = new SocialTokenService(store),
+    private readonly hooks: PublishHooks = {}
   ) {}
 
   // ---------- الملفات ----------
@@ -98,6 +107,10 @@ export class SocialPostService {
     if (toInstagram && caption.length > SOCIAL_LIMITS.instagramCaptionMax) {
       throw new ValidationError(`Instagram captions can be up to ${SOCIAL_LIMITS.instagramCaptionMax} characters.`);
     }
+    if (accounts.some((a) => a.platform === "BLUESKY")) {
+      if (media?.kind === "video") throw new ValidationError("Bluesky takes text and photos only — remove the video or untick Bluesky.");
+      if (graphemeLength(caption) > BLUESKY_LIMITS.textMax) throw new ValidationError(`Bluesky posts can be up to ${BLUESKY_LIMITS.textMax} characters.`);
+    }
     const options: PostOptions = {};
     if (accounts.some((a) => a.platform === "TIKTOK")) {
       if (!media) throw new ValidationError("TikTok needs a video or a photo.");
@@ -121,7 +134,16 @@ export class SocialPostService {
         }
       }
     }
-    return { caption, mediaId: media?.id ?? null, accountIds, options: options.tiktok ? options : null, status: input.when === "draft" ? ("DRAFT" as const) : ("SCHEDULED" as const), scheduledAt };
+    const repeatEvery = input.repeatEvery ?? null;
+    let repeatUntil: Date | null = null;
+    if (repeatEvery) {
+      if (input.when !== "schedule" && input.when !== "now") throw new ValidationError("A repeating post needs a publish time.");
+      repeatUntil = input.repeatUntil ?? null;
+      const start = scheduledAt ?? now;
+      if (repeatUntil && repeatUntil.getTime() <= start.getTime()) throw new ValidationError("“Repeat until” must be after the first publish time.");
+      if (repeatUntil && repeatUntil.getTime() > start.getTime() + REPEAT_MAX_DAYS * 86400000) throw new ValidationError("A post can repeat for up to one year.");
+    }
+    return { caption, mediaId: media?.id ?? null, accountIds, options: options.tiktok ? options : null, status: input.when === "draft" ? ("DRAFT" as const) : ("SCHEDULED" as const), scheduledAt, repeatEvery, repeatUntil };
   }
 
   // ---------- النشر ----------
@@ -201,5 +223,6 @@ export class SocialPostService {
     }
     const status = failed === 0 ? "PUBLISHED" : ok === 0 ? "FAILED" : "PARTIAL";
     await this.store.finishPost(id, status, ok > 0 ? this.now() : null);
+    if (this.hooks.afterPublish) await this.hooks.afterPublish({ id, tenantId: post.tenantId, status }).catch((err) => console.warn(`[social] after-publish for ${id} failed: ${(err as Error)?.message}`));
   }
 }

@@ -3,7 +3,7 @@ import { AppError } from "../../core/errors";
 // النشر على السوشيال ميديا: العقود اللي الخدمات بتعتمد عليها (مش على Meta نفسها).
 // كل منصة = class بينفّذ SocialPublisher، ونسخة وهمية للاختبارات
 
-export const SOCIAL_PLATFORMS = ["FACEBOOK", "INSTAGRAM", "TIKTOK", "SNAPCHAT"] as const;
+export const SOCIAL_PLATFORMS = ["FACEBOOK", "INSTAGRAM", "TIKTOK", "SNAPCHAT", "BLUESKY"] as const;
 export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
 
 export const SOCIAL_LIMITS = {
@@ -162,6 +162,8 @@ export interface InboxEvent {
   authorName: string | null;
   text: string;
   createdAt: Date;
+  // رسالة خاصة: العميل داس زرار رد سريع (Quick reply) - الـ payload بتاعه
+  replyId?: string | null;
 }
 
 export interface InboxAccount {
@@ -181,6 +183,8 @@ export interface RecentInbox {
 export interface SocialInboxGateway {
   replyToComment(account: InboxAccount, commentId: string, text: string): Promise<{ id: string }>;
   sendDirectMessage(account: InboxAccount, recipientId: string, text: string): Promise<{ id: string }>;
+  // رسالة خاصة بزراير رد سريع (السيناريوهات على انستجرام / ماسنجر)
+  sendQuickReplies?(account: InboxAccount, recipientId: string, text: string, options: { id: string; title: string }[]): Promise<{ id: string }>;
   // رسالة خاصة لصاحب تعليق (Private Reply - مرة واحدة لكل تعليق، خلال 7 أيام منه)
   privateReply?(account: InboxAccount, commentId: string, text: string): Promise<{ id: string }>;
   // آخر التعليقات والرسايل (لو الـ webhook لسه مش شغال أو فاتنا حاجة)

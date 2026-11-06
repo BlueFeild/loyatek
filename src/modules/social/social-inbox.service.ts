@@ -9,7 +9,9 @@ import type { InboxAccountRow, InboxStore } from "./social-inbox.repository";
 import { DM_REPLY_WINDOW_MS, SocialPlatformError, type InboxEvent, type InboxKind, type SocialInboxGateway } from "./social-types";
 import { decryptToken } from "./token-crypto";
 import { parseSocialWebhook } from "./social-webhook.parser";
+import { emitEvent } from "../integrations/events";
 import type { CommentAutomationService } from "./comment-automation.service";
+import type { SocialFlowService } from "./social-flow.service";
 
 export interface ThreadRef {
   accountId: string;
@@ -26,7 +28,9 @@ export class SocialInboxService {
     private readonly ai: { generator: CopyGenerator | null; credits: CreditService; generations: GenerationStore; profiles: BusinessProfileReader },
     private readonly now: () => Date = () => new Date(),
     // "كومنت فيه كلمة ← رسالة خاصة تلقائي" (اختياري)
-    private readonly automation: CommentAutomationService | null = null
+    private readonly automation: CommentAutomationService | null = null,
+    // سيناريوهات الـ Flow Builder على رسايل انستجرام / ماسنجر (اختياري)
+    private readonly flows: SocialFlowService | null = null
   ) {}
 
   // ---------- الاستقبال ----------
@@ -46,7 +50,25 @@ export class SocialInboxService {
         continue;
       }
       await this.fillNames(owner.tenantId, owner.id, list);
-      saved += await this.store.record(owner.tenantId, owner.id, list);
+      // الرسايل الخاصة الجاية بتتسجل واحدة واحدة عشان نعرف الجديد منها (Meta ممكن تبعت نفس الحدث تاني)
+      const freshDms: InboxEvent[] = [];
+      saved += await this.store.record(owner.tenantId, owner.id, list.filter((e) => !(e.kind === "DM" && e.direction === "IN")));
+      for (const e of list.filter((x) => x.kind === "DM" && x.direction === "IN")) {
+        const n = await this.store.record(owner.tenantId, owner.id, [e]);
+        saved += n;
+        if (n > 0) freshDms.push(e);
+      }
+      for (const e of [...freshDms, ...list.filter((x) => x.kind === "COMMENT")]) {
+        if (e.direction === "IN") emitEvent(owner.tenantId, "social.message.received", { id: e.externalId, platform: e.platform, accountId: owner.id, kind: e.kind, from: { id: e.authorId, name: e.authorName }, text: e.text, postId: e.postExternalId, createdAt: e.createdAt.toISOString() });
+      }
+      // السيناريوهات على الرسايل الخاصة (من الـ webhook بس)
+      const dms = freshDms;
+      if (this.flows && dms.length) {
+        const account = await this.store.account(owner.tenantId, owner.id);
+        if (account && account.status === "ACTIVE") {
+          for (const e of dms) await this.flows.handle(owner.tenantId, account, this.toInbox(account), e).catch((err) => console.warn(`[social-flow] ${(err as Error)?.message}`));
+        }
+      }
       // الأتمتة من الـ webhook بس (المزامنة اليدوية بتجيب تعليقات قديمة - مانبعتلهاش)
       if (this.automation) {
         const account = await this.store.account(owner.tenantId, owner.id);

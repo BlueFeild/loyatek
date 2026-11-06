@@ -112,6 +112,13 @@ class MemoryStore implements SocialStore {
       options: p.options,
       media: p.mediaId ? { id: p.mediaId, kind: this.media.get(p.mediaId)!.kind } : null,
       targets: p.targets.map((t) => ({ ...t, platform: this.accounts.get(t.accountId)!.platform, accountName: this.accounts.get(t.accountId)!.name })),
+      repeatEvery: null,
+      repeatUntil: null,
+      seriesId: null,
+      approvalStatus: null,
+      approvalNote: null,
+      approvalBy: null,
+      approvalAt: null,
     };
   }
   async getPost(tenantId: string, id: string) {

@@ -22,10 +22,10 @@ enum Industry {
 }
 
 enum Role {
-  OWNER      // صاحب الحساب - صلاحيات كاملة
-  ADMIN      // مدير عام
-  MANAGER    // مدير فرع
-  STAFF      // موظف تشغيلي
+  OWNER // صاحب الحساب - صلاحيات كاملة
+  ADMIN // مدير عام
+  MANAGER // مدير فرع
+  STAFF // موظف تشغيلي
 }
 
 enum Currency {
@@ -36,114 +36,117 @@ enum Currency {
 
 // شركة/عميل مشترك في النظام - كل بياناته معزولة عن باقي الشركات
 model Tenant {
-  id        String   @id @default(uuid())
-  name      String
-  industry  Industry
-  currency  Currency @default(USD) // قديم - مش مستخدم في العرض (شوفي displayCurrency)
+  id                  String    @id @default(uuid())
+  name                String
+  industry            Industry
+  currency            Currency  @default(USD) // قديم - مش مستخدم في العرض (شوفي displayCurrency)
   // عملة الشركة اللي كل المبالغ بتتعرض بيها (QAR / EGP / AED / ...). كل
   // المبالغ متخزنة بالدولار وبتتحوّل بسعر الصرف (utils/money.ts)
-  displayCurrency String @default("USD")
-  vatNumber String? // الرقم الضريبي - مطلوب لتوليد QR الفواتير
+  displayCurrency     String    @default("USD")
+  vatNumber           String? // الرقم الضريبي - مطلوب لتوليد QR الفواتير
   // عدد أيام الراتب الأساسي لكل سنة خدمة، لحساب مكافأة نهاية الخدمة
   // (21 يوم = 3 أسابيع، شائع في قوانين العمل الخليجية) - قابل للتعديل
   // حسب قانون العمل المحلي لكل شركة
-  gratuityDaysPerYear Int @default(21)
+  gratuityDaysPerYear Int       @default(21)
   // رابط عام فريد بيتولّد من اسم الشركة - بيُستخدم في رابط الكتالوج
   // العام اللي العميل بيشوفه (bluefield.com/menu/<slug>)، من غير تسجيل دخول
-  slug      String?  @unique
+  slug                String?   @unique
   // المنتجات المفعّلة فعليًا للشركة - تبدأ فاضية، وبتتفعّل بس بعد ما
   // السوبر أدمن يراجع طلب الاشتراك (SubscriptionOrder) ويأكد الدفع
-  subscribedModules String[] @default([])
+  subscribedModules   String[]  @default([])
   // تاريخ انتهاء كل موديول مشترك فيه فعليًا - JSON زي {"erp": "2026-09-20T..."}.
   // بعد التاريخ ده (شامل يوم السماح) الموديول بيبطل يشتغل تلقائيًا حتى
   // لو لسه موجود في subscribedModules
-  moduleExpirations Json @default("{}")
+  moduleExpirations   Json      @default("{}")
   // أي شركة جديدة بتاخد وصول تجريبي لكل الخدمات لمدة 24 ساعة من التسجيل
   // (مش بديل عن الاشتراك الحقيقي - الروابط/QR العامة مش بتشتغل في التجربة)
-  trialExpiresAt DateTime?
+  trialExpiresAt      DateTime?
   // شركة تابعة لصاحب المنصة (السوبر أدمن) - كل الخدمات مجانية ومفتوحة ليها
   // دايمًا من غير اشتراك أو دفع أو تاريخ انتهاء
-  isPlatformOwner Boolean @default(false)
+  isPlatformOwner     Boolean   @default(false)
   // رصيد النقاط (الذكاء الاصطناعي / SMS / التحليل) - كل حركة في credit_transactions
-  creditBalance Int @default(0)
+  creditBalance       Int       @default(0)
   // حالة الحساب (السوبر أدمن): ACTIVE / SUSPENDED (موقوف مؤقتًا - دخول وصفحات
   // عامة مقفولة) / ARCHIVED (مقفول ومتشال من اللوحة، يرجع بـ Restore)
-  accountStatus   String   @default("ACTIVE")
-  statusReason    String?
-  statusChangedAt DateTime?
+  accountStatus       String    @default("ACTIVE")
+  statusReason        String?
+  statusChangedAt     DateTime?
   // أيام السماح بعد انتهاء الاشتراك (null = الافتراضي بتاع المنصة)
-  graceDays       Int?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  graceDays           Int?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
-  branches       Branch[]
-  users          User[]
-  inventoryItems InventoryItem[]
-  suppliers      Supplier[]
-  purchaseOrders PurchaseOrder[]
-  accounts       Account[]
-  journalEntries JournalEntry[]
-  employees      Employee[]
-  sales          Sale[]
-  customers      Customer[]
-  shifts         Shift[]
-  attendance     Attendance[]
-  deals          Deal[]
-  activities     Activity[]
-  rfqRequests    RfqRequest[]
-  invoices       Invoice[]
-  bookingSettings BookingSettings?
-  resources      Resource[]
-  bookings       Booking[]
-  walletSettings WalletSettings?
-  walletCustomers WalletCustomer[]
-  walletEvents    WalletEvent[]
-  walletRewards   WalletReward[]
-  catalogSettings CatalogSettings?
-  menuCategories  MenuCategory[]
-  menuItems       MenuItem[]
-  catalogOrders   CatalogOrder[]
-  subscriptionOrders SubscriptionOrder[]
-  agencyAssignments AgencyAssignment[]
-  companyMemberships CompanyMembership[]
-  opsTasks        OpsTask[]
-  fixedAssets     FixedAsset[]
-  budgetLines     BudgetLine[]
-  vehicles        Vehicle[]
-  billsOfMaterials BillOfMaterials[]
-  supportTickets  SupportTicket[]
-  automationRules AutomationRule[]
-  linktreeSettings LinktreeSettings?
-  linktreeLinks   LinktreeLink[]
-  paymentSettings TenantPaymentSettings?
-  vendorBills     VendorBill[]
-  invoicePayments InvoicePayment[]
-  whatsappTemplates WhatsappTemplate[]
-  whatsappSettings WhatsappSettings?
-  whatsappMessages WhatsappMessage[]
-  whatsappContacts WhatsappContact[]
-  whatsappAiAgent WhatsappAiAgent?
+  branches              Branch[]
+  users                 User[]
+  inventoryItems        InventoryItem[]
+  suppliers             Supplier[]
+  purchaseOrders        PurchaseOrder[]
+  accounts              Account[]
+  journalEntries        JournalEntry[]
+  employees             Employee[]
+  sales                 Sale[]
+  customers             Customer[]
+  shifts                Shift[]
+  attendance            Attendance[]
+  deals                 Deal[]
+  activities            Activity[]
+  rfqRequests           RfqRequest[]
+  invoices              Invoice[]
+  bookingSettings       BookingSettings?
+  resources             Resource[]
+  bookings              Booking[]
+  walletSettings        WalletSettings?
+  walletCustomers       WalletCustomer[]
+  walletEvents          WalletEvent[]
+  walletRewards         WalletReward[]
+  catalogSettings       CatalogSettings?
+  menuCategories        MenuCategory[]
+  menuItems             MenuItem[]
+  catalogOrders         CatalogOrder[]
+  subscriptionOrders    SubscriptionOrder[]
+  agencyAssignments     AgencyAssignment[]
+  companyMemberships    CompanyMembership[]
+  opsTasks              OpsTask[]
+  fixedAssets           FixedAsset[]
+  budgetLines           BudgetLine[]
+  vehicles              Vehicle[]
+  billsOfMaterials      BillOfMaterials[]
+  supportTickets        SupportTicket[]
+  automationRules       AutomationRule[]
+  linktreeSettings      LinktreeSettings?
+  linktreeLinks         LinktreeLink[]
+  paymentSettings       TenantPaymentSettings?
+  vendorBills           VendorBill[]
+  invoicePayments       InvoicePayment[]
+  whatsappTemplates     WhatsappTemplate[]
+  whatsappSettings      WhatsappSettings?
+  whatsappMessages      WhatsappMessage[]
+  whatsappContacts      WhatsappContact[]
+  whatsappAiAgent       WhatsappAiAgent?
   whatsappConversations WhatsappConversation[]
-  whatsappFlows WhatsappFlow[]
-  whatsappFlowSessions WhatsappFlowSession[]
+  whatsappFlows         WhatsappFlow[]
+  whatsappFlowSessions  WhatsappFlowSession[]
   whatsappFlowResponses WhatsappFlowResponse[]
-  whatsappNumbers WhatsappNumber[]
-  whatsappAutoReplies WhatsappAutoReply[]
-  botFlowNodes    BotFlowNode[]
-  whatsappContactNotes WhatsappContactNote[]
-  creditTransactions CreditTransaction[]
-  aiGenerations   AiGeneration[]
-  aiAssets        AiAsset[]
-  socialAccounts  SocialAccount[]
-  socialMedia     SocialMedia[]
-  socialPosts     SocialPost[]
-  socialMessages  SocialMessage[]
-  socialCommentRules SocialCommentRule[]
-  socialAdsAuth   SocialAdsAuth?
-  socialAdCampaigns SocialAdCampaign[]
-  socialAdEvents  SocialAdEvent[]
-  whatsappCampaigns WhatsappCampaign[]
-  notifications   Notification[]
+  whatsappNumbers       WhatsappNumber[]
+  whatsappAutoReplies   WhatsappAutoReply[]
+  botFlowNodes          BotFlowNode[]
+  whatsappContactNotes  WhatsappContactNote[]
+  creditTransactions    CreditTransaction[]
+  aiGenerations         AiGeneration[]
+  aiAssets              AiAsset[]
+  socialAccounts        SocialAccount[]
+  socialMedia           SocialMedia[]
+  socialPosts           SocialPost[]
+  socialMessages        SocialMessage[]
+  socialCommentRules    SocialCommentRule[]
+  socialReportSettings  SocialReportSettings?
+  apiKeys               ApiKey[]
+  webhookEndpoints      WebhookEndpoint[]
+  socialAdsAuth         SocialAdsAuth?
+  socialAdCampaigns     SocialAdCampaign[]
+  socialAdEvents        SocialAdEvent[]
+  whatsappCampaigns     WhatsappCampaign[]
+  notifications         Notification[]
 
   @@map("tenants")
 }
@@ -182,38 +185,38 @@ model Branch {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  tenantId     String
-  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  branchId     String?
-  branch       Branch?  @relation(fields: [branchId], references: [id])
-  name         String
-  email        String
-  passwordHash String?
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId        String?
+  branch          Branch?  @relation(fields: [branchId], references: [id])
+  name            String
+  email           String
+  passwordHash    String?
   // لحسابات مسجّلة بجوجل - فاضي للحسابات العادية بباسورد
-  googleId     String?  @unique
-  role         Role     @default(STAFF)
-  isActive     Boolean  @default(true)
+  googleId        String?  @unique
+  role            Role     @default(STAFF)
+  isActive        Boolean  @default(true)
   // صاحب المنصة نفسها - مش تاجر عادي، بيشوف كل الشركات المسجّلة
-  isSuperAdmin Boolean  @default(false)
+  isSuperAdmin    Boolean  @default(false)
   // موظف من فريق BlueField نفسه (مش عميل) بيدير حساب عميل واحد أو
   // أكتر نيابةً عنه - مختلف عن isSuperAdmin اللي بيشوف كل حاجة على
   // المنصة؛ ده مقصور بس على الشركات المحدّدة له في AgencyAssignment
-  isAgencyStaff Boolean @default(false)
+  isAgencyStaff   Boolean  @default(false)
   // حساب "مربوط" ببروفايل شخص عنده شركة تانية أصلية (مش تسجيل مستقل
   // بإيميل وباسورد) - بيتعمل تلقائيًا لما نفس الشخص يضيف شركة إضافية
   // من CompanyMembership. مستبعد من تسجيل الدخول العادي بالإيميل عشان
   // مايحصلش لبس مع حساب الشخص الأساسي اللي بنفس الإيميل بالظبط
-  isLinkedCompany Boolean @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  isLinkedCompany Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  refreshTokens RefreshToken[]
-  passwordResetTokens PasswordResetToken[]
-  employee      Employee?
-  agencyAssignments AgencyAssignment[]
-  ownedCompanyMemberships CompanyMembership[] @relation("CompanyMembershipOwner")
-  memberOfCompany         CompanyMembership[] @relation("CompanyMembershipMember")
+  refreshTokens           RefreshToken[]
+  passwordResetTokens     PasswordResetToken[]
+  employee                Employee?
+  agencyAssignments       AgencyAssignment[]
+  ownedCompanyMemberships CompanyMembership[]  @relation("CompanyMembershipOwner")
+  memberOfCompany         CompanyMembership[]  @relation("CompanyMembershipMember")
 
   // نفس الإيميل ممكن يتكرر بين شركات مختلفة، لكن مش جوه نفس الشركة
   @@unique([tenantId, email])
@@ -245,12 +248,12 @@ model CompanyMembership {
 // عنه - موظف واحد ممكن يتكلف بأكتر من عميل، وعميل واحد ممكن يتكلف
 // بيه أكتر من موظف
 model AgencyAssignment {
-  id           String   @id @default(uuid())
-  staffUserId  String
-  staffUser    User     @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+  id             String   @id @default(uuid())
+  staffUserId    String
+  staffUser      User     @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
   clientTenantId String
-  clientTenant Tenant   @relation(fields: [clientTenantId], references: [id], onDelete: Cascade)
-  createdAt    DateTime @default(now())
+  clientTenant   Tenant   @relation(fields: [clientTenantId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
 
   @@unique([staffUserId, clientTenantId])
   @@index([clientTenantId])
@@ -293,21 +296,21 @@ model RefreshToken {
 // ما تكون رقم عشوائي زي الديمو.
 // ------------------------------------------------------------
 model InventoryItem {
-  id         String   @id @default(uuid())
+  id         String    @id @default(uuid())
   tenantId   String
-  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   branchId   String
-  branch     Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  branch     Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
   name       String
   sku        String
-  quantity   Int      @default(0)
-  reorderAt  Int      @default(0)
-  costPrice  Decimal  @db.Decimal(18, 6)
-  sellPrice  Decimal  @db.Decimal(18, 6)
+  quantity   Int       @default(0)
+  reorderAt  Int       @default(0)
+  costPrice  Decimal   @db.Decimal(18, 6)
+  sellPrice  Decimal   @db.Decimal(18, 6)
   // تاريخ صلاحية اختياري - مش كل الأصناف عندها صلاحية (زي الأجهزة مثلاً)
   expiryDate DateTime?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   movements          InventoryMovement[]
   purchaseOrderItems PurchaseOrderItem[]
@@ -329,13 +332,13 @@ enum MovementType {
 
 // كل حركة مخزون بتتسجل فعليًا (مش بس رقم يتغير)، عشان يبقى فيه history حقيقي
 model InventoryMovement {
-  id        String       @id @default(uuid())
+  id        String        @id @default(uuid())
   itemId    String
   item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
   type      MovementType
   quantity  Int
   reason    String?
-  createdAt DateTime     @default(now())
+  createdAt DateTime      @default(now())
 
   @@index([itemId])
   @@map("inventory_movements")
@@ -365,9 +368,9 @@ model Supplier {
 }
 
 enum PurchaseOrderStatus {
-  DRAFT      // اتعمل بس لسه ما اتبعتش للمورد
-  ORDERED    // اتبعت للمورد وبننتظر التوريد
-  RECEIVED   // اتسلّم فعليًا وحدّث المخزون
+  DRAFT // اتعمل بس لسه ما اتبعتش للمورد
+  ORDERED // اتبعت للمورد وبننتظر التوريد
+  RECEIVED // اتسلّم فعليًا وحدّث المخزون
   CANCELLED
 }
 
@@ -416,14 +419,14 @@ model PurchaseOrderItem {
 // السعر ومهلة التوريد والتقييم - مش أرقام وهمية جنب بعض.
 // ------------------------------------------------------------
 model RfqRequest {
-  id        String     @id @default(uuid())
+  id        String        @id @default(uuid())
   tenantId  String
-  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   branchId  String
-  branch    Branch     @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  branch    Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
   itemId    String
   item      InventoryItem @relation(fields: [itemId], references: [id])
-  createdAt DateTime   @default(now())
+  createdAt DateTime      @default(now())
 
   quotes RfqQuote[]
 
@@ -576,12 +579,12 @@ model InvoicePayment {
 }
 
 model InvoiceItem {
-  id          String   @id @default(uuid())
+  id          String  @id @default(uuid())
   invoiceId   String
-  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   description String
   quantity    Int
-  unitPrice   Decimal  @db.Decimal(18, 6)
+  unitPrice   Decimal @db.Decimal(18, 6)
 
   @@index([invoiceId])
   @@map("invoice_items")
@@ -594,25 +597,25 @@ model InvoiceItem {
 // قيمة العمولة المستحقة له في نفس اللحظة.
 // ------------------------------------------------------------
 model Employee {
-  id             String   @id @default(uuid())
-  tenantId       String
-  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  branchId       String
-  branch         Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  userId         String?  @unique
-  user           User?    @relation(fields: [userId], references: [id])
-  name           String
-  position       String
+  id              String    @id @default(uuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId        String
+  branch          Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  userId          String?   @unique
+  user            User?     @relation(fields: [userId], references: [id])
+  name            String
+  position        String
   // نسبة العمولة كرقم عشري: 0.05 = 5%
-  commissionRate Decimal  @default(0) @db.Decimal(5, 4)
-  baseSalary     Decimal  @default(0) @db.Decimal(18, 6)
+  commissionRate  Decimal   @default(0) @db.Decimal(5, 4)
+  baseSalary      Decimal   @default(0) @db.Decimal(18, 6)
   // هدف المبيعات الشهري - بيتقارن بالمبيعات الفعلية (Actual) في تقرير HR
-  monthlyTarget  Decimal  @default(0) @db.Decimal(18, 6)
+  monthlyTarget   Decimal   @default(0) @db.Decimal(18, 6)
   // تاريخ التعيين الحقيقي - أساس حساب سنوات الخدمة لمكافأة نهاية
   // الخدمة، مختلف عن createdAt (اللي هو وقت إضافة السجل في النظام بس)
-  hireDate        DateTime @default(now())
+  hireDate        DateTime  @default(now())
   terminationDate DateTime?
-  createdAt      DateTime @default(now())
+  createdAt       DateTime  @default(now())
 
   sales      Sale[]
   shifts     Shift[]
@@ -713,10 +716,10 @@ model Customer {
   notes     String?
   createdAt DateTime @default(now())
 
-  sales      Sale[]
-  deals      Deal[]
-  activities Activity[]
-  invoices   Invoice[]
+  sales          Sale[]
+  deals          Deal[]
+  activities     Activity[]
+  invoices       Invoice[]
   supportTickets SupportTicket[]
 
   @@index([tenantId])
@@ -779,49 +782,49 @@ model Activity {
 // في الكود بس).
 // ------------------------------------------------------------
 model BookingSettings {
-  id              String   @id @default(uuid())
-  tenantId        String   @unique
-  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  industry        String   @default("salon")
-  brandName       String   @default("My Business")
+  id                  String   @id @default(uuid())
+  tenantId            String   @unique
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  industry            String   @default("salon")
+  brandName           String   @default("My Business")
   // شعار التاجر - متخزّن كـ base64 data URL، كافي لصورة صغيرة زي اللوجو
-  logoDataUrl     String?  @db.Text
-  services        String[] @default([])
-  openHour        Int      @default(9)
-  closeHour       Int      @default(21)
-  disabledHours   Int[]    @default([])
-  slotDurationMin Int      @default(60)
-  bufferMin       Int      @default(15)
-  peakFlag        Boolean  @default(true)
-  waAutomation    Boolean  @default(true)
-  waTemplate      String   @default("🔔 Booking Request Received!\n\nHi {customer_name},\nThank you for booking with us! Your request has been sent to {provider_name}.\n\n📋 Booking Details:\n• Service: {service_type}\n• Date: {date}\n• Time: {time}\n• Provider: {provider_name}\n\n📞 Need assistance? Contact the provider directly at: {provider_phone}\n\nWe look forward to serving you! ✨")
-  allocationMode  String   @default("staff") // staff | asset
-  themeColor      String   @default("#082f49")
+  logoDataUrl         String?  @db.Text
+  services            String[] @default([])
+  openHour            Int      @default(9)
+  closeHour           Int      @default(21)
+  disabledHours       Int[]    @default([])
+  slotDurationMin     Int      @default(60)
+  bufferMin           Int      @default(15)
+  peakFlag            Boolean  @default(true)
+  waAutomation        Boolean  @default(true)
+  waTemplate          String   @default("🔔 Booking Request Received!\n\nHi {customer_name},\nThank you for booking with us! Your request has been sent to {provider_name}.\n\n📋 Booking Details:\n• Service: {service_type}\n• Date: {date}\n• Time: {time}\n• Provider: {provider_name}\n\n📞 Need assistance? Contact the provider directly at: {provider_phone}\n\nWe look forward to serving you! ✨")
+  allocationMode      String   @default("staff") // staff | asset
+  themeColor          String   @default("#082f49")
   // لو مفعّلة، العميل لازم يدفع (كارت / Apple Pay / Google Pay - أي
   // طريقة مفعّلة في حساب MyFatoorah الخاص بالتاجر) قبل ما الحجز يتأكد
   // فعليًا. لو من غيرها، نفس السلوك القديم بالظبط (تأكيد واتساب فوري
   // من غير دفع)
-  paymentRequired Boolean  @default(false)
+  paymentRequired     Boolean  @default(false)
   // مبلغ ثابت بيتاخد وقت الحجز لو الدفع مفعّل (لو العميل مااختارش خدمة ليها سعر)
-  paymentAmount   Decimal  @default(0) @db.Decimal(18, 6)
+  paymentAmount       Decimal  @default(0) @db.Decimal(18, 6)
   // سعر كل خدمة بالدولار { "اسم الخدمة": سعر } - العميل بيختار خدمة أو أكتر
   // والإجمالي بيتحسب على السيرفر (modules/booking/service-pricing.ts)
-  servicePrices   Json     @default("{}")
+  servicePrices       Json     @default("{}")
   // إشعار للتاجر نفسه بكل حجز جديد: واتساب على رقمه و/أو إيميل (Resend).
   // waMerchantTemplate بيقبل {name} {phone} {resource} {date} {time} {payment} {services} {business} {reference}
-  merchantWhatsapp   String  @default("")
-  merchantEmail      String  @default("")
-  waMerchantTemplate String  @default("🔔 New Booking Notification\n\nHi {provider_name},\nYou have received a new booking through the platform. Here are the details:\n\n👤 Customer Name: {customer_name}\n\n📞 Contact Number: {phone}\n\n🛠️ Requested Service: {service_type}\n\n📅 Date: {date}\n\n⏰ Time: {time}\n\n📌 Please review your dashboard to manage or confirm this request")
+  merchantWhatsapp    String   @default("")
+  merchantEmail       String   @default("")
+  waMerchantTemplate  String   @default("🔔 New Booking Notification\n\nHi {provider_name},\nYou have received a new booking through the platform. Here are the details:\n\n👤 Customer Name: {customer_name}\n\n📞 Contact Number: {phone}\n\n🛠️ Requested Service: {service_type}\n\n📅 Date: {date}\n\n⏰ Time: {time}\n\n📌 Please review your dashboard to manage or confirm this request")
   // نطلب إيميل العميل (اختياري) في صفحة الحجز - بيوصله تأكيد بالإيميل
-  askCustomerEmail   Boolean @default(false)
+  askCustomerEmail    Boolean  @default(false)
   // لغة قوالب واتساب المعتمدة للحجز (en / ar)
-  waTemplateLang     String  @default("en")
+  waTemplateLang      String   @default("en")
   // تذكير واتساب تلقائي قبل الميعاد (بالقالب المعتمد BOOKING_REMINDER)
-  reminderEnabled     Boolean @default(false)
-  reminderHoursBefore Int     @default(24)
+  reminderEnabled     Boolean  @default(false)
+  reminderHoursBefore Int      @default(24)
   // المنطقة الزمنية للبيزنس - مواعيد الحجز (يوم + ساعة) بتتحسب بيها
-  timezone            String  @default("Asia/Qatar")
-  updatedAt       DateTime @updatedAt
+  timezone            String   @default("Asia/Qatar")
+  updatedAt           DateTime @updatedAt
 
   @@map("booking_settings")
 }
@@ -860,41 +863,41 @@ enum BookingStatus {
 // عشان "لسه مأكّدش من المطبخ" (PENDING العادي) يفضل معناه واضح ومختلف
 // عن "لسه مستني الدفع فعليًا"
 enum PaymentGateStatus {
-  NOT_REQUIRED   // الدفع مش مفعّل لهذا التاجر - نفس السلوك القديم بالظبط
+  NOT_REQUIRED // الدفع مش مفعّل لهذا التاجر - نفس السلوك القديم بالظبط
   AWAITING_PAYMENT // الدفع مفعّل، والعميل لسه ما دفعش - الحجز/الأوردر معلّق للتاجر لحد الدفع
   PAID
 }
 
 model Booking {
-  id            String        @id @default(uuid())
-  tenantId      String
-  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  branchId      String
-  branch        Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  resourceId    String
-  resource      Resource      @relation(fields: [resourceId], references: [id], onDelete: Cascade)
-  customerName  String
-  customerPhone String
+  id                   String            @id @default(uuid())
+  tenantId             String
+  tenant               Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId             String
+  branch               Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  resourceId           String
+  resource             Resource          @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  customerName         String
+  customerPhone        String
   // إيميل العميل لو كتبه في صفحة الحجز (اختياري)
-  customerEmail String?
+  customerEmail        String?
   // اتبعت تذكير الواتساب امتى (null = لسه) - بيمنع التذكير يتبعت مرتين
-  reminderSentAt DateTime?
-  date          DateTime      @db.Date
-  hour          Int // ساعة الميعاد (0-23) - بديل بسيط وحقيقي عن توقيت كامل
+  reminderSentAt       DateTime?
+  date                 DateTime          @db.Date
+  hour                 Int // ساعة الميعاد (0-23) - بديل بسيط وحقيقي عن توقيت كامل
   // الخدمات اللي العميل اختارها وقت الحجز
-  services      String[]      @default([])
-  status        BookingStatus @default(CONFIRMED)
-  note          String?
-  paymentStatus PaymentGateStatus @default(NOT_REQUIRED)
-  amount        Decimal?      @db.Decimal(18, 6)
+  services             String[]          @default([])
+  status               BookingStatus     @default(CONFIRMED)
+  note                 String?
+  paymentStatus        PaymentGateStatus @default(NOT_REQUIRED)
+  amount               Decimal?          @db.Decimal(18, 6)
   // طريقة الدفع اللي العميل اختارها (MYFATOORAH / LINK / BANK_TRANSFER /
   // CASH) واسمها وقت الحجز - عشان التاجر يعرف يستلم الفلوس إزاي
-  paymentMethodType  String?
-  paymentMethodLabel String?
+  paymentMethodType    String?
+  paymentMethodLabel   String?
   myFatoorahInvoiceId  String?
   myFatoorahPaymentId  String?
-  myFatoorahPaymentUrl String? @db.Text
-  createdAt     DateTime      @default(now())
+  myFatoorahPaymentUrl String?           @db.Text
+  createdAt            DateTime          @default(now())
 
   // يمنع فعليًا حجز نفس المورد في نفس اليوم ونفس الساعة مرتين -
   // على مستوى قاعدة البيانات، مش مجرد فحص في الكود
@@ -908,37 +911,37 @@ model Booking {
 // وعملاء حقيقيين برصيد نقاط بيتغيّر فعليًا، مش شكل تجريبي.
 // ------------------------------------------------------------
 model WalletSettings {
-  id                     String   @id @default(uuid())
-  tenantId               String   @unique
-  tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  engine                 String   @default("stamp") // stamp | points | tier | cashback
-  stampCount             Int      @default(9)
-  pointsRate             Int      @default(10)
-  cashbackPct            Int      @default(5)
-  expirationDays         Int      @default(90)
+  id                    String   @id @default(uuid())
+  tenantId              String   @unique
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  engine                String   @default("stamp") // stamp | points | tier | cashback
+  stampCount            Int      @default(9)
+  pointsRate            Int      @default(10)
+  cashbackPct           Int      @default(5)
+  expirationDays        Int      @default(90)
   // نص الهدية اللي بتتفتح لما العميل يكمّل كل الأختام (مثلًا: قهوة مجانية)
-  rewardText             String   @default("Free reward")
-  allowOverrides         Boolean  @default(true)
-  cardLayout             String   @default("classic") // classic | minimal | badge | split
-  themeColor             String   @default("#0F172A")
-  logoDataUrl            String?  @db.Text
-  centerLabel            String   @default("Brand Icon")
-  centerIconDataUrl      String?  @db.Text
+  rewardText            String   @default("Free reward")
+  allowOverrides        Boolean  @default(true)
+  cardLayout            String   @default("classic") // classic | minimal | badge | split
+  themeColor            String   @default("#0F172A")
+  logoDataUrl           String?  @db.Text
+  centerLabel           String   @default("Brand Icon")
+  centerIconDataUrl     String?  @db.Text
   // أيقونات الأختام (الدواير الصغيرة على الكارت) بالترتيب، مفصولة بمسافة:
   // رمز جاهز (☕) أو "img:<id>" = صورة من stampIconImages. خليط عادي، وفاضية =
   // بتتبع أيقونة الدايرة الكبيرة
-  stampGlyph             String   @default("")
+  stampGlyph            String   @default("")
   // قديم (صورة واحدة) - الـ migration نقلها لـ stampIconImages
-  stampIconDataUrl       String?  @db.Text
+  stampIconDataUrl      String?  @db.Text
   // الصور اللي التاجر رفعها للأختام [{ id, dataUrl }] (حد أقصى 6)
-  stampIconImages        Json     @default("[]")
-  centerBorderThickness  Int      @default(2)
-  centerRingColor        String   @default("#38BDF8")
-  centerInnerGlow        Boolean  @default(true)
-  showDecorCircles       Boolean  @default(false)
-  decorCircles           Json     @default("[]")
-  termsText              String   @default("By joining this loyalty program, you agree to receive points, offers, and updates via WhatsApp and SMS. Points expire per the schedule shown on your pass. BlueField and the merchant may update these terms at any time.") @db.Text
-  updatedAt              DateTime @updatedAt
+  stampIconImages       Json     @default("[]")
+  centerBorderThickness Int      @default(2)
+  centerRingColor       String   @default("#38BDF8")
+  centerInnerGlow       Boolean  @default(true)
+  showDecorCircles      Boolean  @default(false)
+  decorCircles          Json     @default("[]")
+  termsText             String   @default("By joining this loyalty program, you agree to receive points, offers, and updates via WhatsApp and SMS. Points expire per the schedule shown on your pass. BlueField and the merchant may update these terms at any time.") @db.Text
+  updatedAt             DateTime @updatedAt
 
   @@map("wallet_settings")
 }
@@ -950,19 +953,19 @@ enum WalletTier {
 }
 
 model WalletCustomer {
-  id          String     @id @default(uuid())
+  id          String         @id @default(uuid())
   tenantId    String
-  tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name        String
   phone       String
-  balance     Int        @default(0)
-  tier        WalletTier @default(SILVER)
-  createdAt   DateTime   @default(now())
+  balance     Int            @default(0)
+  tier        WalletTier     @default(SILVER)
+  createdAt   DateTime       @default(now())
   lastVisitAt DateTime?
   // الكود اللي بيتحط في الـ QR على كارت العميل - عشوائي ومش ممكن
   // يتخمّن، وهو الوحيد اللي بيسمح للموظف يضيف ختم أو يسلّم هدية
   // (مش رقم التليفون ولا الـ id)
-  memberCode  String     @unique @default(dbgenerated("replace(gen_random_uuid()::text, '-', '')"))
+  memberCode  String         @unique @default(dbgenerated("replace(gen_random_uuid()::text, '-', '')"))
   events      WalletEvent[]
   rewards     WalletReward[]
 
@@ -1016,50 +1019,50 @@ model WalletReward {
 // حقيقية وطلبات حقيقية بتتسجل فعليًا، مش شكل تجريبي.
 // ------------------------------------------------------------
 model CatalogSettings {
-  id              String   @id @default(uuid())
-  tenantId        String   @unique
-  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  brandName       String   @default("My Restaurant")
-  brandLogoDataUrl String? @db.Text
-  menuLayout      String   @default("list") // list | grid | gallery | story
-  dineInEnabled   Boolean  @default(true)
-  pickupEnabled   Boolean  @default(true)
+  id                 String   @id @default(uuid())
+  tenantId           String   @unique
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandName          String   @default("My Restaurant")
+  brandLogoDataUrl   String?  @db.Text
+  menuLayout         String   @default("list") // list | grid | gallery | story
+  dineInEnabled      Boolean  @default(true)
+  pickupEnabled      Boolean  @default(true)
   // أسماء طاولات حقيقية يحددها التاجر بنفسه (زي "B1", "Patio 2") -
   // بدل عدد رقمي ثابت، عشان تتوافق مع تسميات المطاعم الحقيقية
-  tableNames      String[] @default(["1", "2", "3", "4", "5", "6", "7", "8"])
-  merchantEmail   String   @default("")
-  kitchenWhatsapp String   @default("")
-  prepTime        Int      @default(30)
-  themeColor      String   @default("#082F49")
+  tableNames         String[] @default(["1", "2", "3", "4", "5", "6", "7", "8"])
+  merchantEmail      String   @default("")
+  kitchenWhatsapp    String   @default("")
+  prepTime           Int      @default(30)
+  themeColor         String   @default("#082F49")
   // لو مفعّلة، العميل لازم يدفع قيمة الأوردر (كارت / Apple Pay / Google
   // Pay حسب المفعّل في حساب MyFatoorah بتاع التاجر) قبل ما الأوردر يوصل
   // فعليًا للمطبخ. لو من غيرها، نفس السلوك القديم بالظبط
-  paymentRequired Boolean  @default(false)
+  paymentRequired    Boolean  @default(false)
   // لينك نظام الـ POS بتاع التاجر - اختياري، بيظهر كزرار "Open POS
   // System" فوق التابات في صفحة الكتالوج عشان الموظف يوصله بسرعة
-  posLink         String   @default("")
+  posLink            String   @default("")
   // نص رسائل الواتساب بيكتبه التاجر بنفسه - ممكن يستخدم {items} {total}
   // {mode} {prep} {name} أو يسيبهم (مثلاً من غير مبلغ)
-  waMerchantTemplate String @default("🔔 New order — {mode}\n👤 {name}\n\n{items}\n\n💰 Total: {total}")
-  waCustomerTemplate String @default("Hello {name} 👋\nThank you for your order! ✅\n\n🍽️ {mode}\n\n{items}\n\n💰 Total: {total}\n⏱️ Ready in about {prep} minutes.\n\nWe'll let you know if anything changes. Enjoy!")
+  waMerchantTemplate String   @default("🔔 New order — {mode}\n👤 {name}\n\n{items}\n\n💰 Total: {total}")
+  waCustomerTemplate String   @default("Hello {name} 👋\nThank you for your order! ✅\n\n🍽️ {mode}\n\n{items}\n\n💰 Total: {total}\n⏱️ Ready in about {prep} minutes.\n\nWe'll let you know if anything changes. Enjoy!")
   // عملة المنيو اللي التاجر بيختارها (QAR / EGP / AED / USD / EUR ...) -
   // الأسعار والإجمالي ({total}) بيظهروا بيها. USD = نفس العرض القديم ($)
-  currency        String   @default("USD")
-  updatedAt       DateTime @updatedAt
+  currency           String   @default("USD")
+  updatedAt          DateTime @updatedAt
 
   @@map("catalog_settings")
 }
 
 model MenuCategory {
-  id             String   @id @default(uuid())
-  tenantId       String
-  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name           String
-  coverImageDataUrl String? @db.Text
-  sortOrder      Int      @default(0)
+  id                String   @id @default(uuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name              String
+  coverImageDataUrl String?  @db.Text
+  sortOrder         Int      @default(0)
   // قسم من المنيو التجريبي (زرار "Add demo menu") - بيتشال بزرار واحد
-  isDemo         Boolean  @default(false)
-  createdAt      DateTime @default(now())
+  isDemo            Boolean  @default(false)
+  createdAt         DateTime @default(now())
 
   items MenuItem[]
 
@@ -1068,17 +1071,17 @@ model MenuCategory {
 }
 
 model MenuItem {
-  id            String       @id @default(uuid())
-  tenantId      String
-  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  categoryId    String
-  category      MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  name          String
-  description   String       @default("")
-  price         Decimal      @db.Decimal(18, 6)
-  photoDataUrl  String?      @db.Text
-  sortOrder     Int          @default(0)
-  createdAt     DateTime     @default(now())
+  id           String       @id @default(uuid())
+  tenantId     String
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categoryId   String
+  category     MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  name         String
+  description  String       @default("")
+  price        Decimal      @db.Decimal(18, 6)
+  photoDataUrl String?      @db.Text
+  sortOrder    Int          @default(0)
+  createdAt    DateTime     @default(now())
 
   orderItems OrderItem[]
 
@@ -1099,26 +1102,26 @@ enum OrderStatus {
 }
 
 model CatalogOrder {
-  id            String      @id @default(uuid())
-  tenantId      String
-  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  branchId      String
-  branch        Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  mode          OrderMode
-  tableLabel    String? // اسم الطاولة كما حدده التاجر (زي "B1"، مش رقم تلقائي)
-  readyTime     Int? // بالدقايق - لطلبات الـ pickup بس
-  customerName  String
-  customerPhone String
-  totalAmount   Decimal     @db.Decimal(18, 6)
-  status        OrderStatus @default(PENDING)
-  paymentStatus PaymentGateStatus @default(NOT_REQUIRED)
+  id                   String            @id @default(uuid())
+  tenantId             String
+  tenant               Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId             String
+  branch               Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  mode                 OrderMode
+  tableLabel           String? // اسم الطاولة كما حدده التاجر (زي "B1"، مش رقم تلقائي)
+  readyTime            Int? // بالدقايق - لطلبات الـ pickup بس
+  customerName         String
+  customerPhone        String
+  totalAmount          Decimal           @db.Decimal(18, 6)
+  status               OrderStatus       @default(PENDING)
+  paymentStatus        PaymentGateStatus @default(NOT_REQUIRED)
   // طريقة الدفع اللي العميل اختارها واسمها وقت الطلب
-  paymentMethodType  String?
-  paymentMethodLabel String?
+  paymentMethodType    String?
+  paymentMethodLabel   String?
   myFatoorahInvoiceId  String?
   myFatoorahPaymentId  String?
-  myFatoorahPaymentUrl String? @db.Text
-  createdAt     DateTime    @default(now())
+  myFatoorahPaymentUrl String?           @db.Text
+  createdAt            DateTime          @default(now())
 
   items OrderItem[]
 
@@ -1147,37 +1150,37 @@ model OrderItem {
 // لسه)، فمفيش أي endpoint هنا بيدّعي إنه بيبعت رسالة حقيقية.
 // ------------------------------------------------------------
 model WhatsappSettings {
-  id              String   @id @default(uuid())
-  tenantId        String   @unique
-  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id                 String    @id @default(uuid())
+  tenantId           String    @unique
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   // فاضيين لحد ما تتوصل بحساب Meta Business حقيقي - القيم دي
   // بس أماكن محجوزة، مفيش أي كود بيستخدمها للإرسال الفعلي دلوقتي
-  metaAccessToken String?  @db.Text
-  metaPhoneNumberId String?
+  metaAccessToken    String?   @db.Text
+  metaPhoneNumberId  String?
   // معرّف حساب WhatsApp Business نفسه (WABA ID) - مختلف عن رقم
   // الهاتف، ومطلوب عشان نقدر ننشئ قوالب رسائل حقيقية وترفعها لـ Meta
   // للموافقة (زي قالب دومينوز اللي فيه صورة وزرار)
-  metaWabaId      String?
+  metaWabaId         String?
   // معرّف تطبيق Meta نفسه (App ID) - مختلف عن WABA ID ورقم الهاتف،
   // ومطلوب بس لو عايزة ترفعي صورة في رأس القالب (Meta بتستخدم نظام
   // رفع ملفات منفصل اسمه Resumable Upload API بيحتاج App ID)
-  metaAppId       String?
+  metaAppId          String?
   // isConnected = آخر تأكيد حقيقي من Meta نجح (مش مجرد إن الخانات مليانة)
-  isConnected     Boolean  @default(false)
+  isConnected        Boolean   @default(false)
   displayPhoneNumber String?
   verifiedName       String?
   lastVerifiedAt     DateTime?
   lastVerifyError    String?
   // Webhook (استقبال الرسايل من Meta): لينك سري لكل تاجر + Verify Token،
   // و App Secret للتأكد إن الرسالة جاية من Meta فعلًا (X-Hub-Signature-256)
-  webhookKey         String?  @unique
+  webhookKey         String?   @unique
   webhookVerifyToken String?
-  metaAppSecret      String?  @db.Text
+  metaAppSecret      String?   @db.Text
   lastWebhookAt      DateTime?
   // البوت: ردود تلقائية بالكلمات (WhatsappAutoReply) + رد افتراضي اختياري
-  botEnabled         Boolean  @default(false)
-  botFallbackReply   String   @default("") @db.Text
-  updatedAt       DateTime @updatedAt
+  botEnabled         Boolean   @default(false)
+  botFallbackReply   String    @default("") @db.Text
+  updatedAt          DateTime  @updatedAt
 
   templates WhatsappTemplate[]
 
@@ -1187,22 +1190,22 @@ model WhatsappSettings {
 // كل رسالة واتساب جاية أو طالعة - بتظهر في Team Inbox. حالة التوصيل
 // بتتحدث من الـ webhook (sent / delivered / read / failed)
 model WhatsappMessage {
-  id           String   @id @default(uuid())
-  tenantId     String
-  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  direction    String // IN | OUT
-  contactPhone String
-  contactName  String?
-  body         String   @db.Text
-  kind         String   @default("text") // text | template | bot | ...
-  waMessageId  String?  @unique
-  status       String   @default("sent")
-  error        String?
+  id            String   @id @default(uuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  direction     String // IN | OUT
+  contactPhone  String
+  contactName   String?
+  body          String   @db.Text
+  kind          String   @default("text") // text | template | bot | ...
+  waMessageId   String?  @unique
+  status        String   @default("sent")
+  error         String?
   // رسالة طالعة من حملة (عشان تقرير الحملة: اتبعت / اتسلّم / اتقرا / رد)
-  campaignId   String?
+  campaignId    String?
   // رقم الشركة اللي الرسالة وصلت عليه / اتبعتت منه (phone number id عند Meta) - null = قبل الأرقام المتعددة
   phoneNumberId String?
-  createdAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
 
   @@index([tenantId, contactPhone, createdAt])
   @@index([tenantId, createdAt])
@@ -1299,21 +1302,21 @@ model WhatsappAutoReply {
 // حساب MyFatoorah بتاع التاجر، بيظهروا تلقائيًا في صفحة الدفع المستضافة
 // من غير أي كود إضافي من عندنا
 model TenantPaymentSettings {
-  id               String   @id @default(uuid())
-  tenantId         String   @unique
-  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  myFatoorahApiKey String?  @db.Text
-  myFatoorahIsTest Boolean  @default(true)
+  id                 String   @id @default(uuid())
+  tenantId           String   @unique
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  myFatoorahApiKey   String?  @db.Text
+  myFatoorahIsTest   Boolean  @default(true)
   // مزوّد الدفع: MYFATOORAH (دفع وتأكيد تلقائي) أو CUSTOM_LINK (لينك دفع
   // من أي مزوّد تاني - التاجر بيأكد الدفع يدويًا)
-  provider         String   @default("MYFATOORAH")
+  provider           String   @default("MYFATOORAH")
   customProviderName String?
-  customPaymentUrl String?  @db.Text
+  customPaymentUrl   String?  @db.Text
   // قايمة طرق الدفع اللي العميل بيختار منها (لينكات / تحويل بنكي / كاش /
   // MyFatoorah) - شوفي payment-methods.ts. null = لسه على الإعداد القديم
   // (provider + customPaymentUrl) وبيتحوّل تلقائيًا لطريقة واحدة
-  methods          Json?
-  updatedAt        DateTime @updatedAt
+  methods            Json?
+  updatedAt          DateTime @updatedAt
 
   @@map("tenant_payment_settings")
 }
@@ -1328,31 +1331,31 @@ enum TemplateStatus {
 }
 
 model WhatsappTemplate {
-  id              String          @id @default(uuid())
-  tenantId        String
-  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  settingsId      String
-  settings        WhatsappSettings @relation(fields: [settingsId], references: [id], onDelete: Cascade)
-  name            String // اسم القالب عند Meta - حروف صغيرة وأندرسكور بس
-  language        String  @default("ar")
-  category        String  @default("MARKETING")
-  bodyText        String  @db.Text
+  id                 String           @id @default(uuid())
+  tenantId           String
+  tenant             Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  settingsId         String
+  settings           WhatsappSettings @relation(fields: [settingsId], references: [id], onDelete: Cascade)
+  name               String // اسم القالب عند Meta - حروف صغيرة وأندرسكور بس
+  language           String           @default("ar")
+  category           String           @default("MARKETING")
+  bodyText           String           @db.Text
   // صورة رأس القالب (اختيارية) - بتترفع لـ Meta بنظام رفع منفصل
   // (Resumable Upload) وقت الإنشاء، وبنحتفظ بلينك مصغّر للعرض بس
-  headerImageDataUrl String? @db.Text
-  buttonText      String?
-  buttonUrl       String?
+  headerImageDataUrl String?          @db.Text
+  buttonText         String?
+  buttonUrl          String?
   // STANDARD (نص + صورة فوق اختياري + زرار) | CAROUSEL (كروت تتقلّب، كل كارت صورة + كلام + زرار/اتنين)
-  format          String  @default("STANDARD")
+  format             String           @default("STANDARD")
   // كروت الكاروسيل: [{imageDataUrl, bodyText, buttons:[{type QUICK_REPLY|URL, text, url?}]}]
-  cards           Json?
-  status          TemplateStatus @default(PENDING)
-  metaTemplateId  String? // معرّف القالب عند Meta نفسها - للاستعلام عن حالته بعد كده
-  rejectionReason String?
+  cards              Json?
+  status             TemplateStatus   @default(PENDING)
+  metaTemplateId     String? // معرّف القالب عند Meta نفسها - للاستعلام عن حالته بعد كده
+  rejectionReason    String?
   // قوالب الحجز الجاهزة: BOOKING_CONFIRMATION / BOOKING_MERCHANT_ALERT /
   // BOOKING_REMINDER (null = قالب عادي عمله التاجر للحملات)
-  purpose         String?
-  createdAt       DateTime @default(now())
+  purpose            String?
+  createdAt          DateTime         @default(now())
 
   campaigns WhatsappCampaign[]
 
@@ -1377,13 +1380,13 @@ model BotFlowNode {
 }
 
 model WhatsappContactNote {
-  id        String   @id @default(uuid())
-  tenantId  String
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  phone     String // بيربط الملاحظة بجهة الاتصال عن طريق رقمها - مفيش موديل عميل منفصل
+  id         String   @id @default(uuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone      String // بيربط الملاحظة بجهة الاتصال عن طريق رقمها - مفيش موديل عميل منفصل
   authorName String
-  text      String
-  createdAt DateTime @default(now())
+  text       String
+  createdAt  DateTime @default(now())
 
   @@index([tenantId, phone])
   @@map("whatsapp_contact_notes")
@@ -1408,21 +1411,21 @@ model CreditTransaction {
 
 // كل نتيجة ذكاء اصطناعي اتولّدت (عشان التاجر يرجعلها + نعرف الاستهلاك)
 model AiGeneration {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   tenantId    String
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   userId      String?
   tool        String // copywriter | image | video | audit
   kind        String // caption | product | ... (حسب الأداة)
   input       Json
   output      Json
-  creditsUsed Int      @default(0)
+  creditsUsed Int       @default(0)
   model       String
   // PENDING (فيديو لسه بيتعمل) | DONE | FAILED
-  status      String   @default("DONE")
+  status      String    @default("DONE")
   error       String?
   finishedAt  DateTime?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
   assets      AiAsset[]
 
   @@index([tenantId, createdAt])
@@ -1464,38 +1467,38 @@ enum CampaignKind {
 }
 
 model WhatsappCampaign {
-  id          String         @id @default(uuid())
-  tenantId    String
-  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name        String
-  segmentDesc String // وصف الفئة المستهدفة (نص حر، زي "عملاء الولاء Gold")
-  templateText String        @db.Text
-  status      CampaignStatus @default(DRAFT)
-  kind        CampaignKind   @default(TEXT)
+  id            String            @id @default(uuid())
+  tenantId      String
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  segmentDesc   String // وصف الفئة المستهدفة (نص حر، زي "عملاء الولاء Gold")
+  templateText  String            @db.Text
+  status        CampaignStatus    @default(DRAFT)
+  kind          CampaignKind      @default(TEXT)
   // قالب معتمد فعليًا من Meta هيتبعت بيه - لو فاضي، بيرجع لـ
   // "hello_world" الافتراضي (سلوك النظام الأصلي قبل ما نبني القوالب)
-  templateId  String?
-  template    WhatsappTemplate? @relation(fields: [templateId], references: [id])
+  templateId    String?
+  template      WhatsappTemplate? @relation(fields: [templateId], references: [id])
   // تسجيل صوتي حقيقي (base64) سجّله التاجر بنفسه من الميكروفون -
   // موجود بس لو الحملة من نوع VOICE
-  audioBase64 String?        @db.Text
+  audioBase64   String?           @db.Text
   // قائمة مستلمين حقيقية - [{name, phone}] - بترفع من ملف إكسل حقيقي
   // (مش تصنيف شكلي)، وده اللي بيتبعتله فعليًا وقت الإرسال
-  recipients  Json           @default("[]")
-  sentCount   Int            @default(0)
-  failedCount Int            @default(0)
+  recipients    Json              @default("[]")
+  sentCount     Int               @default(0)
+  failedCount   Int               @default(0)
   // وقت آخر تقدم في الإرسال (الإرسال في الخلفية) - لو فضل قديم يبقى السيرفر اتعاد تشغيله
-  sendingAt   DateTime?
+  sendingAt     DateTime?
   // ميعاد الإرسال (حالة SCHEDULED)
-  scheduledAt DateTime?
+  scheduledAt   DateTime?
   // الجمهور من دفتر جهات الاتصال بالتاجز (فاضي = قايمة الإكسل recipients). any = أي تاج، all = كل التاجز
-  audienceTags  String[]   @default([])
-  audienceMatch String     @default("any")
+  audienceTags  String[]          @default([])
+  audienceMatch String            @default("any")
   // اللي اتشالوا وقت الإرسال لأنهم ألغوا الاشتراك (Opt-out)
-  skippedCount  Int        @default(0)
+  skippedCount  Int               @default(0)
   // سبب آخر فشل (مثلًا حملة مجدولة القالب بتاعها اترفض قبل ميعادها)
-  lastError     String?    @db.Text
-  createdAt   DateTime       @default(now())
+  lastError     String?           @db.Text
+  createdAt     DateTime          @default(now())
 
   @@index([tenantId])
   @@index([status, scheduledAt])
@@ -1508,12 +1511,12 @@ model WhatsappCampaign {
 // دي رسائل عملاء محتملين قبل ما يبقوا عندهم حساب أصلاً.
 // ------------------------------------------------------------
 model ContactMessage {
-  id           String   @id @default(uuid())
-  fullName     String
+  id            String   @id @default(uuid())
+  fullName      String
   businessEmail String
-  companyName  String
-  message      String   @db.Text
-  createdAt    DateTime @default(now())
+  companyName   String
+  message       String   @db.Text
+  createdAt     DateTime @default(now())
 
   @@map("contact_messages")
 }
@@ -1523,9 +1526,9 @@ model ContactMessage {
 // صف واحد بس للمنصة كلها، مش لكل شركة، بيعدّله السوبر أدمن بس
 // ------------------------------------------------------------
 model PlatformSettings {
-  id                  String  @id @default("singleton")
-  myFatoorahApiKey    String? @db.Text
-  myFatoorahIsTest    Boolean @default(true)
+  id                    String   @id @default("singleton")
+  myFatoorahApiKey      String?  @db.Text
+  myFatoorahIsTest      Boolean  @default(true)
   // أسعار الخدمات اللي السوبر أدمن غيّرها { moduleId: سعر شهري بالدولار } - فاضي = pricing.ts
   modulePrices          Json     @default("{}")
   extraCompanyBasePrice Decimal? @db.Decimal(18, 6)
@@ -1549,14 +1552,14 @@ model PlatformSettings {
   // حماية فلوس الإعلانات: أقصى ميزانية يومية (بالدولار) وأقصى مدة لإعلان واحد - السوبر أدمن بيغيّرهم
   adsMaxDailyBudgetUsd  Int      @default(100)
   adsMaxDays            Int      @default(30)
-  updatedAt           DateTime @updatedAt
+  updatedAt             DateTime @updatedAt
 
   @@map("platform_settings")
 }
 
 enum SubscriptionOrderStatus {
-  PENDING   // العميل اختار الخدمات، لسه ما دفعش أو الدفع لسه مش متأكد
-  PAID      // MyFatoorah أكّد إن الدفع اتم فعليًا
+  PENDING // العميل اختار الخدمات، لسه ما دفعش أو الدفع لسه مش متأكد
+  PAID // MyFatoorah أكّد إن الدفع اتم فعليًا
   ACTIVATED // السوبر أدمن راجع الطلب وفعّل الخدمات على حساب العميل
   CANCELLED
 }
@@ -1565,28 +1568,28 @@ enum SubscriptionOrderStatus {
 // وبيفضل PENDING لحد ما السوبر أدمن يراجعه ويفعّل الخدمات فعليًا على
 // حساب الشركة - مفيش تفعيل تلقائي حتى لو الدفع نجح
 model SubscriptionOrder {
-  id               String                   @id @default(uuid())
-  tenantId         String
-  tenant           Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  selectedModules  String[]
-  billingCycle     String                   @default("monthly") // monthly | yearly
-  amount           Decimal                  @db.Decimal(18, 6)
-  currency         String                   @default("USD")
+  id                   String                  @id @default(uuid())
+  tenantId             String
+  tenant               Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  selectedModules      String[]
+  billingCycle         String                  @default("monthly") // monthly | yearly
+  amount               Decimal                 @db.Decimal(18, 6)
+  currency             String                  @default("USD")
   // نفس المبلغ بالدولار (للتقارير والإيرادات) - amount نفسه بعملة الدفع
-  amountUsd        Decimal?                 @db.Decimal(18, 6)
-  country          String?
-  status           SubscriptionOrderStatus  @default(PENDING)
+  amountUsd            Decimal?                @db.Decimal(18, 6)
+  country              String?
+  status               SubscriptionOrderStatus @default(PENDING)
   // "MODULES" = اشتراك في موديولات عادي (الافتراضي، زي كل الطلبات
   // القديمة) - "EXTRA_COMPANY" = طلب إضافة شركة تانية لنفس المالك،
   // وده بيستخدم extraCompanyName/extraCompanyIndustry بدل selectedModules
-  orderType        String                   @default("MODULES")
+  orderType            String                  @default("MODULES")
   extraCompanyName     String?
   extraCompanyIndustry String?
-  myFatoorahInvoiceId String?
-  myFatoorahPaymentId String?
-  myFatoorahPaymentUrl String?              @db.Text
-  createdAt        DateTime                 @default(now())
-  updatedAt        DateTime                 @updatedAt
+  myFatoorahInvoiceId  String?
+  myFatoorahPaymentId  String?
+  myFatoorahPaymentUrl String?                 @db.Text
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
 
   @@index([tenantId])
   @@map("subscription_orders")
@@ -1633,18 +1636,18 @@ model OpsTask {
 // خطي (Straight-Line) فعلي بناءً على تاريخ الشراء
 // ------------------------------------------------------------
 model FixedAsset {
-  id                String   @id @default(uuid())
-  tenantId          String
-  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  branchId          String
-  branch            Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  name              String
-  category          String   @default("Equipment")
-  purchaseDate      DateTime
-  purchaseValue     Decimal  @db.Decimal(18, 6)
-  usefulLifeYears   Int      @default(5)
-  salvageValue      Decimal  @default(0) @db.Decimal(18, 6)
-  createdAt         DateTime @default(now())
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId        String
+  branch          Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name            String
+  category        String   @default("Equipment")
+  purchaseDate    DateTime
+  purchaseValue   Decimal  @db.Decimal(18, 6)
+  usefulLifeYears Int      @default(5)
+  salvageValue    Decimal  @default(0) @db.Decimal(18, 6)
+  createdAt       DateTime @default(now())
 
   @@index([tenantId, branchId])
   @@map("fixed_assets")
@@ -1703,13 +1706,13 @@ model Vehicle {
 }
 
 model VehicleServiceLog {
-  id         String   @id @default(uuid())
-  vehicleId  String
-  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  id          String   @id @default(uuid())
+  vehicleId   String
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   serviceDate DateTime @default(now())
   description String
-  cost       Decimal  @db.Decimal(18, 6)
-  mileageAt  Int
+  cost        Decimal  @db.Decimal(18, 6)
+  mileageAt   Int
 
   @@index([vehicleId])
   @@map("vehicle_service_logs")
@@ -1781,12 +1784,12 @@ model SupportTicket {
 }
 
 model SupportTicketReply {
-  id        String        @id @default(uuid())
-  ticketId  String
-  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  id         String        @id @default(uuid())
+  ticketId   String
+  ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   authorName String
-  message   String        @db.Text
-  createdAt DateTime      @default(now())
+  message    String        @db.Text
+  createdAt  DateTime      @default(now())
 
   @@index([ticketId])
   @@map("support_ticket_replies")
@@ -1837,25 +1840,25 @@ model LinktreeSettings {
 }
 
 model LinktreeLink {
-  id        String   @id @default(uuid())
-  tenantId  String
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  label     String
-  url       String
-  sortOrder Int      @default(0)
+  id          String        @id @default(uuid())
+  tenantId    String
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  label       String
+  url         String
+  sortOrder   Int           @default(0)
   // عدد نقرات حقيقي - بيزيد فعليًا كل ما حد يدوس على الرابط من
   // صفحة الينكتري العامة، مش رقم وهمي
-  clicks    Int      @default(0)
+  clicks      Int           @default(0)
   // URL = لينك عادي، FILE = ملف مرفوع بيتحمّل من الصفحة العامة
-  kind      String   @default("URL")
-  fileName  String?
-  fileSize  Int?
-  file      LinktreeFile?
+  kind        String        @default("URL")
+  fileName    String?
+  fileSize    Int?
+  file        LinktreeFile?
   // أيقونة جنب اللينك: مفتاح أيقونة جاهزة (facebook / instagram / ...) أو
   // "none"؛ null = بتتكتشف تلقائي من اللينك. iconDataUrl = صورة رفعها التاجر
   icon        String?
-  iconDataUrl String?  @db.Text
-  createdAt DateTime @default(now())
+  iconDataUrl String?       @db.Text
+  createdAt   DateTime      @default(now())
 
   @@index([tenantId])
   @@map("linktree_links")
@@ -1863,7 +1866,7 @@ model LinktreeLink {
 
 // محتوى الملف المرفوع في جدول منفصل عشان قوائم اللينكات تفضل خفيفة
 model LinktreeFile {
-  linkId   String   @id
+  linkId   String       @id
   link     LinktreeLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
   mimeType String
   data     Bytes
@@ -1884,26 +1887,26 @@ enum BillStatus {
 }
 
 model VendorBill {
-  id            String     @id @default(uuid())
-  tenantId      String
-  tenant        Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  vendorName    String
-  billNumber    String?
-  category      String     @default("General") // زي "Rent", "Utilities", "Subscriptions"
-  amount        Decimal    @db.Decimal(18, 6)
-  issueDate     DateTime   @default(now())
-  dueDate       DateTime?
-  status        BillStatus @default(UNPAID)
-  journalEntryId String?
+  id                    String                @id @default(uuid())
+  tenantId              String
+  tenant                Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  vendorName            String
+  billNumber            String?
+  category              String                @default("General") // زي "Rent", "Utilities", "Subscriptions"
+  amount                Decimal               @db.Decimal(18, 6)
+  issueDate             DateTime              @default(now())
+  dueDate               DateTime?
+  status                BillStatus            @default(UNPAID)
+  journalEntryId        String?
   // الفرع اللي الفاتورة عليه (فاضي = الشركة كلها)
-  branchId      String?
-  branch        Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  notes         String?
+  branchId              String?
+  branch                Branch?               @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  notes                 String?
   // السداد: تاريخه وقيده (مدين الموردين / دائن الخزنة) - بيتشال لو رجعت "مش مدفوعة"
-  paidAt        DateTime?
+  paidAt                DateTime?
   paymentJournalEntryId String?
-  attachment    VendorBillAttachment?
-  createdAt     DateTime   @default(now())
+  attachment            VendorBillAttachment?
+  createdAt             DateTime              @default(now())
 
   @@index([tenantId])
   @@index([tenantId, issueDate])
@@ -1989,33 +1992,34 @@ model ExchangeRate {
 
   @@map("exchange_rates")
 }
+
 // ---------- النشر على السوشيال ميديا (فيسبوك / انستجرام، وبعدين تيك توك وسناب) ----------
 
 // حساب متربط: صفحة فيسبوك أو حساب انستجرام بيزنس. التوكن متشفّر (social/token-crypto.ts)
 model SocialAccount {
-  id             String             @id @default(uuid())
-  tenantId       String
-  tenant         Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  platform       String // FACEBOOK | INSTAGRAM | TIKTOK | SNAPCHAT
-  externalId     String
-  name           String
-  username       String?
-  pictureUrl     String?
+  id               String             @id @default(uuid())
+  tenantId         String
+  tenant           Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  platform         String // FACEBOOK | INSTAGRAM | TIKTOK | SNAPCHAT
+  externalId       String
+  name             String
+  username         String?
+  pictureUrl       String?
   // انستجرام: صفحة فيسبوك اللي الحساب متربط بيها
-  parentId       String?
-  accessToken    String
-  tokenExpiresAt DateTime?
+  parentId         String?
+  accessToken      String
+  tokenExpiresAt   DateTime?
   // تيك توك: التوكن بيخلص كل 24 ساعة وبيتجدد بالـ refresh token (متشفّر برضه)
   refreshToken     String?
   refreshExpiresAt DateTime?
-  status         String             @default("ACTIVE") // ACTIVE | NEEDS_RECONNECT | DISCONNECTED
-  lastError      String?
-  connectedById  String?
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
-  targets        SocialPostTarget[]
-  messages       SocialMessage[]
-  adCampaigns    SocialAdCampaign[]
+  status           String             @default("ACTIVE") // ACTIVE | NEEDS_RECONNECT | DISCONNECTED
+  lastError        String?
+  connectedById    String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  targets          SocialPostTarget[]
+  messages         SocialMessage[]
+  adCampaigns      SocialAdCampaign[]
 
   @@unique([tenantId, platform, externalId])
   @@map("social_accounts")
@@ -2039,22 +2043,34 @@ model SocialMedia {
 }
 
 model SocialPost {
-  id           String             @id @default(uuid())
-  tenantId     String
-  tenant       Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  createdById  String?
-  caption      String             @default("")
-  mediaId      String?
-  media        SocialMedia?       @relation(fields: [mediaId], references: [id], onDelete: SetNull)
-  status       String             @default("DRAFT") // DRAFT | SCHEDULED | PUBLISHING | PUBLISHED | PARTIAL | FAILED
+  id                String             @id @default(uuid())
+  tenantId          String
+  tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdById       String?
+  caption           String             @default("")
+  mediaId           String?
+  media             SocialMedia?       @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+  status            String             @default("DRAFT") // DRAFT | SCHEDULED | PUBLISHING | PUBLISHED | PARTIAL | FAILED
   // إعدادات خاصة بكل منصة (تيك توك: مين يشوف، التعليقات، الإعلان...)
-  options      Json?
-  scheduledAt  DateTime?
-  publishingAt DateTime?
-  publishedAt  DateTime?
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  targets      SocialPostTarget[]
+  options           Json?
+  scheduledAt       DateTime?
+  publishingAt      DateTime?
+  publishedAt       DateTime?
+  // بوست متكرر: بعد ما ينزل بيتعمل البوست اللي بعده لوحده (DAILY | WEEKLY | MONTHLY) لحد repeatUntil
+  repeatEvery       String?
+  repeatUntil       DateTime?
+  // كل تكرارات نفس البوست ليها نفس seriesId (أول بوست)
+  seriesId          String?
+  // موافقة العميل قبل النشر: PENDING (مستني) | APPROVED | CHANGES (طلب تعديل). null = مش محتاج موافقة
+  approvalStatus    String?
+  // لينك الموافقة: بنخزن الـ hash بس
+  approvalTokenHash String?            @unique
+  approvalNote      String?
+  approvalBy        String?
+  approvalAt        DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  targets           SocialPostTarget[]
 
   @@index([status, scheduledAt])
   @@index([tenantId, createdAt])
@@ -2158,12 +2174,12 @@ model SocialAdsAuth {
 
 // "تمويل بوست": حملة + مجموعة إعلانية + إعلان عند Meta. الفلوس بتتدفع من حساب إعلانات التاجر نفسه
 model SocialAdCampaign {
-  id             String           @id @default(uuid())
+  id             String          @id @default(uuid())
   tenantId       String
-  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   // الصفحة / حساب انستجرام صاحب البوست (لو اتشال، الإعلان يفضل في السجل)
   accountId      String?
-  account        SocialAccount?   @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  account        SocialAccount?  @relation(fields: [accountId], references: [id], onDelete: SetNull)
   platform       String // FACEBOOK | INSTAGRAM
   postExternalId String
   permalink      String?
@@ -2173,11 +2189,11 @@ model SocialAdCampaign {
   // عملة حساب الإعلانات (Meta بتحاسب بيها)
   currency       String
   objective      String // REACH | ENGAGEMENT | WHATSAPP
-  dailyBudget    Decimal          @db.Decimal(18, 2)
+  dailyBudget    Decimal         @db.Decimal(18, 2)
   startAt        DateTime
   endAt          DateTime
   targeting      Json
-  status         String           @default("CREATING") // CREATING | PENDING_REVIEW | ACTIVE | PAUSED | REJECTED | ISSUE | COMPLETED | FAILED
+  status         String          @default("CREATING") // CREATING | PENDING_REVIEW | ACTIVE | PAUSED | REJECTED | ISSUE | COMPLETED | FAILED
   metaStatus     String?
   reviewFeedback String?
   error          String?
@@ -2185,17 +2201,17 @@ model SocialAdCampaign {
   metaAdSetId    String?
   metaCreativeId String?
   metaAdId       String?
-  impressions    Int              @default(0)
-  reach          Int              @default(0)
-  clicks         Int              @default(0)
-  engagements    Int              @default(0)
+  impressions    Int             @default(0)
+  reach          Int             @default(0)
+  clicks         Int             @default(0)
+  engagements    Int             @default(0)
   // محادثات واتساب اللي بدأت من الإعلان (من Meta)
-  conversations  Int              @default(0)
-  spend          Decimal          @default(0) @db.Decimal(18, 2)
+  conversations  Int             @default(0)
+  spend          Decimal         @default(0) @db.Decimal(18, 2)
   syncedAt       DateTime?
   createdById    String?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
   events         SocialAdEvent[]
 
   @@index([tenantId, createdAt])
@@ -2231,6 +2247,8 @@ model WhatsappFlow {
   sortOrder      Int      @default(0)
   startedCount   Int      @default(0)
   completedCount Int      @default(0)
+  // السيناريو شغال فين: whatsapp | instagram | messenger
+  channels       String[] @default(["whatsapp"])
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -2290,4 +2308,60 @@ model WhatsappNumber {
   @@index([tenantId])
   @@index([phoneNumberId])
   @@map("whatsapp_numbers")
+}
+
+// تقرير السوشيال الشهري (White label): اسم ولوجو الوكالة، ومين ياخده بالإيميل أول كل شهر.
+// shareToken = لينك عام للتقرير (من غير دخول) - بيتغيّر لو التاجر عايز يقفل اللينك القديم
+model SocialReportSettings {
+  tenantId         String   @id
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandName        String?
+  logoDataUrl      String?  @db.Text
+  accentColor      String?
+  hidePlatformName Boolean  @default(false)
+  recipients       String[] @default([])
+  monthlyEmail     Boolean  @default(false)
+  shareToken       String   @unique
+  lastSentPeriod   String?
+  updatedAt        DateTime @updatedAt
+
+  @@map("social_report_settings")
+}
+
+// مفتاح API للشركة (Make / Zapier / برامجهم). بنخزن الـ hash بس، والمفتاح بيظهر مرة واحدة
+model ApiKey {
+  id          String    @id @default(uuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  prefix      String
+  keyHash     String    @unique
+  createdById String?
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId])
+  @@map("api_keys")
+}
+
+// Webhook خارجي: لما يحصل حدث (حجز جديد، بوست نزل، رسالة جت...) بنبعته على لينك التاجر موقّع بـ secret
+model WebhookEndpoint {
+  id              String    @id @default(uuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  url             String
+  events          String[]  @default([])
+  // متشفّر
+  secret          String
+  enabled         Boolean   @default(true)
+  lastStatus      Int?
+  lastError       String?
+  lastDeliveredAt DateTime?
+  failCount       Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@map("webhook_endpoints")
 }

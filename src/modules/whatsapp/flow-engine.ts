@@ -26,12 +26,17 @@ export const flowNodeSchema = z.object({
 });
 export type FlowNode = z.infer<typeof flowNodeSchema>;
 
+export const FLOW_CHANNELS = ["whatsapp", "instagram", "messenger"] as const;
+export type FlowChannel = (typeof FLOW_CHANNELS)[number];
+
 export const flowInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
   enabled: z.boolean().default(true),
   keywords: z.array(z.string().trim().min(1).max(40)).min(1).max(FLOW_LIMITS.maxKeywords),
   startNodeId: nodeId,
   nodes: z.array(flowNodeSchema).min(1).max(FLOW_LIMITS.maxNodes),
+  // شغال فين: واتساب و/أو رسايل انستجرام و/أو ماسنجر
+  channels: z.array(z.enum(FLOW_CHANNELS)).min(1, "Choose where the flow runs").default(["whatsapp"]),
 });
 export type FlowInput = z.infer<typeof flowInputSchema>;
 
@@ -62,6 +67,7 @@ export interface FlowDef {
   startNodeId: string;
   nodes: FlowNode[];
   sortOrder: number;
+  channels?: string[];
 }
 
 export interface FlowSessionState {

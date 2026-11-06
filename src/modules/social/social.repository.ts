@@ -62,6 +62,13 @@ export interface PostView {
   options: PostOptions | null;
   media: { id: string; kind: string } | null;
   targets: TargetView[];
+  repeatEvery: string | null;
+  repeatUntil: Date | null;
+  seriesId: string | null;
+  approvalStatus: string | null;
+  approvalNote: string | null;
+  approvalBy: string | null;
+  approvalAt: Date | null;
 }
 
 export interface PostForPublish {
@@ -82,9 +89,13 @@ export interface NewPost {
   scheduledAt: Date | null;
   options: PostOptions | null;
   accountIds: string[];
+  repeatEvery?: string | null;
+  repeatUntil?: Date | null;
+  seriesId?: string | null;
+  approvalStatus?: string | null;
 }
 
-export type PostPatch = Partial<Pick<NewPost, "caption" | "mediaId" | "status" | "scheduledAt" | "accountIds" | "options">>;
+export type PostPatch = Partial<Pick<NewPost, "caption" | "mediaId" | "status" | "scheduledAt" | "accountIds" | "options" | "repeatEvery" | "repeatUntil">>;
 
 export const EDITABLE_STATUSES = ["DRAFT", "SCHEDULED", "FAILED"];
 
@@ -145,6 +156,13 @@ function toView(p: any): PostView {
       error: t.error,
       publishedAt: t.publishedAt,
     })),
+    repeatEvery: p.repeatEvery ?? null,
+    repeatUntil: p.repeatUntil ?? null,
+    seriesId: p.seriesId ?? null,
+    approvalStatus: p.approvalStatus ?? null,
+    approvalNote: p.approvalNote ?? null,
+    approvalBy: p.approvalBy ?? null,
+    approvalAt: p.approvalAt ?? null,
   };
 }
 
@@ -239,6 +257,10 @@ export class PrismaSocialRepository implements SocialStore {
         status: p.status,
         scheduledAt: p.scheduledAt,
         options: (p.options ?? undefined) as Prisma.InputJsonValue | undefined,
+        repeatEvery: p.repeatEvery ?? null,
+        repeatUntil: p.repeatUntil ?? null,
+        seriesId: p.seriesId ?? null,
+        approvalStatus: p.approvalStatus ?? null,
         targets: { create: p.accountIds.map((accountId) => ({ accountId })) },
       },
       select: { id: true },
@@ -252,6 +274,8 @@ export class PrismaSocialRepository implements SocialStore {
     return this.db.$transaction(async (tx) => {
       const r = await tx.socialPost.updateMany({ where: { id, tenantId, status: { in: EDITABLE_STATUSES } }, data: fields });
       if (r.count === 0) return false;
+      // المحتوى اتغيّر بعد ما العميل وافق / طلب تعديل: يرجع يستنى موافقته تاني
+      await tx.socialPost.updateMany({ where: { id, approvalStatus: { not: null } }, data: { approvalStatus: "PENDING", approvalAt: null } });
       if (accountIds) {
         await tx.socialPostTarget.deleteMany({ where: { postId: id } });
         await tx.socialPostTarget.createMany({ data: accountIds.map((accountId) => ({ postId: id, accountId })) });
@@ -285,7 +309,8 @@ export class PrismaSocialRepository implements SocialStore {
   }
 
   async claim(id: string, now: Date) {
-    const r = await this.db.socialPost.updateMany({ where: { id, status: "SCHEDULED" }, data: { status: "PUBLISHING", publishingAt: now } });
+    // بوست مستني موافقة العميل (أو العميل طلب تعديل) مايتنشرش
+    const r = await this.db.socialPost.updateMany({ where: { id, status: "SCHEDULED", OR: [{ approvalStatus: null }, { approvalStatus: "APPROVED" }] }, data: { status: "PUBLISHING", publishingAt: now } });
     return r.count > 0;
   }
 
@@ -308,7 +333,7 @@ export class PrismaSocialRepository implements SocialStore {
 
   async dueIds(now: Date, limit: number) {
     const rows = await this.db.socialPost.findMany({
-      where: { status: "SCHEDULED", scheduledAt: { lte: now }, tenant: { accountStatus: "ACTIVE" } },
+      where: { status: "SCHEDULED", scheduledAt: { lte: now }, tenant: { accountStatus: "ACTIVE" }, OR: [{ approvalStatus: null }, { approvalStatus: "APPROVED" }] },
       select: { id: true },
       orderBy: { scheduledAt: "asc" },
       take: limit,

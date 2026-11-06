@@ -50,7 +50,9 @@ import { paymentSettingsRouter } from "./modules/payment-settings/payment-settin
 import { erpDemoRouter } from "./modules/erp-demo/erp-demo.routes";
 import { adminCreditsRouter, creditsRouter } from "./modules/credits/credit.routes";
 import { aiRouter } from "./modules/ai/ai.routes";
-import { publicSocialMediaRouter, publicSocialWebhookRouter, publicTikTokCallbackRouter, socialRouter } from "./modules/social/social.routes";
+import { publicSocialApprovalRouter, publicSocialMediaRouter, publicSocialReportRouter, publicSocialWebhookRouter, publicTikTokCallbackRouter, socialRouter } from "./modules/social/social.routes";
+import { integrationsRouter } from "./modules/integrations/integrations.routes";
+import { publicApiRouter } from "./modules/integrations/public-api.routes";
 import { adminMetaRatesRouter, publicMetaRatesRouter } from "./modules/whatsapp/meta-rates.routes";
 import { AppError } from "./core/errors";
 import { getPlatformConfig, getRegionalPricing } from "./utils/platform-config";
@@ -164,6 +166,11 @@ app.use("/api/social", socialRouter);
 app.use("/api/public/social/media", publicSocialMediaRouter);
 app.use("/api/public/social/webhook", publicSocialWebhookRouter);
 app.use("/api/public/social/tiktok/callback", publicTikTokCallbackRouter);
+app.use("/api/public/social/approval", publicSocialApprovalRouter);
+app.use("/api/public/social/reports", publicSocialReportRouter);
+// مفاتيح API + Webhooks (لوحة التاجر) + الـ API العام للبرامج الخارجية (Make / Zapier)
+app.use("/api/integrations", integrationsRouter);
+app.use("/api/v1", publicApiRouter);
 app.use("/api/public/whatsapp-rates", publicMetaRatesRouter);
 app.use("/api/super-admin/whatsapp-rates", adminMetaRatesRouter);
 

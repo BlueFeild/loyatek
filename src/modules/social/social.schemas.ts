@@ -4,6 +4,12 @@ import { AD_GENDERS, AD_LIMITS, AD_OBJECTIVES } from "./ads-types";
 
 // شكل البيانات اللي جاية من الشاشة (الـ controller بيتأكد منها قبل الخدمة)
 
+// Bluesky: الـ handle + App Password (من Settings → Privacy and security → App passwords)
+export const connectBlueskySchema = z.object({
+  handle: z.string().trim().min(3, "Enter your Bluesky handle").max(253),
+  appPassword: z.string().trim().min(8, "Enter the App Password").max(100),
+});
+
 export const connectMetaSchema = z.union([z.object({ code: z.string().min(4).max(2000) }), z.object({ accessToken: z.string().min(10).max(2000) })]);
 
 // إعدادات تيك توك (لازم التاجر يختار مين يشوف البوست بنفسه)
@@ -25,10 +31,34 @@ export const postInputSchema = z
     when: z.enum(["now", "schedule", "draft"]),
     scheduledAt: z.coerce.date().optional(),
     options: z.object({ tiktok: tiktokOptionsSchema.optional() }).optional(),
+    // بوست متكرر (بيتعمل اللي بعده لوحده بعد ما ينزل)
+    repeatEvery: z.enum(["DAILY", "WEEKLY", "MONTHLY"]).nullable().optional(),
+    repeatUntil: z.coerce.date().nullable().optional(),
   })
   .refine((v) => v.when !== "schedule" || v.scheduledAt, { message: "Pick the date and time to publish", path: ["scheduledAt"] });
 
 export type PostInput = z.infer<typeof postInputSchema>;
+
+// الكالندر: نقل البوست ليوم/ميعاد تاني
+export const rescheduleSchema = z.object({ scheduledAt: z.coerce.date() });
+
+// إعدادات التقرير الشهري
+export const reportSettingsSchema = z.object({
+  brandName: z.string().trim().max(80).nullable().optional(),
+  logoDataUrl: z.string().max(400_000).nullable().optional(),
+  accentColor: z.string().trim().max(7).nullable().optional(),
+  hidePlatformName: z.boolean().optional(),
+  recipients: z.array(z.string().trim().max(200)).max(10).optional(),
+  monthlyEmail: z.boolean().optional(),
+});
+
+// موافقة العميل
+export const approvalRequestSchema = z.object({ email: z.string().trim().email("Enter a valid email").max(200).optional() });
+export const approvalDecisionSchema = z.object({
+  decision: z.enum(["approve", "changes"]),
+  name: z.string().trim().max(80).optional(),
+  note: z.string().trim().max(1000).optional(),
+});
 
 export const listPostsSchema = z.object({
   from: z.coerce.date().optional(),

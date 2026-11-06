@@ -104,6 +104,7 @@ export function parseSocialWebhook(body: any): InboxEvent[] {
         authorName: null,
         text,
         createdAt: when(m.timestamp),
+        replyId: str(msg.quick_reply?.payload),
       });
     }
   }

@@ -5,12 +5,12 @@ import { container } from "../../core/container";
 import { NotFoundError } from "../../core/errors";
 import { zodMessage } from "../../utils/validation";
 import { assetEtag, planAssetResponse } from "../ai/asset-http";
-import { commentRulePatchSchema, commentRuleSchema, connectMetaSchema, listPostsSchema, postInputSchema, replySchema, suggestSchema, threadListSchema, threadRefSchema, uploadMediaSchema } from "./social.schemas";
+import { approvalDecisionSchema, approvalRequestSchema, connectBlueskySchema, rescheduleSchema, reportSettingsSchema, commentRulePatchSchema, commentRuleSchema, connectMetaSchema, listPostsSchema, postInputSchema, replySchema, suggestSchema, threadListSchema, threadRefSchema, uploadMediaSchema } from "./social.schemas";
 import { verifyMetaSignature } from "../whatsapp/webhook";
 import { SOCIAL_LIMITS } from "./social-types";
 import { adsRouter } from "./ads.routes";
 
-const { socialAccountService, socialPostService, socialInboxService } = container;
+const { socialAccountService, socialPostService, socialInboxService, socialPlanner, socialReportService } = container;
 
 // النشر على السوشيال (جزء من استوديو الذكاء الاصطناعي) - الـ controller بيتأكد من البيانات بس
 export const socialRouter = Router();
@@ -35,6 +35,12 @@ socialRouter.post("/accounts/meta/connect", canConnect, async (req, res) => {
   const parsed = connectMetaSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
   res.json(await socialAccountService.connectMeta(req.auth!.tenantId, req.auth!.userId, parsed.data));
+});
+
+socialRouter.post("/accounts/bluesky/connect", canConnect, async (req, res) => {
+  const parsed = connectBlueskySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+  res.json(await socialAccountService.connectBluesky(req.auth!.tenantId, req.auth!.userId, parsed.data.handle, parsed.data.appPassword));
 });
 
 socialRouter.delete("/accounts/:id", canConnect, async (req, res) => {
@@ -75,6 +81,51 @@ socialRouter.put("/posts/:id", canPost, async (req, res) => {
 
 socialRouter.post("/posts/:id/retry", canPost, async (req, res) => {
   res.json(await socialPostService.retry(req.auth!.tenantId, req.params.id));
+});
+
+// ---------- الكالندر + النسخ + موافقة العميل ----------
+socialRouter.patch("/posts/:id/schedule", canPost, async (req, res) => {
+  const parsed = rescheduleSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+  await socialPlanner.reschedule(req.auth!.tenantId, req.params.id, parsed.data.scheduledAt);
+  res.json(await socialPostService.get(req.auth!.tenantId, req.params.id));
+});
+
+socialRouter.post("/posts/:id/duplicate", canPost, async (req, res) => {
+  const { id } = await socialPlanner.duplicate(req.auth!.tenantId, req.params.id, req.auth!.userId);
+  res.status(201).json(await socialPostService.get(req.auth!.tenantId, id));
+});
+
+socialRouter.post("/posts/:id/approval", canPost, async (req, res) => {
+  const parsed = approvalRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+  const link = await socialPlanner.requestApproval(req.auth!.tenantId, req.params.id, parsed.data.email);
+  res.json({ ...link, post: await socialPostService.get(req.auth!.tenantId, req.params.id) });
+});
+
+socialRouter.delete("/posts/:id/approval", canPost, async (req, res) => {
+  await socialPlanner.cancelApproval(req.auth!.tenantId, req.params.id);
+  res.json(await socialPostService.get(req.auth!.tenantId, req.params.id));
+});
+
+// ---------- التقرير الشهري (White label) ----------
+socialRouter.get("/report", async (req, res) => {
+  const month = typeof req.query.month === "string" ? req.query.month : "";
+  res.json(await socialReportService.report(req.auth!.tenantId, month));
+});
+
+socialRouter.get("/report/settings", async (req, res) => {
+  res.json(await socialReportService.settings(req.auth!.tenantId));
+});
+
+socialRouter.patch("/report/settings", canConnect, async (req, res) => {
+  const parsed = reportSettingsSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+  res.json(await socialReportService.updateSettings(req.auth!.tenantId, parsed.data));
+});
+
+socialRouter.post("/report/share-link", canConnect, async (req, res) => {
+  res.json(await socialReportService.rotateShareLink(req.auth!.tenantId));
 });
 
 socialRouter.delete("/posts/:id", canPost, async (req, res) => {
@@ -212,4 +263,25 @@ socialRouter.patch("/comment-rules/:id", canPost, async (req, res) => {
 
 socialRouter.delete("/comment-rules/:id", canPost, async (req, res) => {
   res.json(await container.commentAutomation.remove(req.auth!.tenantId, req.params.id));
+});
+
+// ---------- صفحة موافقة العميل (من غير دخول - اللينك نفسه هو الإذن) ----------
+export const publicSocialApprovalRouter = Router();
+publicSocialApprovalRouter.get("/:token", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(await socialPlanner.approvalPage(req.params.token));
+});
+publicSocialApprovalRouter.post("/:token", async (req, res) => {
+  const parsed = approvalDecisionSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+  res.json(await socialPlanner.decide(req.params.token, parsed.data));
+});
+
+// ---------- لينك التقرير العام (للعميل) ----------
+export const publicSocialReportRouter = Router();
+publicSocialReportRouter.get("/:token", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex");
+  const month = typeof req.query.month === "string" ? req.query.month : "";
+  res.json(await socialReportService.publicReport(req.params.token, month));
 });

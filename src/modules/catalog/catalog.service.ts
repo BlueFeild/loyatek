@@ -6,6 +6,8 @@ import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPayme
 import { confirmsOnOrder, pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
 import { formatUsdAs, getTenantMoney, payableAmount } from "../../utils/money";
 import { isValidEmail, sendEmail } from "../../utils/email";
+import { emitEvent } from "../integrations/events";
+import { orderEventData } from "../integrations/event-data";
 import { assertTenantOwns } from "../../utils/tenant-owned";
 
 export async function getOrCreateCatalogSettings(tenantId: string) {
@@ -110,7 +112,14 @@ async function notifyNewOrder(order: { id: string; customerName: string; custome
 
 // إنشاء طلب حقيقي - بياخد أسعار الأصناف الحقيقية من قاعدة البيانات وقت
 // الطلب (مش من الفرونت إند)، عشان محدش يقدر يغيّر السعر من عنده
+// أوردر جديد + حدث order.created للـ webhooks الخارجية
 export async function createOrder(input: CreateOrderInput) {
+  const order = await createOrderInner(input);
+  emitEvent(input.tenantId, "order.created", orderEventData(order));
+  return order;
+}
+
+async function createOrderInner(input: CreateOrderInput) {
   // الفرع لازم يكون تبع نفس الشركة (الأصناف متفلترة بالـ tenantId تحت)
   await assertTenantOwns(input.tenantId, { branchIds: [input.branchId] });
 

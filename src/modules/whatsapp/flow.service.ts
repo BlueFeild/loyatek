@@ -86,7 +86,7 @@ export class FlowService {
   // true = السيناريو رد (الموظف الذكي والبوت مايردوش)
   async handleInbound(tenantId: string, m: FlowInbound): Promise<boolean> {
     if (!["text", "button", "interactive"].includes(m.type)) return false;
-    const flows = await this.store.enabled(tenantId);
+    const flows = (await this.store.enabled(tenantId)).filter((f) => !f.channels || f.channels.includes("whatsapp"));
     if (!flows.length) return false;
     if (await this.store.isWithHuman(tenantId, m.phone)) return false;
     const session = await this.store.session(tenantId, m.phone);

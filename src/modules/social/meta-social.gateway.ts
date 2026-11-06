@@ -174,6 +174,19 @@ export class MetaSocialGateway implements MetaAccountConnector, SocialPublisher,
     return { id: String(r.message_id ?? r.id) };
   }
 
+  // زراير رد سريع: لحد 13، والعنوان لحد 20 حرف (حدود Meta)
+  async sendQuickReplies(a: InboxAccount, recipientId: string, text: string, options: { id: string; title: string }[]) {
+    const pageId = a.platform === "INSTAGRAM" ? a.parentId : a.externalId;
+    if (!pageId) throw new SocialPlatformError("This Instagram account isn't linked to a Facebook Page — connect it again.");
+    const quick_replies = options.slice(0, 13).map((o) => ({ content_type: "text", title: o.title.slice(0, 20), payload: o.id.slice(0, 1000) }));
+    const r = await this.graph(`/${pageId}/messages`, {
+      method: "POST",
+      token: a.accessToken,
+      body: { recipient: { id: recipientId }, messaging_type: "RESPONSE", message: { text: text.slice(0, 1000), quick_replies } },
+    });
+    return { id: String(r.message_id ?? r.id) };
+  }
+
   async privateReply(a: InboxAccount, commentId: string, text: string) {
     // فيسبوك وانستجرام الاتنين: من الصفحة، والمستلم = رقم التعليق (Meta بتوصّلها لصاحبه)
     const pageId = a.platform === "INSTAGRAM" ? a.parentId : a.externalId;

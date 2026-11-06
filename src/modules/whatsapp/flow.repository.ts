@@ -56,8 +56,8 @@ function publicBase() {
 export class PrismaFlowRepository implements FlowStore {
   constructor(private readonly db: PrismaClient) {}
 
-  private toDef(f: { id: string; name: string; enabled: boolean; keywords: string[]; startNodeId: string; nodes: unknown; sortOrder: number }): FlowDef {
-    return { id: f.id, name: f.name, enabled: f.enabled, keywords: f.keywords, startNodeId: f.startNodeId, nodes: nodesOf(f.nodes), sortOrder: f.sortOrder };
+  private toDef(f: { id: string; name: string; enabled: boolean; keywords: string[]; startNodeId: string; nodes: unknown; sortOrder: number; channels?: string[] | null }): FlowDef {
+    return { id: f.id, name: f.name, enabled: f.enabled, keywords: f.keywords, startNodeId: f.startNodeId, nodes: nodesOf(f.nodes), sortOrder: f.sortOrder, channels: f.channels?.length ? f.channels : ["whatsapp"] };
   }
 
   async list(tenantId: string): Promise<FlowRow[]> {

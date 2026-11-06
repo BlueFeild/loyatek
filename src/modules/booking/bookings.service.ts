@@ -9,6 +9,8 @@ import { formatCalendarDate, parseCalendarDate, todayCalendarDate } from "../../
 import { isValidEmail, sendEmail } from "../../utils/email";
 import { getTenantMoney, payableAmount } from "../../utils/money";
 import { computeBookingAmount, hasPricedServices } from "./service-pricing";
+import { emitEvent } from "../integrations/events";
+import { bookingEventData } from "../integrations/event-data";
 import { assertTenantOwns } from "../../utils/tenant-owned";
 
 // إعدادات الحجز لكل شركة - بتتنشئ تلقائيًا بقيم افتراضية أول مرة
@@ -191,7 +193,14 @@ async function runBookingConfirmationSideEffects(
 // تعارض الحجز على مستوى قاعدة البيانات نفسها، مش بس فحص في الكود.
 // redirectionUrlBase من غير أي query params - بنضيف bookingId بعد ما
 // الحجز يتحفظ فعليًا ونعرف الـ id بتاعه
+// حجز جديد + حدث booking.created للـ webhooks الخارجية
 export async function createBooking(input: CreateBookingInput & { redirectionUrlBase?: string; paymentMethodId?: string }) {
+  const booking = await createBookingInner(input);
+  emitEvent(input.tenantId, "booking.created", bookingEventData(booking));
+  return booking;
+}
+
+async function createBookingInner(input: CreateBookingInput & { redirectionUrlBase?: string; paymentMethodId?: string }) {
   const dayStart = requireCalendarDate(input.date);
   // المورد (والفرع) لازم يكونوا تبع نفس الشركة - غير كده أي حد (حتى من
   // صفحة الحجز العامة) يقدر يحجز/يقفل ميعاد على مورد شركة تانية

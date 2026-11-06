@@ -5,6 +5,7 @@ import { recordWhatsappMessage, sendWhatsappTextMessage } from "./whatsapp.servi
 import { matchAutoReply, renderBotReply } from "./bot";
 import { statusesBelow } from "./campaign-report";
 import { OPT_REPLIES } from "./opt-out";
+import { emitEvent } from "../integrations/events";
 import { container } from "../../core/container";
 
 // Webhook لـ Meta WhatsApp Cloud API - الطريق اللي Meta بتبعتلنا منه الرسايل
@@ -211,6 +212,7 @@ export async function handleWebhook(tenantId: string, body: any) {
       const already = await prisma.whatsappMessage.findUnique({ where: { waMessageId: m.id } });
       if (already) continue; // Meta بتعيد بعت نفس الرسالة أحيانًا
       await recordWhatsappMessage({ tenantId, direction: "IN", contactPhone: m.from, contactName: m.name, body: m.text, kind: m.type, waMessageId: m.id, phoneNumberId: viaNumber });
+      emitEvent(tenantId, "whatsapp.message.received", { id: m.id, from: m.from, name: m.name ?? null, type: m.type, text: m.text, phoneNumberId: viaNumber ?? null, fromAd: Boolean(m.referral) });
       // جه من إعلان ← بنسجّل الإعلان على المحادثة (يظهر في Team Inbox والإحصائيات وفي الإعلان نفسه)
       if (m.referral) await recordAdSource(tenantId, m.from.replace(/[^\d]/g, ""), m.referral);
       // دفتر جهات الاتصال + STOP / START (لو كده: نأكد للعميل ومانشغّلش البوت)

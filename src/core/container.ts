@@ -38,6 +38,16 @@ import { PrismaAdsRepository } from "../modules/social/ads.repository";
 import { MetaAdsGateway } from "../modules/social/meta-ads.gateway";
 import { SocialAdsService } from "../modules/social/ads.service";
 import { getRates } from "../utils/money";
+import { sendEmail } from "../utils/email";
+import { PrismaPlannerRepository } from "../modules/social/social-planner.repository";
+import { SocialPlannerService } from "../modules/social/social-planner.service";
+import { BlueskyGateway } from "../modules/social/bluesky.gateway";
+import { PrismaSocialFlowStore, SocialFlowService } from "../modules/social/social-flow.service";
+import { PrismaReportRepository } from "../modules/social/social-report.repository";
+import { SocialReportService } from "../modules/social/social-report.service";
+import { PrismaIntegrationsRepository } from "../modules/integrations/integrations.repository";
+import { IntegrationsService } from "../modules/integrations/integrations.service";
+import { setEventSink } from "../modules/integrations/events";
 
 // المكان الوحيد اللي بيقرر "مين بيكلم مين" (Composition Root).
 // الخدمات بتاخد اللي محتاجاه من برّه، فسهل نغيّر مزوّد أو نختبر بنسخة وهمية
@@ -51,7 +61,8 @@ const socialStore = new PrismaSocialRepository(prisma);
 const metaSocial = new MetaSocialGateway();
 const tiktok = new TikTokGateway();
 const socialTokens = new SocialTokenService(socialStore, { TIKTOK: tiktok });
-const socialPublisher = new RoutingPublisher({ FACEBOOK: metaSocial, INSTAGRAM: metaSocial, TIKTOK: tiktok });
+const bluesky = new BlueskyGateway();
+const socialPublisher = new RoutingPublisher({ FACEBOOK: metaSocial, INSTAGRAM: metaSocial, TIKTOK: tiktok, BLUESKY: bluesky });
 const socialAdsService = new SocialAdsService(new PrismaAdsRepository(prisma), new MetaAdsGateway(), {
   limits: async () => {
     const c = await getPlatformConfig();
@@ -73,6 +84,35 @@ function publicApiBaseUrl(): string {
 }
 
 const whatsappNumbers = new WhatsappNumbersService(prisma);
+
+// Webhooks خارجية + مفاتيح API: أي جزء في السيستم بيبعت حدث عن طريق emitEvent()
+const integrationsService = new IntegrationsService(new PrismaIntegrationsRepository(prisma));
+setEventSink((tenantId, type, data) => integrationsService.emit(tenantId, type, data));
+
+// الكالندر / التكرار / موافقة العميل
+const socialPlanner = new SocialPlannerService(new PrismaPlannerRepository(prisma), {
+  frontendBaseUrl,
+  publicMediaUrl: (key) => `${publicApiBaseUrl()}/api/public/social/media/${key}`,
+  sendEmail,
+});
+const socialPostService = new SocialPostService(socialStore, socialPublisher, publicApiBaseUrl, undefined, socialTokens, {
+  afterPublish: async (p) => {
+    await socialPlanner.afterPublish(p);
+    const view = await socialStore.getPost(p.tenantId, p.id);
+    if (view) {
+      integrationsService.emit(p.tenantId, p.status === "FAILED" ? "post.failed" : "post.published", {
+        id: view.id,
+        status: view.status,
+        caption: view.caption,
+        publishedAt: view.publishedAt,
+        targets: view.targets.map((t) => ({ platform: t.platform, account: t.accountName, status: t.status, permalink: t.permalink, error: t.error })),
+      });
+    }
+  },
+});
+const inboxRepository = new PrismaInboxRepository(prisma);
+const flowRepository = new PrismaFlowRepository(prisma);
+const socialFlowService = new SocialFlowService(new PrismaSocialFlowStore(prisma, flowRepository), metaSocial, inboxRepository);
 const commentAutomation = new CommentAutomationService(new PrismaCommentRuleRepository(prisma), metaSocial);
 
 export const container = {
@@ -89,11 +129,14 @@ export const container = {
   campaignSender: new CampaignSender(new PrismaCampaignRepository(prisma), new MetaCampaignGateway()),
   contactBookService: new ContactBookService(new PrismaContactBookRepository(prisma), { customers: async (tenantId: string) => [...(await getUnifiedContacts(tenantId)), ...(await getConversationContacts(tenantId))] }),
   whatsappNumbers,
-  flowService: new FlowService(new PrismaFlowRepository(prisma), new MetaFlowMessenger(whatsappNumbers)),
+  flowService: new FlowService(flowRepository, new MetaFlowMessenger(whatsappNumbers)),
   aiAgentService: new AiAgentService(new PrismaAiAgentRepository(prisma), new MetaAgentMessenger(whatsappNumbers), providers.agent, creditService, new PrismaAgentBooker(prisma)),
-  socialAccountService: new SocialAccountService(socialStore, metaSocial, { tiktok, tokens: socialTokens, publicApiBaseUrl, frontendBaseUrl, adsAuth: socialAdsService }),
-  socialPostService: new SocialPostService(socialStore, socialPublisher, publicApiBaseUrl, undefined, socialTokens),
+  socialAccountService: new SocialAccountService(socialStore, metaSocial, { tiktok, tokens: socialTokens, publicApiBaseUrl, frontendBaseUrl, adsAuth: socialAdsService, bluesky }),
+  socialPostService,
+  socialPlanner,
+  socialReportService: new SocialReportService(new PrismaReportRepository(prisma), { frontendBaseUrl, sendEmail }),
+  integrationsService,
   socialAdsService,
-  socialInboxService: new SocialInboxService(new PrismaInboxRepository(prisma), metaSocial, { generator: providers.copy, credits: creditService, generations, profiles }, undefined, commentAutomation),
+  socialInboxService: new SocialInboxService(inboxRepository, metaSocial, { generator: providers.copy, credits: creditService, generations, profiles }, undefined, commentAutomation, socialFlowService),
   commentAutomation,
 };

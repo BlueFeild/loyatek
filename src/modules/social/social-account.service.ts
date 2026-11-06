@@ -16,6 +16,8 @@ export interface SocialAccountOptions {
   frontendBaseUrl?: () => string;
   // الإعلانات المدفوعة: توكن المستخدم الطويل بيتحفظ هنا وقت الربط
   adsAuth?: { saveConnection(tenantId: string, userId: string | null, userToken: string, expiresAt: Date | null): Promise<void> };
+  // Bluesky: handle + App Password
+  bluesky?: { connect(handle: string, appPassword: string): Promise<DiscoveredAccount> };
   now?: () => Date;
 }
 
@@ -50,6 +52,7 @@ export class SocialAccountService {
         graphVersion: (process.env.META_GRAPH_VERSION || "v26.0").trim(),
       },
       tiktok: { enabled: Boolean(this.tiktok?.enabled) },
+      bluesky: { enabled: Boolean(this.opts.bluesky) },
     };
   }
 
@@ -87,6 +90,14 @@ export class SocialAccountService {
       // الصفحة متربطة بس من غير انستجرام بيزنس → نقول للتاجر يربطه من إعدادات الصفحة
       warning: hasInstagram ? null : "No Instagram business account is linked to these Pages. Link it in Instagram (Settings → Account type → Business) and connect again.",
     };
+  }
+
+  // ---------- Bluesky ----------
+  async connectBluesky(tenantId: string, userId: string | null, handle: string, appPassword: string) {
+    if (!this.opts.bluesky) throw new AppError(503, "BLUESKY_NOT_SET_UP", "Connecting Bluesky isn't switched on yet.");
+    const account = await this.opts.bluesky.connect(handle, appPassword);
+    await this.save(tenantId, userId, [account]);
+    return { accounts: await this.store.listAccounts(tenantId), connected: 1 };
   }
 
   // ---------- تيك توك ----------
