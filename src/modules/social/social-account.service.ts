@@ -121,7 +121,7 @@ export class SocialAccountService {
 
   // تيك توك رجّع التاجر بكود → نحفظ الحساب ونرجّعه لصفحة النشر (بنتيجة الربط في اللينك)
   async tiktokCallback(query: { code?: string; state?: string; error?: string; error_description?: string }): Promise<string> {
-    const back = (params: Record<string, string>) => `${(this.opts.frontendBaseUrl ?? (() => ""))()}/ai-studio?${new URLSearchParams({ tool: "publish", ...params }).toString()}`;
+    const back = (params: Record<string, string>) => `${(this.opts.frontendBaseUrl ?? (() => ""))()}/social?${new URLSearchParams({ tool: "publish", ...params }).toString()}`;
     let state: { t: string; u: string | null; e: number };
     try {
       state = JSON.parse(decryptToken(Buffer.from(String(query.state ?? ""), "base64url").toString("utf8")));

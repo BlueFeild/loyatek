@@ -3,11 +3,13 @@ export const AI_COSTS = {
   copy: 1, // كتابة (لحد 3 نسخ)
   image: 3, // صورة واحدة
   video: 20, // فيديو قصير
-  audit: 5, // تقرير تحليل حساب واحد
   agent: 1, // رد واحد من موظف واتساب الذكي
 } as const;
 
 export type AiTool = keyof typeof AI_COSTS;
+
+// تحليل الحسابات خدمة منفصلة باشتراك شهري (مش بالنقاط): عدد التقارير في الشهر
+export const AUDIT_MONTHLY_LIMITS = { subscribed: 10, trial: 2 } as const;
 
 // حدود الأدوات (الفيديو بيشتغل في الخلفية) - في مكان واحد جنب الأسعار
 export const AI_LIMITS = {

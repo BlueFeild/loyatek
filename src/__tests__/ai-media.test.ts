@@ -173,33 +173,45 @@ describe("VideoStudioService (background job)", () => {
 
 describe("AccountAuditService", () => {
   const input = auditInputSchema.parse({ platform: "instagram", handle: "@dohacafe", followers: 2000, avgLikes: 70, avgComments: 10, avgViews: 900 });
-  it("computes the numbers itself, saves the report without screenshots, charges", async () => {
-    const { credits, gens, store, profiles } = setup(10);
+  const plan = (limit: number | null) => ({ monthlyLimit: async () => limit });
+  it("computes the numbers itself, saves the report without screenshots, uses no credits", async () => {
+    const { gens, profiles } = setup(0);
     const auditor = new FakeAccountAuditor();
-    const svc = new AccountAuditService(auditor, credits, gens, profiles);
+    const svc = new AccountAuditService(auditor, plan(10), gens, profiles);
     const withShots = auditInputSchema.parse({ ...input, screenshots: [{ base64: "iVBORw0KGgoAAAANSUhEUg==", mimeType: "image/png" }] });
     const out = await svc.run("a", "u1", withShots);
     expect(out.metrics).toEqual({ engagementRate: 4, viewRate: 45 });
     expect(auditor.calls[0].metrics.engagementRate).toBe(4);
     expect(out.report.healthScore).toBe(62);
+    expect(out).toMatchObject({ used: 1, limit: 10 });
     expect(gens.rows[0].input).toMatchObject({ screenshotCount: 1, handle: "@dohacafe" });
     expect(JSON.stringify(gens.rows[0].input)).not.toContain("iVBOR");
-    expect(store.tenants.a.balance).toBe(10 - AI_COSTS.audit);
+    expect(gens.rows[0].creditsUsed).toBe(0);
     expect((await svc.get("a", out.id)).output).toMatchObject({ metrics: { engagementRate: 4 } });
     await expect(svc.get("b", out.id)).rejects.toMatchObject({ status: 404 });
   });
-  it("parallel audits with credits for one → one report, the rest refused; a failure refunds", async () => {
-    const { credits, gens, store, profiles } = setup(AI_COSTS.audit);
+  it("stops at the monthly limit; a failed report isn't counted; no limit for the platform owner", async () => {
+    const { gens, profiles } = setup(0);
     const auditor = new FakeAccountAuditor();
-    const svc = new AccountAuditService(auditor, credits, gens, profiles);
-    const results = await Promise.allSettled([svc.run("a", null, input), svc.run("a", null, input), svc.run("a", null, input)]);
-    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-    expect(auditor.calls).toHaveLength(1);
-    store.tenants.a.balance = AI_COSTS.audit;
+    const svc = new AccountAuditService(auditor, plan(1), gens, profiles);
     auditor.failNext = new ServiceUnavailableError("busy");
     await expect(svc.run("a", null, input)).rejects.toThrow("busy");
-    expect(store.tenants.a.balance).toBe(AI_COSTS.audit);
-    expect(gens.rows).toHaveLength(1);
+    expect(await svc.usage("a")).toMatchObject({ used: 0, limit: 1 });
+    await svc.run("a", null, input);
+    await expect(svc.run("a", null, input)).rejects.toMatchObject({ status: 429, code: "AUDIT_LIMIT" });
+    expect(auditor.calls).toHaveLength(2);
+    // شركة تانية ليها عدّادها
+    await expect(svc.run("b", null, input)).resolves.toMatchObject({ used: 1 });
+    const free = new AccountAuditService(auditor, plan(null), gens, profiles);
+    await expect(free.run("a", null, input)).resolves.toMatchObject({ limit: null });
+  });
+  it("usage counts this month only", async () => {
+    const { gens, profiles } = setup(0);
+    const svc = new AccountAuditService(new FakeAccountAuditor(), plan(5), gens, profiles);
+    await svc.run("a", null, input);
+    expect(await svc.usage("a")).toMatchObject({ used: 1 });
+    const nextMonth = new Date(Date.now() + 40 * 24 * 60 * 60 * 1000);
+    expect(await svc.usage("a", nextMonth)).toMatchObject({ used: 0 });
   });
   it("unknown numbers stay unknown (no made-up rates)", () => {
     expect(computeAuditMetrics(auditInputSchema.parse({ platform: "tiktok", handle: "x" }))).toEqual({ engagementRate: null, viewRate: null });

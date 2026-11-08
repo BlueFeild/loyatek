@@ -146,7 +146,7 @@ describe("SocialAccountService — TikTok connect", () => {
     const { url } = svc.tiktokConnectUrl("t1", "u1");
     expect(url).toContain(encodeURIComponent("https://api.test/api/public/social/tiktok/callback"));
     const back = await svc.tiktokCallback({ code: "c1", state: stateOf(url) });
-    expect(back).toBe("https://app.test/ai-studio?tool=publish&tiktok=connected");
+    expect(back).toBe("https://app.test/social?tool=publish&tiktok=connected");
     expect(connector.exchangeCode).toHaveBeenCalledWith("c1", "https://api.test/api/public/social/tiktok/callback");
     expect(saved[0].tenantId).toBe("t1");
     expect(decryptToken(saved[0].list[0].accessToken)).toBe("act");

@@ -1,5 +1,5 @@
 // قايمة الخدمات اللي بتتباع - المصدر الوحيد في الباك إند (الدفع، السوبر أدمن، الأسعار)
-export const ALL_MODULES = ["erp", "booking", "wallet", "whatsapp", "catalog", "linktree", "ai"] as const;
+export const ALL_MODULES = ["erp", "booking", "wallet", "whatsapp", "catalog", "linktree", "ai", "social", "ads", "audit"] as const;
 export type ModuleId = (typeof ALL_MODULES)[number];
 
 // حالة الحساب كله (السوبر أدمن بيتحكم فيها):

@@ -40,6 +40,7 @@ export type FinishResult = { status: "DONE" | "FAILED"; output?: Prisma.InputJso
 export interface GenerationStore {
   create(g: NewGeneration): Promise<{ id: string }>;
   recent(tenantId: string, tool: string): Promise<GenerationRow[]>;
+  countSince(tenantId: string, tool: string, since: Date): Promise<number>;
   find(tenantId: string, id: string): Promise<GenerationRow | null>;
   // إنهاء عملية PENDING بشكل ذرّي: true = احنا اللي قفلناها (فمسموح نرجّع النقاط)،
   // false = حد تاني قفلها قبلنا (مانرجّعش تاني)
@@ -68,6 +69,10 @@ export class AiGenerationRepository implements GenerationStore {
   async recent(tenantId: string, tool: string, take = 20) {
     const rows = await this.db.aiGeneration.findMany({ where: { tenantId, tool }, orderBy: { createdAt: "desc" }, take, include: withAssets });
     return rows.map(toRow);
+  }
+
+  countSince(tenantId: string, tool: string, since: Date) {
+    return this.db.aiGeneration.count({ where: { tenantId, tool, createdAt: { gte: since } } });
   }
 
   async find(tenantId: string, id: string) {

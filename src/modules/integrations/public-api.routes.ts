@@ -63,13 +63,13 @@ publicApiRouter.get("/me", async (req, res) => {
 });
 
 // ---------- السوشيال ----------
-publicApiRouter.get("/social/accounts", needModule("ai"), async (req, res) => {
+publicApiRouter.get("/social/accounts", needModule("social"), async (req, res) => {
   const list = await container.socialAccountService.list(req.apiKey!.tenantId);
   res.json(list.map((a) => ({ id: a.id, platform: a.platform, name: a.name, username: a.username, status: a.status })));
 });
 
 const listSchema = z.object({ from: z.coerce.date().optional(), to: z.coerce.date().optional() });
-publicApiRouter.get("/social/posts", needModule("ai"), async (req, res) => {
+publicApiRouter.get("/social/posts", needModule("social"), async (req, res) => {
   const parsed = listSchema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
   res.json(await container.socialPostService.list(req.apiKey!.tenantId, parsed.data));
@@ -97,7 +97,7 @@ async function downloadMedia(url: string): Promise<{ mimeType: string; data: Buf
 }
 
 const apiPostSchema = z.object({ mediaUrl: z.string().url().max(2000).optional() }).passthrough();
-publicApiRouter.post("/social/posts", needModule("ai"), async (req, res) => {
+publicApiRouter.post("/social/posts", needModule("social"), async (req, res) => {
   const extra = apiPostSchema.safeParse(req.body ?? {});
   if (!extra.success) return res.status(400).json({ error: zodMessage(extra.error) });
   let mediaId: string | null = (req.body?.mediaId as string | undefined) ?? null;

@@ -37,6 +37,21 @@ export async function hasModuleAccess(tenantId: string, moduleId: string): Promi
   return ok;
 }
 
+// مسموح لو الشركة مشتركة في واحد على الأقل من الموديولات دي
+export function requireAnyModule(...moduleIds: string[]) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!req.auth) return res.status(401).json({ error: "Unauthenticated" });
+    if (bypassesAccountChecks(req.auth)) return next();
+    const access = await Promise.all(moduleIds.map((m) => hasModuleAccess(req.auth!.tenantId, m)));
+    if (access.some(Boolean)) return next();
+    return res.status(403).json({
+      error: `Your ${moduleIds[0].toUpperCase()} subscription is not active. Subscribe or renew to use it.`,
+      code: "MODULE_INACTIVE",
+      module: moduleIds[0],
+    });
+  };
+}
+
 // بيتحط بعد requireAuth: من غير اشتراك (أو تجربة) في الموديول = 403 بكود واضح.
 // قبل كده الـ ERP كان مقفول في الواجهة بس، وأي حد معاه توكن يقدر يكلّم الـ API
 // السوبر أدمن (وهو داخل كشركة للمراجعة) مسموح له زي الواجهة

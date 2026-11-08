@@ -1,6 +1,6 @@
 import express, { Router } from "express";
 import { requireAuth, requireRole } from "../../middleware/auth";
-import { requireModule } from "../../middleware/module-access";
+import { requireAnyModule, requireModule } from "../../middleware/module-access";
 import { container } from "../../core/container";
 import { NotFoundError } from "../../core/errors";
 import { zodMessage } from "../../utils/validation";
@@ -12,44 +12,48 @@ import { adsRouter } from "./ads.routes";
 
 const { socialAccountService, socialPostService, socialInboxService, socialPlanner, socialReportService } = container;
 
-// النشر على السوشيال (جزء من استوديو الذكاء الاصطناعي) - الـ controller بيتأكد من البيانات بس
+// خدمة Social (النشر + الجدولة + صندوق الرسايل + التقارير) - الـ controller بيتأكد من البيانات بس
 export const socialRouter = Router();
-socialRouter.use(requireAuth, requireModule("ai"));
+socialRouter.use(requireAuth);
+
+const requireSocial = requireModule("social");
+// مشترك الإعلانات لوحدها محتاج يربط حساباته ويشوف بوستاته عشان يموّلها
+const socialOrAds = requireAnyModule("social", "ads");
 
 const canPost = requireRole("OWNER", "ADMIN", "MANAGER");
 const canConnect = requireRole("OWNER", "ADMIN");
 
 // ---------- الإعلانات المدفوعة (تمويل بوست) ----------
-socialRouter.use("/ads", adsRouter);
+socialRouter.use("/ads", requireModule("ads"), adsRouter);
 
 // ---------- الحسابات ----------
-socialRouter.get("/config", (_req, res) => {
+socialRouter.get("/config", socialOrAds, (_req, res) => {
   res.json(socialAccountService.config());
 });
 
-socialRouter.get("/accounts", async (req, res) => {
+socialRouter.get("/accounts", socialOrAds, async (req, res) => {
   res.json(await socialAccountService.list(req.auth!.tenantId));
 });
 
-socialRouter.post("/accounts/meta/connect", canConnect, async (req, res) => {
+socialRouter.post("/accounts/meta/connect", socialOrAds, canConnect, async (req, res) => {
   const parsed = connectMetaSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
   res.json(await socialAccountService.connectMeta(req.auth!.tenantId, req.auth!.userId, parsed.data));
 });
 
-socialRouter.post("/accounts/bluesky/connect", canConnect, async (req, res) => {
+socialRouter.post("/accounts/bluesky/connect", requireSocial, canConnect, async (req, res) => {
   const parsed = connectBlueskySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
   res.json(await socialAccountService.connectBluesky(req.auth!.tenantId, req.auth!.userId, parsed.data.handle, parsed.data.appPassword));
 });
 
-socialRouter.delete("/accounts/:id", canConnect, async (req, res) => {
+socialRouter.delete("/accounts/:id", socialOrAds, canConnect, async (req, res) => {
   res.json(await socialAccountService.disconnect(req.auth!.tenantId, req.params.id));
 });
 
 // ---------- الصور والفيديو (رفع خام) ----------
 const rawMedia = express.raw({ type: "application/octet-stream", limit: `${Math.ceil(SOCIAL_LIMITS.videoMaxBytes / 1024 / 1024) + 1}mb` });
-socialRouter.post("/media", canPost, rawMedia, async (req, res) => {
+socialRouter.post("/media", socialOrAds, canPost, rawMedia, async (req, res) => {
   const parsed = uploadMediaSchema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: "Missing the file type" });
   if (!Buffer.isBuffer(req.body)) return res.status(400).json({ error: "Send the file as application/octet-stream" });
@@ -57,20 +61,24 @@ socialRouter.post("/media", canPost, rawMedia, async (req, res) => {
 });
 
 // ---------- البوستات ----------
-socialRouter.get("/posts", async (req, res) => {
+socialRouter.get("/posts", socialOrAds, async (req, res) => {
   const parsed = listPostsSchema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
   res.json(await socialPostService.list(req.auth!.tenantId, parsed.data));
 });
 
-socialRouter.get("/posts/:id", async (req, res) => {
-  res.json(await socialPostService.get(req.auth!.tenantId, req.params.id));
-});
-
-socialRouter.post("/posts", canPost, async (req, res) => {
+// مشترك الإعلانات لوحدها ينشر فورًا بس (بوست يموّله) - الجدولة والتكرار والمسودات لخدمة Social
+socialRouter.post("/posts", (req, res, next) => (req.body?.when === "now" && !req.body?.repeatEvery ? socialOrAds : requireSocial)(req, res, next), canPost, async (req, res) => {
   const parsed = postInputSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
   res.status(201).json(await socialPostService.create(req.auth!.tenantId, req.auth!.userId, parsed.data));
+});
+
+// كل اللي بعد كده لمشتركي خدمة Social بس
+socialRouter.use(requireSocial);
+
+socialRouter.get("/posts/:id", async (req, res) => {
+  res.json(await socialPostService.get(req.auth!.tenantId, req.params.id));
 });
 
 socialRouter.put("/posts/:id", canPost, async (req, res) => {

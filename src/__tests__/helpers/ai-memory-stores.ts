@@ -39,6 +39,10 @@ export class MemoryGenerations implements GenerationStore {
   private seq = 0;
   constructor(private readonly assets?: MemoryAssets) {}
 
+  async countSince(tenantId: string, tool: string, since: Date) {
+    return this.rows.filter((r) => r.tenantId === tenantId && r.tool === tool && new Date(r.createdAt) >= since).length;
+  }
+
   async create(g: NewGeneration) {
     this.seq++;
     const id = g.id ?? `gen${this.seq}`;

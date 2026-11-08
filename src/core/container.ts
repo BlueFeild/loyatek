@@ -9,7 +9,7 @@ import { makeAiProviders } from "../modules/ai/ai-providers.factory";
 import { CopywriterService } from "../modules/ai/copywriter.service";
 import { ImageStudioService } from "../modules/ai/image-studio.service";
 import { VideoStudioService } from "../modules/ai/video-studio.service";
-import { AccountAuditService } from "../modules/ai/account-audit.service";
+import { AccountAuditService, PrismaAuditPlan } from "../modules/ai/account-audit.service";
 import { MetaRatesService, PrismaMetaRatesStore } from "../modules/whatsapp/meta-rates.service";
 import { PrismaCampaignRepository } from "../modules/whatsapp/campaign.repository";
 import { MetaCampaignGateway } from "../modules/whatsapp/campaign-gateway";
@@ -124,7 +124,7 @@ export const container = {
   copywriterService: new CopywriterService(providers.copy, creditService, generations, profiles),
   imageStudioService: new ImageStudioService(providers.image, creditService, generations, assets, profiles),
   videoStudioService: new VideoStudioService(providers.video, creditService, generations, assets, profiles),
-  accountAuditService: new AccountAuditService(providers.auditor, creditService, generations, profiles),
+  accountAuditService: new AccountAuditService(providers.auditor, new PrismaAuditPlan(prisma), generations, profiles),
   metaRatesService: new MetaRatesService(new PrismaMetaRatesStore(prisma)),
   campaignSender: new CampaignSender(new PrismaCampaignRepository(prisma), new MetaCampaignGateway()),
   contactBookService: new ContactBookService(new PrismaContactBookRepository(prisma), { customers: async (tenantId: string) => [...(await getUnifiedContacts(tenantId)), ...(await getConversationContacts(tenantId))] }),

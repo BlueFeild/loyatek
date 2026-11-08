@@ -25,7 +25,6 @@ aiRouter.get("/tools", (_req, res) => {
     copy: { available: copywriterService.isAvailable, cost: AI_COSTS.copy },
     image: { available: imageStudioService.isAvailable, cost: AI_COSTS.image },
     video: { available: videoStudioService.isAvailable, cost: AI_COSTS.video, pollMs: AI_LIMITS.videoPollMs },
-    audit: { available: accountAuditService.isAvailable, cost: AI_COSTS.audit },
   });
 });
 
@@ -66,16 +65,24 @@ aiRouter.post("/videos", canSpend, async (req, res) => {
   res.status(202).json(await videoStudioService.start(req.auth!.tenantId, req.auth!.userId, parsed.data));
 });
 
-// ---------- تحليل الحسابات ----------
-aiRouter.get("/audits", async (req, res) => {
+// ---------- تحليل الحسابات (خدمة منفصلة: موديول "audit") ----------
+// لازم يتركّب قبل aiRouter في app.ts عشان مايقفش عند اشتراك "ai"
+export const auditRouter = Router();
+auditRouter.use(requireAuth, requireModule("audit"));
+
+auditRouter.get("/", async (req, res) => {
   res.json(await accountAuditService.history(req.auth!.tenantId));
 });
 
-aiRouter.get("/audits/:id", async (req, res) => {
+auditRouter.get("/usage", async (req, res) => {
+  res.json(await accountAuditService.usage(req.auth!.tenantId));
+});
+
+auditRouter.get("/:id", async (req, res) => {
   res.json(await accountAuditService.get(req.auth!.tenantId, req.params.id));
 });
 
-aiRouter.post("/audits", canSpend, async (req, res) => {
+auditRouter.post("/", canSpend, async (req, res) => {
   const parsed = auditInputSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
   res.json(await accountAuditService.run(req.auth!.tenantId, req.auth!.userId, parsed.data));
