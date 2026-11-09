@@ -43,7 +43,7 @@ import { PrismaContactBookRepository } from "./contact-book.repository";
 import { normalizePhone, normalizeTags } from "./contact-book.service";
 import { summarizeCampaign } from "./campaign-report";
 import { summarizeWhatsapp } from "./analytics";
-import { BOOKING_TEMPLATE_PURPOSES, ensureBookingTemplates, getApprovedBookingTemplate, type BookingTemplatePurpose } from "./booking-templates";
+import { BOOKING_TEMPLATE_PURPOSES, ORDER_TEMPLATE_PURPOSES, ensureBookingTemplates, ensureOrderTemplates, getApprovedBookingTemplate, type ManagedTemplatePurpose, type TemplateLang } from "./booking-templates";
 
 export const whatsappRouter = Router();
 
@@ -277,34 +277,44 @@ whatsappRouter.post("/test-message", requireRole("OWNER", "ADMIN", "MANAGER"), a
   res.json({ ok: true, messageId: result.messageId });
 });
 
-// --- قوالب الحجز المعتمدة (تأكيد / إشعار التاجر / تذكير) ---
+// --- القوالب المعتمدة: الحجز (تأكيد / إشعار التاجر / تذكير) والأوردرات (استلام / جاهز) ---
 
-whatsappRouter.get("/booking-templates", async (req, res) => {
-  const rows = await prisma.whatsappTemplate.findMany({ where: { tenantId: req.auth!.tenantId, purpose: { not: null } }, orderBy: { name: "asc" } });
-  res.json(rows.map((t) => ({ id: t.id, name: t.name, language: t.language, purpose: t.purpose, status: t.status, rejectionReason: t.rejectionReason, bodyText: t.bodyText })));
-});
+async function listManagedTemplates(tenantId: string, purposes: readonly ManagedTemplatePurpose[]) {
+  const rows = await prisma.whatsappTemplate.findMany({ where: { tenantId, purpose: { in: [...purposes] } }, orderBy: { name: "asc" } });
+  return rows.map((t) => ({ id: t.id, name: t.name, language: t.language, purpose: t.purpose, status: t.status, rejectionReason: t.rejectionReason, bodyText: t.bodyText }));
+}
 
-whatsappRouter.post("/booking-templates", requireRole("OWNER", "ADMIN"), async (req, res) => {
-  const lang = req.body?.language === "ar" ? "ar" : "en";
-  try {
-    res.json({ results: await ensureBookingTemplates(req.auth!.tenantId, lang) });
-  } catch (err) {
-    res.status(400).json({ error: (err as Error).message });
-  }
-});
+function managedTemplateRoutes(
+  path: string,
+  purposes: readonly ManagedTemplatePurpose[],
+  ensure: (tenantId: string, lang: TemplateLang) => Promise<unknown>
+) {
+  whatsappRouter.get(path, async (req, res) => {
+    res.json(await listManagedTemplates(req.auth!.tenantId, purposes));
+  });
 
-// تحديث حالة كل قوالب الحجز من Meta مرة واحدة
-whatsappRouter.post("/booking-templates/refresh", async (req, res) => {
-  const tenantId = req.auth!.tenantId;
-  const rows = await prisma.whatsappTemplate.findMany({ where: { tenantId, purpose: { not: null }, status: "PENDING" } });
-  for (const t of rows) {
-    if (t.purpose && (BOOKING_TEMPLATE_PURPOSES as readonly string[]).includes(t.purpose)) {
-      await getApprovedBookingTemplate(tenantId, t.purpose as BookingTemplatePurpose, t.language === "ar" ? "ar" : "en");
+  whatsappRouter.post(path, requireRole("OWNER", "ADMIN"), async (req, res) => {
+    const lang = req.body?.language === "ar" ? "ar" : "en";
+    try {
+      res.json({ results: await ensure(req.auth!.tenantId, lang) });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
     }
-  }
-  const all = await prisma.whatsappTemplate.findMany({ where: { tenantId, purpose: { not: null } }, orderBy: { name: "asc" } });
-  res.json(all.map((t) => ({ id: t.id, name: t.name, language: t.language, purpose: t.purpose, status: t.status, rejectionReason: t.rejectionReason, bodyText: t.bodyText })));
-});
+  });
+
+  // تحديث حالة القوالب من Meta مرة واحدة
+  whatsappRouter.post(`${path}/refresh`, async (req, res) => {
+    const tenantId = req.auth!.tenantId;
+    const rows = await prisma.whatsappTemplate.findMany({ where: { tenantId, purpose: { in: [...purposes] }, status: "PENDING" } });
+    for (const t of rows) {
+      await getApprovedBookingTemplate(tenantId, t.purpose as ManagedTemplatePurpose, t.language === "ar" ? "ar" : "en");
+    }
+    res.json(await listManagedTemplates(tenantId, purposes));
+  });
+}
+
+managedTemplateRoutes("/booking-templates", BOOKING_TEMPLATE_PURPOSES, ensureBookingTemplates);
+managedTemplateRoutes("/order-templates", ORDER_TEMPLATE_PURPOSES, ensureOrderTemplates);
 
 // --- البوت: ردود تلقائية بالكلمات المفتاحية ---
 

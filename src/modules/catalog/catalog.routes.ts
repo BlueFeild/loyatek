@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "../../middleware/auth";
 import { getOrCreateCatalogSettings, updateCatalogSettings, createOrder, confirmOrderPaymentIfPaid, markOrderPaidManually } from "./catalog.service";
 import { MENU_CURRENCY_CODES } from "../../utils/money";
 import { addDemoMenu, removeDemoMenu } from "./demo-menu";
+import { container } from "../../core/container";
 
 export const catalogRouter = Router();
 
@@ -32,6 +33,7 @@ const updateSettingsSchema = z.object({
   posLink: z.string().optional(),
   waMerchantTemplate: z.string().max(1000).optional(),
   waCustomerTemplate: z.string().max(1000).optional(),
+  waTemplateLang: z.enum(["en", "ar"]).optional(),
   // عملة المنيو (QAR / EGP / AED / USD / EUR ...)
   currency: z.enum(MENU_CURRENCY_CODES).optional(),
 });
@@ -158,10 +160,12 @@ catalogRouter.delete("/items/:id", requireRole("OWNER", "ADMIN", "MANAGER"), asy
 // --- Orders ---
 
 catalogRouter.get("/orders", async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 0, 200);
   const orders = await prisma.catalogOrder.findMany({
     where: { tenantId: req.auth!.tenantId },
     include: { items: true },
     orderBy: { createdAt: "desc" },
+    ...(limit > 0 ? { take: limit } : {}),
   });
   res.json(orders);
 });
@@ -200,6 +204,11 @@ catalogRouter.post("/orders/:id/mark-paid", requireRole("OWNER", "ADMIN", "MANAG
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// الطلب جاهز + رسالة واتساب للعميل
+catalogRouter.post("/orders/:id/ready", requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async (req, res) => {
+  res.json(await container.orderReady.markReady(req.auth!.tenantId, req.params.id));
 });
 
 catalogRouter.get("/orders/:id/payment-status", async (req, res) => {

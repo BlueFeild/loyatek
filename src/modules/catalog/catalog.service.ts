@@ -1,5 +1,6 @@
 import { prisma } from "../../config/db";
 import { getOrCreateWhatsappSettings, sendWhatsappTextMessage } from "../whatsapp/whatsapp.service";
+import { sendOrderReceivedTemplate } from "./order-whatsapp";
 import { renderMessageTemplate } from "../../utils/messageTemplate";
 import { createNotification } from "../notifications/notifications.service";
 import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus, paymentInvoiceMatch } from "../checkout/myfatoorah";
@@ -31,6 +32,7 @@ interface UpdateCatalogSettingsInput {
   posLink?: string;
   waMerchantTemplate?: string;
   waCustomerTemplate?: string;
+  waTemplateLang?: string;
   currency?: string;
 }
 
@@ -103,7 +105,11 @@ async function notifyNewOrder(order: { id: string; customerName: string; custome
       await sendWhatsappTextMessage(wa.metaAccessToken, wa.metaPhoneNumberId, digits(settings.kitchenWhatsapp), renderMessageTemplate(settings.waMerchantTemplate, vars));
     }
     if (order.customerPhone && settings.waCustomerTemplate.trim()) {
-      await sendWhatsappTextMessage(wa.metaAccessToken, wa.metaPhoneNumberId, digits(order.customerPhone), renderMessageTemplate(settings.waCustomerTemplate, vars));
+      // القالب المعتمد بيوصل لأي رقم؛ نص التاجر بيوصل بس جوه نافذة الـ24 ساعة
+      const viaTemplate = await sendOrderReceivedTemplate({ ...order, tenantId, customerPhone: order.customerPhone }, total);
+      if (!viaTemplate?.ok) {
+        await sendWhatsappTextMessage(wa.metaAccessToken, wa.metaPhoneNumberId, digits(order.customerPhone), renderMessageTemplate(settings.waCustomerTemplate, vars));
+      }
     }
   } catch {
     // ignore

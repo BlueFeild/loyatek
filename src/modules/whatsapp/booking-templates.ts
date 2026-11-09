@@ -12,6 +12,9 @@ import {
 // الرسايل دي بتوصل لأي رقم - من غير شرط إن العميل كلّم البيزنس آخر 24 ساعة
 export const BOOKING_TEMPLATE_PURPOSES = ["BOOKING_CONFIRMATION", "BOOKING_MERCHANT_ALERT", "BOOKING_REMINDER"] as const;
 export type BookingTemplatePurpose = (typeof BOOKING_TEMPLATE_PURPOSES)[number];
+export const ORDER_TEMPLATE_PURPOSES = ["ORDER_RECEIVED", "ORDER_READY"] as const;
+export type OrderTemplatePurpose = (typeof ORDER_TEMPLATE_PURPOSES)[number];
+export type ManagedTemplatePurpose = BookingTemplatePurpose | OrderTemplatePurpose;
 export type TemplateLang = "en" | "ar";
 
 interface TemplateDef {
@@ -125,35 +128,101 @@ Need to change it? Simply reply to this message. See you soon!`,
   },
 };
 
-export function templateName(purpose: BookingTemplatePurpose, lang: TemplateLang) {
-  return `${BOOKING_TEMPLATES[purpose].name}_${lang}`;
+// قوالب الأوردرات (المنيو): تأكيد استلام الطلب + "طلبك جاهز"
+export const ORDER_TEMPLATES: Record<OrderTemplatePurpose, TemplateDef> = {
+  ORDER_RECEIVED: {
+    name: "bf_order_received",
+    params: ["customer_name", "business", "items", "total", "mode"],
+    body: {
+      en: `🧾 Order Received!
+
+Hi {{1}},
+Thank you for your order from {{2}}.
+
+📦 Items: {{3}}
+💰 Total: {{4}}
+📍 Order type: {{5}}
+
+We are preparing it now. Thank you!`,
+      ar: `🧾 تم استلام طلبك!
+
+أهلًا {{1}}،
+شكرًا لطلبك من {{2}}.
+
+📦 الأصناف: {{3}}
+💰 الإجمالي: {{4}}
+📍 نوع الطلب: {{5}}
+
+جاري تجهيز طلبك الآن. شكرًا لك!`,
+    },
+    example: ["Fatima", "Glow Cafe", "2× Latte, 1× Croissant", "QAR 45.00", "Pickup"],
+  },
+  ORDER_READY: {
+    name: "bf_order_ready",
+    params: ["customer_name", "business", "reference", "mode"],
+    body: {
+      en: `✅ Your order is ready!
+
+Hi {{1}},
+Your order from {{2}} is ready.
+
+🧾 Order number: {{3}}
+📍 Order type: {{4}}
+
+Thank you for choosing us!`,
+      ar: `✅ طلبك جاهز!
+
+أهلًا {{1}}،
+طلبك من {{2}} جاهز الآن.
+
+🧾 رقم الطلب: {{3}}
+📍 نوع الطلب: {{4}}
+
+شكرًا لاختيارك لنا!`,
+    },
+    example: ["Fatima", "Glow Cafe", "A1B2C3", "Pickup"],
+  },
+};
+
+const MANAGED_TEMPLATES: Record<ManagedTemplatePurpose, TemplateDef> = { ...BOOKING_TEMPLATES, ...ORDER_TEMPLATES };
+
+export function templateName(purpose: ManagedTemplatePurpose, lang: TemplateLang) {
+  return `${MANAGED_TEMPLATES[purpose].name}_${lang}`;
 }
 
 // القيم بالترتيب اللي القالب مستنيه
-export function templateParams(purpose: BookingTemplatePurpose, values: Record<string, string>): string[] {
-  return BOOKING_TEMPLATES[purpose].params.map((p) => values[p] ?? "");
+export function templateParams(purpose: ManagedTemplatePurpose, values: Record<string, string>): string[] {
+  return MANAGED_TEMPLATES[purpose].params.map((p) => values[p] ?? "");
 }
 
 // النص النهائي (للسجل في Team Inbox) - نفس اللي العميل هيشوفه
-export function renderTemplateBody(purpose: BookingTemplatePurpose, lang: TemplateLang, params: string[]) {
-  return BOOKING_TEMPLATES[purpose].body[lang].replace(/\{\{(\d+)\}\}/g, (_m, n: string) => params[Number(n) - 1] ?? "");
+export function renderTemplateBody(purpose: ManagedTemplatePurpose, lang: TemplateLang, params: string[]) {
+  return MANAGED_TEMPLATES[purpose].body[lang].replace(/\{\{(\d+)\}\}/g, (_m, n: string) => params[Number(n) - 1] ?? "");
 }
 
-// بيبعت القوالب التلاتة لـ Meta (اللي مش موجود منها بس) ويسجّلها PENDING
-export async function ensureBookingTemplates(tenantId: string, lang: TemplateLang) {
+export function ensureBookingTemplates(tenantId: string, lang: TemplateLang) {
+  return ensureTemplates(tenantId, lang, BOOKING_TEMPLATE_PURPOSES);
+}
+
+export function ensureOrderTemplates(tenantId: string, lang: TemplateLang) {
+  return ensureTemplates(tenantId, lang, ORDER_TEMPLATE_PURPOSES);
+}
+
+// بيبعت القوالب لـ Meta (اللي مش موجود منها بس) ويسجّلها PENDING
+async function ensureTemplates(tenantId: string, lang: TemplateLang, purposes: readonly ManagedTemplatePurpose[]) {
   const settings = await getOrCreateWhatsappSettings(tenantId);
   if (!settings.isConnected || !settings.metaAccessToken || !settings.metaWabaId) {
     throw new Error("Connect WhatsApp (with your WABA ID) and press “Verify connection” first.");
   }
-  const results: { purpose: BookingTemplatePurpose; name: string; status: string; error?: string }[] = [];
-  for (const purpose of BOOKING_TEMPLATE_PURPOSES) {
+  const results: { purpose: ManagedTemplatePurpose; name: string; status: string; error?: string }[] = [];
+  for (const purpose of purposes) {
     const name = templateName(purpose, lang);
     const existing = await prisma.whatsappTemplate.findFirst({ where: { tenantId, name } });
     if (existing && existing.status !== "REJECTED") {
       results.push({ purpose, name, status: existing.status });
       continue;
     }
-    const def = BOOKING_TEMPLATES[purpose];
+    const def = MANAGED_TEMPLATES[purpose];
     let metaTemplateId: string | undefined;
     let status = "PENDING";
     const created = await createWhatsappTemplate(settings.metaAccessToken, settings.metaWabaId, {
@@ -196,7 +265,7 @@ export async function ensureBookingTemplates(tenantId: string, lang: TemplateLan
 
 // القالب المعتمد لغرض معيّن. لو لسه PENDING بنسأل Meta عن حالته (مرة كل ما
 // نحتاجه) - عشان أول ما يتعتمد يبدأ يتبعت من غير ما حد يدوس حاجة
-export async function getApprovedBookingTemplate(tenantId: string, purpose: BookingTemplatePurpose, lang: TemplateLang) {
+export async function getApprovedBookingTemplate(tenantId: string, purpose: ManagedTemplatePurpose, lang: TemplateLang) {
   const tpl = await prisma.whatsappTemplate.findFirst({ where: { tenantId, name: templateName(purpose, lang) } });
   if (!tpl) return null;
   if (tpl.status === "APPROVED") return tpl;
@@ -219,7 +288,7 @@ export async function getApprovedBookingTemplate(tenantId: string, purpose: Book
 // بيرجّع null لو مفيش قالب معتمد - اللي استدعاها يقرر يبعت نص حر بداله
 export async function sendBookingTemplate(
   tenantId: string,
-  purpose: BookingTemplatePurpose,
+  purpose: ManagedTemplatePurpose,
   lang: TemplateLang,
   to: string,
   values: Record<string, string>,

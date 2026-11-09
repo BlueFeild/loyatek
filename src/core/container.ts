@@ -14,6 +14,9 @@ import { MetaRatesService, PrismaMetaRatesStore } from "../modules/whatsapp/meta
 import { PrismaCampaignRepository } from "../modules/whatsapp/campaign.repository";
 import { MetaCampaignGateway } from "../modules/whatsapp/campaign-gateway";
 import { CampaignSender } from "../modules/whatsapp/campaign-sender.service";
+import { OrderReadyService } from "../modules/catalog/order-ready.service";
+import { PrismaOrderReadyStore } from "../modules/catalog/order-ready.repository";
+import { WhatsappOrderReadyNotifier } from "../modules/catalog/order-whatsapp";
 import { ContactBookService } from "../modules/whatsapp/contact-book.service";
 import { CommentAutomationService } from "../modules/social/comment-automation.service";
 import { PrismaCommentRuleRepository } from "../modules/social/comment-rules.repository";
@@ -127,6 +130,7 @@ export const container = {
   accountAuditService: new AccountAuditService(providers.auditor, new PrismaAuditPlan(prisma), generations, profiles),
   metaRatesService: new MetaRatesService(new PrismaMetaRatesStore(prisma)),
   campaignSender: new CampaignSender(new PrismaCampaignRepository(prisma), new MetaCampaignGateway()),
+  orderReady: new OrderReadyService(new PrismaOrderReadyStore(prisma), new WhatsappOrderReadyNotifier()),
   contactBookService: new ContactBookService(new PrismaContactBookRepository(prisma), { customers: async (tenantId: string) => [...(await getUnifiedContacts(tenantId)), ...(await getConversationContacts(tenantId))] }),
   whatsappNumbers,
   flowService: new FlowService(flowRepository, new MetaFlowMessenger(whatsappNumbers)),

@@ -1048,6 +1048,8 @@ model CatalogSettings {
   // عملة المنيو اللي التاجر بيختارها (QAR / EGP / AED / USD / EUR ...) -
   // الأسعار والإجمالي ({total}) بيظهروا بيها. USD = نفس العرض القديم ($)
   currency           String   @default("USD")
+  // لغة قوالب واتساب المعتمدة للأوردرات (en | ar)
+  waTemplateLang     String   @default("en")
   updatedAt          DateTime @updatedAt
 
   @@map("catalog_settings")
@@ -1121,6 +1123,11 @@ model CatalogOrder {
   myFatoorahInvoiceId  String?
   myFatoorahPaymentId  String?
   myFatoorahPaymentUrl String?           @db.Text
+  // زرار "الطلب جاهز": وقت التجهيز + نتيجة رسالة واتساب للعميل
+  // readyNotify = sending | template | text | failed | not_connected
+  readyAt              DateTime?
+  readyNotify          String?
+  readyNotifyError     String?           @db.Text
   createdAt            DateTime          @default(now())
 
   items OrderItem[]
