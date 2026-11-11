@@ -1,6 +1,15 @@
 // قايمة الخدمات اللي بتتباع - المصدر الوحيد في الباك إند (الدفع، السوبر أدمن، الأسعار)
-export const ALL_MODULES = ["erp", "booking", "wallet", "whatsapp", "catalog", "linktree", "ai", "social", "ads", "audit"] as const;
+// "social" = خدمة السوشيال كلها: النشر + الرسايل + التقارير + الإعلانات المدفوعة + تحليل الحسابات
+// (من 2026-11-11 - قبل كده ads و audit كانوا خدمات لوحدهم)
+export const ALL_MODULES = ["erp", "booking", "wallet", "whatsapp", "catalog", "linktree", "ai", "social"] as const;
 export type ModuleId = (typeof ALL_MODULES)[number];
+
+// أسماء قديمة بقت جزء من خدمة تانية (طلبات دفع قديمة، روابط قديمة، خصومات محفوظة)
+export const LEGACY_MODULES: Record<string, ModuleId> = { ads: "social", audit: "social" };
+
+export function normalizeModules(list: readonly string[]): string[] {
+  return Array.from(new Set(list.map((m) => LEGACY_MODULES[m] ?? m)));
+}
 
 // حالة الحساب كله (السوبر أدمن بيتحكم فيها):
 // ACTIVE = شغال، SUSPENDED = موقوف مؤقتًا (دخول + صفحات عامة مقفولة، الداتا

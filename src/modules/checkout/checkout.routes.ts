@@ -5,7 +5,7 @@ import { requireAuth, requireRole } from "../../middleware/auth";
 import { initiateMyFatoorahPayment } from "./myfatoorah";
 import { modulesOrderAmount, extraCompanyAmount } from "./pricing";
 import { getRegionalPricing, pricingForCycle } from "../../utils/platform-config";
-import { ALL_MODULES } from "../../utils/modules";
+import { ALL_MODULES, normalizeModules } from "../../utils/modules";
 
 // المبلغ بخانات العملة (KWD/BHD/OMR/JOD = 3) + نفس المبلغ بالدولار للتقارير
 function orderMoney(amount: number, pricing: { currency: string; usdRate: number }) {
@@ -22,7 +22,8 @@ export const checkoutRouter = Router();
 checkoutRouter.use(requireAuth);
 
 const createOrderSchema = z.object({
-  selectedModules: z.array(z.enum(ALL_MODULES)).min(1),
+  // أسماء قديمة (ads / audit) بتتحوّل لـ social
+  selectedModules: z.array(z.string()).transform(normalizeModules).pipe(z.array(z.enum(ALL_MODULES)).min(1)),
   billingCycle: z.enum(["monthly", "yearly"]).default("monthly"),
   // الدولة اللي العميل شايف أسعارها (العملة والسعر بيتحسبوا هنا مش من الفرونت)
   country: z.string().regex(/^[A-Za-z]{2}$/).optional(),

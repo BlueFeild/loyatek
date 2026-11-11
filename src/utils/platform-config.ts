@@ -1,4 +1,5 @@
 import { prisma } from "../config/db";
+import { normalizeModules } from "./modules";
 import { EXTRA_COMPANY_BASE_MONTHLY_PRICE, MODULE_PRICES, YEARLY_DISCOUNT, type Pricing } from "../modules/checkout/pricing";
 import { isModuleActive } from "./modules";
 import { AI_MODULE_MONTHLY_CREDITS } from "../modules/ai/ai-pricing";
@@ -63,7 +64,7 @@ export function readDiscounts(raw: unknown): DiscountRule[] {
   list.forEach((v, i) => {
     const pct = Number(v?.pct);
     if (!Number.isFinite(pct) || pct <= 0 || pct > 90) return;
-    const modules = (Array.isArray(v?.modules) ? v.modules : []).filter((m: unknown) => typeof m === "string" && m in MODULE_PRICES);
+    const modules = normalizeModules((Array.isArray(v?.modules) ? v.modules : []).filter((m: unknown): m is string => typeof m === "string")).filter((m) => m in MODULE_PRICES);
     // القاعدة كانت على خدمات مش موجودة -> نشيلها بدل ما تبقى "كل الخدمات"
     if (Array.isArray(v?.modules) && v.modules.length > 0 && modules.length === 0) return;
     out.push({

@@ -65,10 +65,10 @@ aiRouter.post("/videos", canSpend, async (req, res) => {
   res.status(202).json(await videoStudioService.start(req.auth!.tenantId, req.auth!.userId, parsed.data));
 });
 
-// ---------- تحليل الحسابات (خدمة منفصلة: موديول "audit") ----------
+// ---------- تحليل الحسابات (جزء من خدمة السوشيال: موديول "social") ----------
 // لازم يتركّب قبل aiRouter في app.ts عشان مايقفش عند اشتراك "ai"
 export const auditRouter = Router();
-auditRouter.use(requireAuth, requireModule("audit"));
+auditRouter.use(requireAuth, requireModule("social"));
 
 auditRouter.get("/", async (req, res) => {
   res.json(await accountAuditService.history(req.auth!.tenantId));

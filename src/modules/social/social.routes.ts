@@ -1,6 +1,6 @@
 import express, { Router } from "express";
 import { requireAuth, requireRole } from "../../middleware/auth";
-import { requireAnyModule, requireModule } from "../../middleware/module-access";
+import { requireModule } from "../../middleware/module-access";
 import { container } from "../../core/container";
 import { NotFoundError } from "../../core/errors";
 import { zodMessage } from "../../utils/validation";
@@ -17,14 +17,14 @@ export const socialRouter = Router();
 socialRouter.use(requireAuth);
 
 const requireSocial = requireModule("social");
-// مشترك الإعلانات لوحدها محتاج يربط حساباته ويشوف بوستاته عشان يموّلها
-const socialOrAds = requireAnyModule("social", "ads");
+// الإعلانات وتحليل الحسابات بقوا جزء من نفس الخدمة
+const socialOrAds = requireSocial;
 
 const canPost = requireRole("OWNER", "ADMIN", "MANAGER");
 const canConnect = requireRole("OWNER", "ADMIN");
 
 // ---------- الإعلانات المدفوعة (تمويل بوست) ----------
-socialRouter.use("/ads", requireModule("ads"), adsRouter);
+socialRouter.use("/ads", requireSocial, adsRouter);
 
 // ---------- الحسابات ----------
 socialRouter.get("/config", socialOrAds, (_req, res) => {

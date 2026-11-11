@@ -1,5 +1,5 @@
 import { prisma } from "../../config/db";
-import { computeExpiryDate } from "../../utils/modules";
+import { computeExpiryDate, normalizeModules } from "../../utils/modules";
 import { createLinkedCompany } from "../tenants/company-creation.service";
 import { createNotification } from "../notifications/notifications.service";
 import { checkPlatformInvoice } from "./myfatoorah";
@@ -24,6 +24,7 @@ export async function activateSubscriptionOrder(orderId: string) {
     const claimed = await prisma.subscriptionOrder.updateMany({ where: { id: order.id, status: { in: ["PENDING", "PAID"] } }, data: { status: "ACTIVATED" } });
     if (claimed.count === 0) return { ok: true as const, alreadyActive: true };
     const newTenant = await createLinkedCompany(owner.id, order.extraCompanyName, order.extraCompanyIndustry);
+    order.selectedModules = normalizeModules(order.selectedModules);
     if (order.selectedModules.length > 0) {
       const expiry = computeExpiryDate(order.billingCycle).toISOString();
       const plan = order.selectedModules.includes("ai") ? await getPlatformConfig() : null;
@@ -41,6 +42,8 @@ export async function activateSubscriptionOrder(orderId: string) {
   }
 
   const tenant = order.tenant;
+  // طلبات قديمة فيها ads / audit = خدمة السوشيال دلوقتي
+  order.selectedModules = normalizeModules(order.selectedModules);
   const merged = Array.from(new Set([...tenant.subscribedModules, ...order.selectedModules]));
   // لو الموديول عنده اشتراك لسه شغال، بنمدّ من تاريخ انتهائه (مفيش ضياع مدة)
   const existingExpirations = (tenant.moduleExpirations as Record<string, string>) ?? {};

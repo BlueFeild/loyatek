@@ -23,7 +23,7 @@ export class PrismaAuditPlan implements AuditPlan {
     });
     if (!tenant) return 0;
     if (tenant.isPlatformOwner) return null;
-    if (getRealActiveModules(tenant, new Date(), await tenantGraceDays(tenant)).includes("audit")) return AUDIT_MONTHLY_LIMITS.subscribed;
+    if (getRealActiveModules(tenant, new Date(), await tenantGraceDays(tenant)).includes("social")) return AUDIT_MONTHLY_LIMITS.subscribed;
     return isTrialActive(tenant) ? AUDIT_MONTHLY_LIMITS.trial : 0;
   }
 }
