@@ -1,4 +1,7 @@
 import { Router } from "express";
+import { bookingNeedsWaLogin } from "../wa-login/wa-login.routes";
+import { WaLoginService } from "../wa-login/wa-login.service";
+import { container } from "../../core/container";
 import { keepKnownServices } from "./page-design";
 import { phoneMatch } from "../../utils/phone";
 import { z } from "zod";
@@ -40,7 +43,8 @@ publicBookingRouter.get("/:slug/settings", async (req, res) => {
   // أسعار الخدمات الموجودة بس (بالدولار)
   const servicePrices = pricesForServices(settings.servicePrices, settings.services);
   const serviceDetails = keepKnownServices((settings.serviceDetails ?? {}) as Record<string, unknown>, settings.services);
-  res.json({ ...publicSettings, servicePrices, serviceDetails, paymentMethods, currency, rate: rateFor(currency, rates) });
+  const whatsappLogin = { required: await bookingNeedsWaLogin(tenant) };
+  res.json({ ...publicSettings, servicePrices, serviceDetails, paymentMethods, currency, rate: rateFor(currency, rates), whatsappLogin });
 });
 
 publicBookingRouter.get("/:slug/resources", async (req, res) => {
@@ -76,6 +80,8 @@ const createBookingSchema = z.object({
   customerEmail: z.union([z.literal(""), z.string().trim().email().max(200)]).optional(),
   // الخدمات اللي اختارها (السعر بيتحسب على السيرفر)
   services: z.array(z.string().max(120)).max(30).optional(),
+  // توكن "الدخول بالواتساب" لو التاجر طالب تأكيد الرقم قبل الحجز
+  waLoginToken: z.string().max(2000).optional(),
 });
 
 publicBookingRouter.post("/:slug/bookings", async (req, res) => {
@@ -87,6 +93,14 @@ publicBookingRouter.post("/:slug/bookings", async (req, res) => {
 
   const parsed = createBookingSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+
+  // التاجر طالب تأكيد رقم الواتساب: لازم توكن سليم لنفس الرقم
+  if (await bookingNeedsWaLogin(tenant)) {
+    const verified = container.waLogin.readToken(tenant.id, parsed.data.waLoginToken);
+    if (!verified || !WaLoginService.samePhone(verified, parsed.data.customerPhone)) {
+      return res.status(401).json({ error: "Please confirm your WhatsApp number with the code first.", code: "WA_LOGIN_REQUIRED" });
+    }
+  }
 
   // العميل مايقدرش يحجز يوم فات (بتوقيت البيزنس)
   const day = parseCalendarDate(parsed.data.date);

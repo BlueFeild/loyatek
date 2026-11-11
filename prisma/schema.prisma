@@ -148,6 +148,9 @@ model Tenant {
   whatsappCampaigns     WhatsappCampaign[]
   notifications         Notification[]
 
+  waLoginSettings WaLoginSettings?
+  waLoginCodes    WaLoginCode[]
+
   @@map("tenants")
 }
 
@@ -2382,4 +2385,41 @@ model WebhookEndpoint {
 
   @@index([tenantId])
   @@map("webhook_endpoints")
+}
+
+// ------------------------------------------------------------
+// خدمة "الدخول بالواتساب": عملاء التاجر بيأكدوا رقمهم بكود بيوصلهم على
+// واتساب التاجر (قالب AUTHENTICATION معتمد من Meta). الكود متخزّن hash بس.
+model WaLoginSettings {
+  id               String   @id @default(uuid())
+  tenantId         String   @unique
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  enabled          Boolean  @default(false)
+  // صفحة الحجز تطلب تأكيد الرقم قبل الحجز
+  requireOnBooking Boolean  @default(false)
+  // مواقع التاجر نفسه المسموح لها تستخدم الخدمة (https://example.com)
+  siteOrigins      String[] @default([])
+  templateLang     String   @default("en")
+  updatedAt        DateTime @default(now()) @updatedAt
+
+  @@map("wa_login_settings")
+}
+
+model WaLoginCode {
+  id        String    @id @default(uuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone     String
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int       @default(0)
+  usedAt    DateTime?
+  ip        String?
+  // booking | site | test | api
+  source    String    @default("api")
+  createdAt DateTime  @default(now())
+
+  @@index([tenantId, phone, createdAt])
+  @@index([tenantId, ip, createdAt])
+  @@map("wa_login_codes")
 }

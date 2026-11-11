@@ -5,7 +5,11 @@ import { z } from "zod";
 // عشان مايبقاش فيه سكريبت جوه صورة).
 
 // لازم تفضل نفس القائمة اللي في الفرونت (frontend/src/data/bookingTemplates.ts)
-export const BOOKING_TEMPLATES = ["classic", "mint", "blush", "sky", "sand", "lavender", "noir"] as const;
+export const BOOKING_TEMPLATES = [
+  "classic", "mint", "blush", "sky", "sand", "lavender", "noir",
+  "ocean", "forest", "sunset", "mono", "rose", "citrus", "midnight",
+] as const;
+export const BOOKING_GRADIENTS = ["aurora", "peach", "lagoon", "dusk", "meadow", "candy", "gold", "night"] as const;
 export const BOOKING_FONTS = ["modern", "elegant", "rounded"] as const;
 
 const DATA_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
@@ -18,12 +22,35 @@ export const imageDataUrl = (maxChars: number, label: string) =>
     .regex(DATA_URL, `${label} must be a PNG, JPG or WebP image`);
 
 export const COVER_MAX_CHARS = 2_500_000; // ~1.8 MB
+function imageDataUrlLazy() {
+  return imageDataUrl(COVER_MAX_CHARS, "The background photo");
+}
 export const THUMB_MAX_CHARS = 700_000; // ~500 KB
+
+const HEX = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Pick a color like #14B8A6");
+
+// الخلفية: لون القالب، أو لون، أو تدرّج جاهز، أو صورة التاجر (مع تغميق خفيف عشان الكلام يبان)
+export const pageBackgroundSchema = z
+  .object({
+    type: z.enum(["template", "color", "gradient", "image"]),
+    color: HEX.optional(),
+    gradient: z.enum(BOOKING_GRADIENTS).optional(),
+    imageDataUrl: imageDataUrlLazy().optional(),
+    dim: z.number().int().min(0).max(80).optional(),
+  })
+  .strict();
 
 export const pageStyleSchema = z
   .object({
-    accent: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Pick a color like #14B8A6").nullable().optional(),
+    accent: HEX.nullable().optional(),
     font: z.enum(BOOKING_FONTS).optional(),
+    background: pageBackgroundSchema.optional(),
+    // شكل الخدمات: لستة / شبكة صور / كروت كبيرة
+    layout: z.enum(["list", "grid", "big"]).optional(),
+    // مكان العنوان فوق: شمال / نص
+    hero: z.enum(["left", "center"]).optional(),
+    // الحواف: ناعمة / مدورة جدًا / حادة
+    corners: z.enum(["soft", "round", "sharp"]).optional(),
   })
   .strict();
 

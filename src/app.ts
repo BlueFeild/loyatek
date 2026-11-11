@@ -23,6 +23,7 @@ import { agencyRouter } from "./modules/agency/agency.routes";
 import { catalogRouter } from "./modules/catalog/catalog.routes";
 import { publicCatalogRouter } from "./modules/catalog/public-catalog.routes";
 import { publicBookingRouter } from "./modules/booking/public-booking.routes";
+import { publicWaLoginRouter, waLoginRouter } from "./modules/wa-login/wa-login.routes";
 import { platformWhatsappWebhookRouter, publicWhatsappWebhookRouter } from "./modules/whatsapp/webhook";
 import { adminExchangeRatesRouter, publicExchangeRatesRouter } from "./modules/exchange-rates/exchange-rates.routes";
 import { publicWalletRouter } from "./modules/wallet/public-wallet.routes";
@@ -65,6 +66,10 @@ export const app = express();
 const defaultOrigins = ["http://localhost:5173", "http://localhost:4173"];
 const envOrigins = (process.env.ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean);
 const allowedOrigins = [...defaultOrigins, ...envOrigins];
+
+// الدخول بالواتساب بيتنادى من مواقع التجّار نفسهم - ليه CORS خاص (مواقع التاجر اللي كتبها بس)،
+// فلازم يتركّب قبل الـ CORS العام
+app.use("/api/public/wa-login", express.json({ limit: "16kb" }), publicWaLoginRouter);
 
 app.use(
   cors({
@@ -117,6 +122,7 @@ app.use("/api/agency", agencyRouter);
 app.use("/api/catalog", catalogRouter);
 app.use("/api/public/menu", publicCatalogRouter);
 app.use("/api/public/booking", publicBookingRouter);
+app.use("/api/wa-login", waLoginRouter);
 // Meta بتبعت رسايل الواتساب الجاية هنا (موقّعة بالـ App Secret بتاع التاجر)
 app.use("/api/public/whatsapp/webhook", publicWhatsappWebhookRouter);
 // webhook واحد للمنصة (التجار اللي ربطوا بـ Embedded Signup) - موقّع بـ META_APP_SECRET

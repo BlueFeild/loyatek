@@ -51,6 +51,9 @@ import { SocialReportService } from "../modules/social/social-report.service";
 import { PrismaIntegrationsRepository } from "../modules/integrations/integrations.repository";
 import { IntegrationsService } from "../modules/integrations/integrations.service";
 import { setEventSink } from "../modules/integrations/events";
+import { WaLoginService } from "../modules/wa-login/wa-login.service";
+import { PrismaWaLoginStore } from "../modules/wa-login/wa-login.repository";
+import { MetaOtpSender } from "../modules/wa-login/wa-login.gateway";
 
 // المكان الوحيد اللي بيقرر "مين بيكلم مين" (Composition Root).
 // الخدمات بتاخد اللي محتاجاه من برّه، فسهل نغيّر مزوّد أو نختبر بنسخة وهمية
@@ -143,4 +146,7 @@ export const container = {
   socialAdsService,
   socialInboxService: new SocialInboxService(inboxRepository, metaSocial, { generator: providers.copy, credits: creditService, generations, profiles }, undefined, commentAutomation, socialFlowService),
   commentAutomation,
+  // الدخول بالواتساب: التوكن بيتوقّع بمفتاح مشتق من مفتاح الدخول (مش نفس المفتاح)
+  waLogin: new WaLoginService(new PrismaWaLoginStore(prisma), new MetaOtpSender(), () => (process.env.JWT_ACCESS_SECRET || "dev-only") + ":wa-login"),
+  waLoginStore: new PrismaWaLoginStore(prisma),
 };

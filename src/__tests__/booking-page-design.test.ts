@@ -42,3 +42,23 @@ describe("booking page design", () => {
     expect(keepKnownServices({ A: 1, B: 2 }, ["B"])).toEqual({ B: 2 });
   });
 });
+
+describe("booking page design: background and layout", () => {
+  it("accepts the new templates, a background and layout choices", () => {
+    const r = design.safeParse({
+      pageTemplate: "sunset",
+      pageStyle: { background: { type: "image", imageDataUrl: PNG, dim: 30 }, layout: "grid", hero: "center", corners: "round" },
+    });
+    expect(r.success).toBe(true);
+    expect(design.safeParse({ pageStyle: { background: { type: "gradient", gradient: "aurora" } } }).success).toBe(true);
+    expect(design.safeParse({ pageStyle: { background: { type: "color", color: "#ffeedd" } } }).success).toBe(true);
+  });
+
+  it("refuses bad background values", () => {
+    expect(design.safeParse({ pageStyle: { background: { type: "video" } } }).success).toBe(false);
+    expect(design.safeParse({ pageStyle: { background: { type: "gradient", gradient: "neon" } } }).success).toBe(false);
+    expect(design.safeParse({ pageStyle: { background: { type: "image", imageDataUrl: "data:image/svg+xml;base64,PHN2Zz4=" } } }).success).toBe(false);
+    expect(design.safeParse({ pageStyle: { background: { type: "image", dim: 95 } } }).success).toBe(false);
+    expect(design.safeParse({ pageStyle: { layout: "carousel" } }).success).toBe(false);
+  });
+});
