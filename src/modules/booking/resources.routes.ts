@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { assertTenantOwns } from "../../utils/tenant-owned";
+import { updateResourceSchema } from "./page-design";
 
 export const resourcesRouter = Router();
 
@@ -35,6 +36,17 @@ resourcesRouter.post("/", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, 
     data: { tenantId: req.auth!.tenantId, ...parsed.data },
   });
   res.status(201).json(resource);
+});
+
+// تعديل أخصائي/مكان: الاسم واللقب والصورة (بتظهر في صفحة الحجز العامة)
+resourcesRouter.patch("/:id", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  const parsed = updateResourceSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid data" });
+  const tenantId = req.auth!.tenantId;
+  const resource = await prisma.resource.findFirst({ where: { id: req.params.id, tenantId } });
+  if (!resource) return res.status(404).json({ error: "Resource not found" });
+  const updated = await prisma.resource.update({ where: { id: resource.id }, data: parsed.data });
+  res.json(updated);
 });
 
 // حذف مورد - لو عليه حجوزات بيرفض الأول ويرجّع عددها (409)، عشان محدش يمسح

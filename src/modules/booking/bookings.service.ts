@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db";
 import { getOrCreateWhatsappSettings, recordWhatsappMessage, sendWhatsappTestMessage, sendWhatsappTextMessage } from "../whatsapp/whatsapp.service";
 import { sendBookingTemplate, type TemplateLang } from "../whatsapp/booking-templates";
@@ -46,11 +47,18 @@ interface UpdateSettingsInput {
   reminderEnabled?: boolean;
   reminderHoursBefore?: number;
   timezone?: string;
+  // شكل صفحة الحجز
+  pageTemplate?: string;
+  pageStyle?: { accent?: string | null; font?: string };
+  coverDataUrl?: string | null;
+  heroTitle?: string;
+  heroSubtitle?: string;
+  serviceDetails?: Record<string, unknown>;
 }
 
 export async function updateSettings(tenantId: string, data: UpdateSettingsInput) {
   await getOrCreateSettings(tenantId); // يضمن وجود صف قبل التحديث
-  return prisma.bookingSettings.update({ where: { tenantId }, data });
+  return prisma.bookingSettings.update({ where: { tenantId }, data: data as Prisma.BookingSettingsUpdateInput });
 }
 
 // الأماكن المتاحة فعليًا لمورد معيّن في يوم معيّن - بناءً على إعدادات

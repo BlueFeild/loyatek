@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { keepKnownServices } from "./page-design";
 import { phoneMatch } from "../../utils/phone";
 import { z } from "zod";
 import { prisma } from "../../config/db";
@@ -38,7 +39,8 @@ publicBookingRouter.get("/:slug/settings", async (req, res) => {
   const currency = isCurrencyCode(tenant.displayCurrency) ? tenant.displayCurrency : "USD";
   // أسعار الخدمات الموجودة بس (بالدولار)
   const servicePrices = pricesForServices(settings.servicePrices, settings.services);
-  res.json({ ...publicSettings, servicePrices, paymentMethods, currency, rate: rateFor(currency, rates) });
+  const serviceDetails = keepKnownServices((settings.serviceDetails ?? {}) as Record<string, unknown>, settings.services);
+  res.json({ ...publicSettings, servicePrices, serviceDetails, paymentMethods, currency, rate: rateFor(currency, rates) });
 });
 
 publicBookingRouter.get("/:slug/resources", async (req, res) => {

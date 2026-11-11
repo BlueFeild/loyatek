@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { keepKnownServices, pageDesignFields } from "./page-design";
 import { phoneMatch } from "../../utils/phone";
 import { z } from "zod";
 import { prisma } from "../../config/db";
@@ -57,13 +58,21 @@ const updateSettingsSchema = z.object({
   reminderEnabled: z.boolean().optional(),
   reminderHoursBefore: z.number().int().min(1).max(72).optional(),
   timezone: z.string().refine(isValidTimeZone, "Unknown time zone").optional(),
+  // شكل صفحة الحجز (القالب، اللون، الغلاف، صور الخدمات)
+  ...pageDesignFields,
 });
 
 bookingsRouter.patch("/settings", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   const parsed = updateSettingsSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const settings = await updateSettings(req.auth!.tenantId, parsed.data);
+  const data = { ...parsed.data };
+  // تفاصيل خدمة مش موجودة في القائمة مابتتحفظش
+  if (data.serviceDetails) {
+    const services = data.services ?? (await getOrCreateSettings(req.auth!.tenantId)).services;
+    data.serviceDetails = keepKnownServices(data.serviceDetails, services);
+  }
+  const settings = await updateSettings(req.auth!.tenantId, data);
   res.json(settings);
 });
 

@@ -824,6 +824,14 @@ model BookingSettings {
   reminderHoursBefore Int      @default(24)
   // المنطقة الزمنية للبيزنس - مواعيد الحجز (يوم + ساعة) بتتحسب بيها
   timezone            String   @default("Asia/Qatar")
+  // شكل صفحة الحجز العامة: القالب (classic = الشكل القديم) + {accent, font}
+  pageTemplate        String   @default("classic")
+  pageStyle           Json     @default("{}")
+  coverDataUrl        String?  @db.Text
+  heroTitle           String   @default("")
+  heroSubtitle        String   @default("")
+  // { "اسم الخدمة": { imageDataUrl, description, durationMin } }
+  serviceDetails      Json     @default("{}")
   updatedAt           DateTime @updatedAt
 
   @@map("booking_settings")
@@ -837,14 +845,17 @@ enum ResourceType {
 // مورد قابل للحجز - موظف (Specialist/Consultant/Technician...) أو
 // موقع (Chair/Room/Bay...) حسب نوع الصناعة
 model Resource {
-  id        String       @id @default(uuid())
-  tenantId  String
-  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  branchId  String
-  branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  name      String
-  type      ResourceType
-  createdAt DateTime     @default(now())
+  id           String       @id @default(uuid())
+  tenantId     String
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId     String
+  branch       Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name         String
+  type         ResourceType
+  // صورة الأخصائي/المكان ولقبه (زي "Orthodontist") - بتظهر في صفحة الحجز
+  photoDataUrl String?      @db.Text
+  title        String?
+  createdAt    DateTime     @default(now())
 
   bookings Booking[]
 
