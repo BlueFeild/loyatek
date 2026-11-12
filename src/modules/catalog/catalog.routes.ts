@@ -6,6 +6,7 @@ import { getOrCreateCatalogSettings, updateCatalogSettings, createOrder, confirm
 import { MENU_CURRENCY_CODES } from "../../utils/money";
 import { addDemoMenu, removeDemoMenu } from "./demo-menu";
 import { container } from "../../core/container";
+import { BOOKING_FONTS, BOOKING_TEMPLATES, COVER_MAX_CHARS, imageDataUrl } from "../booking/page-design";
 
 export const catalogRouter = Router();
 
@@ -36,6 +37,10 @@ const updateSettingsSchema = z.object({
   waTemplateLang: z.enum(["en", "ar"]).optional(),
   // عملة المنيو (QAR / EGP / AED / USD / EUR ...)
   currency: z.enum(MENU_CURRENCY_CODES).optional(),
+  // شكل المنيو العام (نفس قوالب وخطوط صفحة الحجز)
+  pageTemplate: z.enum(BOOKING_TEMPLATES).optional(),
+  pageFont: z.enum(BOOKING_FONTS).optional(),
+  coverDataUrl: imageDataUrl(COVER_MAX_CHARS, "The cover photo").nullable().optional(),
 });
 
 catalogRouter.patch("/settings", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {

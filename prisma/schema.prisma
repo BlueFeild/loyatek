@@ -1166,6 +1166,10 @@ model CatalogSettings {
   currency           String   @default("USD")
   // لغة قوالب واتساب المعتمدة للأوردرات (en | ar)
   waTemplateLang     String   @default("en")
+  // شكل المنيو العام - نفس قوالب صفحة الحجز (page-design.ts BOOKING_TEMPLATES)
+  pageTemplate       String   @default("classic")
+  pageFont           String   @default("modern") // modern | elegant | rounded
+  coverDataUrl       String?  @db.Text
   updatedAt          DateTime @updatedAt
 
   @@map("catalog_settings")

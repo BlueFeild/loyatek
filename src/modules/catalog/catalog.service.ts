@@ -34,6 +34,9 @@ interface UpdateCatalogSettingsInput {
   waCustomerTemplate?: string;
   waTemplateLang?: string;
   currency?: string;
+  pageTemplate?: string;
+  pageFont?: string;
+  coverDataUrl?: string | null;
 }
 
 export async function updateCatalogSettings(tenantId: string, data: UpdateCatalogSettingsInput) {
