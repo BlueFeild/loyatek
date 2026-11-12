@@ -1,6 +1,8 @@
 // أخطاء "متوقعة" من منطق الشغل (مش bugs): كل واحد معاه كود HTTP ورسالة تظهر للمستخدم.
 // الـ error handler العام في app.ts بيحوّلها لرد JSON بدل 500
 export class AppError extends Error {
+  // بيانات إضافية بتترجع مع الخطأ (زي الكراسي اللي اتحجزت)
+  details?: Record<string, unknown>;
   constructor(
     public readonly status: number,
     public readonly code: string,

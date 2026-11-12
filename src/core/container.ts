@@ -1,4 +1,7 @@
 import { prisma } from "../config/db";
+import { SeatRepository } from "../modules/seats/seat.repository";
+import { SeatBookingService } from "../modules/seats/seat-booking.service";
+import { BookingTimezoneReader, SeatTicketNotifier, TenantSeatPayments } from "../modules/seats/seat-adapters";
 import { CreditRepository } from "../modules/credits/credit.repository";
 import { CreditService } from "../modules/credits/credit.service";
 import { TrialCreditsService } from "../modules/credits/trial-credits";
@@ -149,4 +152,6 @@ export const container = {
   // الدخول بالواتساب: التوكن بيتوقّع بمفتاح مشتق من مفتاح الدخول (مش نفس المفتاح)
   waLogin: new WaLoginService(new PrismaWaLoginStore(prisma), new MetaOtpSender(), () => (process.env.JWT_ACCESS_SECRET || "dev-only") + ":wa-login"),
   waLoginStore: new PrismaWaLoginStore(prisma),
+  // حجز الكراسي (مسرح / VIP) جوه خدمة الحجز
+  seats: new SeatBookingService(new SeatRepository(prisma), new TenantSeatPayments(), new SeatTicketNotifier(new BookingTimezoneReader()), new BookingTimezoneReader()),
 };

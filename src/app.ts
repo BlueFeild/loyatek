@@ -23,6 +23,7 @@ import { agencyRouter } from "./modules/agency/agency.routes";
 import { catalogRouter } from "./modules/catalog/catalog.routes";
 import { publicCatalogRouter } from "./modules/catalog/public-catalog.routes";
 import { publicBookingRouter } from "./modules/booking/public-booking.routes";
+import { publicSeatsRouter, seatsRouter } from "./modules/seats/seat.routes";
 import { publicWaLoginRouter, waLoginRouter } from "./modules/wa-login/wa-login.routes";
 import { platformWhatsappWebhookRouter, publicWhatsappWebhookRouter } from "./modules/whatsapp/webhook";
 import { adminExchangeRatesRouter, publicExchangeRatesRouter } from "./modules/exchange-rates/exchange-rates.routes";
@@ -116,12 +117,14 @@ app.use("/api/invoices", invoicesRouter);
 app.use("/api/bi", biRouter);
 app.use("/api/resources", resourcesRouter);
 app.use("/api/bookings", bookingsRouter);
+app.use("/api/seats", seatsRouter);
 app.use("/api/wallet", walletRouter);
 app.use("/api/super-admin", superAdminRouter);
 app.use("/api/agency", agencyRouter);
 app.use("/api/catalog", catalogRouter);
 app.use("/api/public/menu", publicCatalogRouter);
 app.use("/api/public/booking", publicBookingRouter);
+app.use("/api/public/seats", publicSeatsRouter);
 app.use("/api/wa-login", waLoginRouter);
 // Meta بتبعت رسايل الواتساب الجاية هنا (موقّعة بالـ App Secret بتاع التاجر)
 app.use("/api/public/whatsapp/webhook", publicWhatsappWebhookRouter);
@@ -197,7 +200,7 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
     return res.status(403).json({ error: "Origin not allowed" });
   }
   // أخطاء متوقعة من منطق الشغل (core/errors.ts) - رسالتها معمولة للمستخدم
-  if (err instanceof AppError) return res.status(err.status).json({ error: err.message, code: err.code });
+  if (err instanceof AppError) return res.status(err.status).json({ error: err.message, code: err.code, ...(err.details ?? {}) });
   console.error(`[error] ${req.method} ${req.originalUrl}:`, err?.stack ?? err);
   res.status(500).json({ error: "Internal server error" });
 });

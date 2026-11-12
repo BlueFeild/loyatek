@@ -37,3 +37,23 @@ export function zonedDateHourToUtc(dateKey: string, hour: number, timeZone: stri
   ts = guess - offsetMinutes(timeZone, new Date(ts)) * 60000;
   return new Date(ts);
 }
+
+// "2026-11-20" + "19:30" + "Asia/Qatar" -> اللحظة الحقيقية (UTC). null لو التاريخ/الوقت غلط
+export function zonedDateTimeToUtc(dateKey: string, time: string, timeZone: string): Date | null {
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey.trim());
+  const t = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+  if (!d || !t) return null;
+  const [hh, mm] = [Number(t[1]), Number(t[2])];
+  if (hh > 23 || mm > 59) return null;
+  const base = zonedDateHourToUtc(dateKey, hh, isValidTimeZone(timeZone) ? timeZone : "UTC");
+  const out = new Date(base.getTime() + mm * 60000);
+  return Number.isNaN(out.getTime()) ? null : out;
+}
+
+// اللحظة -> {date: "YYYY-MM-DD", time: "HH:mm"} بتوقيت البيزنس (للفورم والرسايل)
+export function utcToZonedParts(at: Date, timeZone: string): { date: string; time: string } {
+  const tz = isValidTimeZone(timeZone) ? timeZone : "UTC";
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(at);
+  const get = (k: string) => parts.find((p) => p.type === k)?.value ?? "00";
+  return { date: `${get("year")}-${get("month")}-${get("day")}`, time: `${get("hour")}:${get("minute")}` };
+}

@@ -95,6 +95,10 @@ model Tenant {
   bookingSettings       BookingSettings?
   resources             Resource[]
   bookings              Booking[]
+  seatVenues            SeatVenue[]
+  seatEvents            SeatEvent[]
+  seatOrders            SeatOrder[]
+  seatReservations      SeatReservation[]
   walletSettings        WalletSettings?
   walletCustomers       WalletCustomer[]
   walletEvents          WalletEvent[]
@@ -918,6 +922,104 @@ model Booking {
   @@unique([resourceId, date, hour])
   @@index([tenantId, branchId])
   @@map("bookings")
+}
+
+// ------------------------------------------------------------
+// حجز الكراسي (مسرح / سينما / حفلات / VIP) - جزء من خدمة الحجز
+// القاعة = صفوف وكراسي وفئات أسعار. العرض بياخد نسخة من شكل القاعة وقت
+// إنشائه، فتعديل القاعة بعد كده مايبوّظش التذاكر اللي اتباعت
+// ------------------------------------------------------------
+model SeatVenue {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  // {stage, rows:[{label,count,tier,aisles}], tiers:[{id,name,color,price(USD)}], blocked:[seatId]}
+  layout    Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events SeatEvent[]
+
+  @@index([tenantId])
+  @@map("seat_venues")
+}
+
+model SeatEvent {
+  id           String     @id @default(uuid())
+  tenantId     String
+  tenant       Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  venueId      String?
+  venue        SeatVenue? @relation(fields: [venueId], references: [id], onDelete: SetNull)
+  title        String
+  description  String?    @db.Text
+  imageDataUrl String?    @db.Text
+  startsAt     DateTime
+  // نسخة من شكل القاعة + الأسعار وقت إنشاء العرض
+  layout       Json
+  // DRAFT | ON_SALE | CLOSED | CANCELLED
+  status       String     @default("DRAFT")
+  maxPerOrder  Int        @default(10)
+  // الكراسي بتتحجز للعميل كام دقيقة لحد ما يكمل بياناته
+  holdMinutes  Int        @default(10)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  orders       SeatOrder[]
+  reservations SeatReservation[]
+
+  @@index([tenantId, startsAt])
+  @@map("seat_events")
+}
+
+model SeatOrder {
+  id                   String            @id @default(uuid())
+  tenantId             String
+  tenant               Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  eventId              String
+  event                SeatEvent         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  // HELD (محجوز مؤقتًا) | AWAITING_PAYMENT | CONFIRMED | CANCELLED | EXPIRED
+  status               String            @default("HELD")
+  holdTokenHash        String?
+  holdExpiresAt        DateTime?
+  seatIds              String[]          @default([])
+  // بالدولار (محسوب على السيرفر من أسعار العرض)
+  amount               Decimal           @default(0) @db.Decimal(18, 6)
+  customerName         String?
+  customerPhone        String?
+  customerEmail        String?
+  paymentStatus        PaymentGateStatus @default(NOT_REQUIRED)
+  paymentMethodType    String?
+  paymentMethodLabel   String?
+  myFatoorahInvoiceId  String?
+  myFatoorahPaymentId  String?
+  myFatoorahPaymentUrl String?           @db.Text
+  // كود التذكرة (في الـ QR) - مش متوقَّع
+  ticketCode           String            @unique
+  checkedInAt          DateTime?
+  createdAt            DateTime          @default(now())
+
+  reservations SeatReservation[]
+
+  @@index([tenantId, eventId])
+  @@map("seat_orders")
+}
+
+// كرسي واحد محجوز - الـ unique بيمنع إن نفس الكرسي يتباع مرتين على
+// مستوى قاعدة البيانات نفسها
+model SeatReservation {
+  id       String    @id @default(uuid())
+  tenantId String
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  eventId  String
+  event    SeatEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  orderId  String
+  order    SeatOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  seatId   String
+
+  @@unique([eventId, seatId])
+  @@index([orderId])
+  @@map("seat_reservations")
 }
 
 // ------------------------------------------------------------
