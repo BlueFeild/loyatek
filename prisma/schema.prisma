@@ -99,6 +99,9 @@ model Tenant {
   seatEvents            SeatEvent[]
   seatOrders            SeatOrder[]
   seatReservations      SeatReservation[]
+  seatPromoCodes        SeatPromoCode[]
+  seatWaitlist          SeatWaitlistEntry[]
+  seatSettings          SeatSettings?
   walletSettings        WalletSettings?
   walletCustomers       WalletCustomer[]
   walletEvents          WalletEvent[]
@@ -946,29 +949,44 @@ model SeatVenue {
 }
 
 model SeatEvent {
-  id           String     @id @default(uuid())
-  tenantId     String
-  tenant       Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  venueId      String?
-  venue        SeatVenue? @relation(fields: [venueId], references: [id], onDelete: SetNull)
-  title        String
-  description  String?    @db.Text
-  imageDataUrl String?    @db.Text
-  startsAt     DateTime
+  id               String     @id @default(uuid())
+  tenantId         String
+  tenant           Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  venueId          String?
+  venue            SeatVenue? @relation(fields: [venueId], references: [id], onDelete: SetNull)
+  title            String
+  description      String?    @db.Text
+  imageDataUrl     String?    @db.Text
+  startsAt         DateTime
   // نسخة من شكل القاعة + الأسعار وقت إنشاء العرض
-  layout       Json
+  layout           Json
   // DRAFT | ON_SALE | CLOSED | CANCELLED
-  status       String     @default("DRAFT")
-  maxPerOrder  Int        @default(10)
+  status           String     @default("DRAFT")
+  maxPerOrder      Int        @default(10)
   // الكراسي بتتحجز للعميل كام دقيقة لحد ما يكمل بياناته
-  holdMinutes  Int        @default(10)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  holdMinutes      Int        @default(10)
+  // نفس العرض بأكتر من ميعاد: كل ميعاد صف لوحده (كراسيه لوحدها) وبيتربطوا بنفس seriesId
+  seriesId         String?
+  // سعر مبكر: خصم % على كل الفئات لحد التاريخ ده
+  earlyBirdPct     Int?
+  earlyBirdEndsAt  DateTime?
+  // أسئلة للعميل وقت الحجز [{id,label,required,options[]}] + تنبيه (سن/لبس) لازم يوافق عليه
+  questions        Json       @default("[]")
+  notice           String?    @db.Text
+  noticeRequired   Boolean    @default(false)
+  // ماتسيبش كرسي فاضي لوحده بين كراسي محجوزة (الأونلاين بس)
+  avoidSingleSeats Boolean    @default(true)
+  // تذكير واتساب/إيميل قبل العرض بكام ساعة (null = مفيش)
+  reminderHours    Int?       @default(24)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
 
   orders       SeatOrder[]
   reservations SeatReservation[]
+  waitlist     SeatWaitlistEntry[]
 
   @@index([tenantId, startsAt])
+  @@index([seriesId])
   @@map("seat_events")
 }
 
@@ -997,6 +1015,17 @@ model SeatOrder {
   // كود التذكرة (في الـ QR) - مش متوقَّع
   ticketCode           String            @unique
   checkedInAt          DateTime?
+  // قبل الخصم (بالدولار) + الخصم (سعر مبكر/كود) - amount = subtotal - discount
+  subtotal             Decimal           @default(0) @db.Decimal(18, 6)
+  discount             Decimal           @default(0) @db.Decimal(18, 6)
+  promoCodeId          String?
+  promoCode            String?
+  // ONLINE (صفحة العميل) | BOX_OFFICE (التاجر باع على الباب) | COMP (تذكرة مجانية VIP/ضيف)
+  channel              String            @default("ONLINE")
+  note                 String?           @db.Text
+  answers              Json?
+  noticeAcceptedAt     DateTime?
+  reminderSentAt       DateTime?
   createdAt            DateTime          @default(now())
 
   reservations SeatReservation[]
@@ -1020,6 +1049,67 @@ model SeatReservation {
   @@unique([eventId, seatId])
   @@index([orderId])
   @@map("seat_reservations")
+}
+
+// كود خصم للتذاكر (نسبة أو مبلغ بالدولار) - لعرض معين أو لكل العروض، ولفئات معينة أو كلها
+model SeatPromoCode {
+  id        String    @id @default(uuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code      String
+  // PERCENT | AMOUNT
+  kind      String    @default("PERCENT")
+  value     Decimal   @db.Decimal(18, 6)
+  maxUses   Int?
+  usedCount Int       @default(0)
+  startsAt  DateTime?
+  endsAt    DateTime?
+  eventId   String?
+  tierIds   String[]  @default([])
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  @@unique([tenantId, code])
+  @@map("seat_promo_codes")
+}
+
+// قائمة انتظار لعرض كامل: لما كراسي تفضى بنبعتلهم رابط على الواتساب
+model SeatWaitlistEntry {
+  id         String    @id @default(uuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  eventId    String
+  event      SeatEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name       String
+  phone      String
+  email      String?
+  seats      Int       @default(1)
+  // WAITING | NOTIFIED | REMOVED
+  status     String    @default("WAITING")
+  notifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@unique([eventId, phone])
+  @@index([tenantId, eventId])
+  @@map("seat_waitlist")
+}
+
+// إعدادات صفحة التذاكر (منفصلة عن الحجز من 2026-11-12)
+model SeatSettings {
+  id           String   @id @default(uuid())
+  tenantId     String   @unique
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandName    String?
+  logoDataUrl  String?  @db.Text
+  accentColor  String?
+  timezone     String?
+  // شكل صفحة التذاكر العامة: نفس قوالب الحجز الفاتحة (bookingTemplates) + ألوان/خط/خلفية التاجر
+  pageTemplate String   @default("bluefield")
+  pageStyle    Json?
+  coverDataUrl String?  @db.Text
+  updatedAt    DateTime @updatedAt
+
+  @@map("seat_settings")
 }
 
 // ------------------------------------------------------------

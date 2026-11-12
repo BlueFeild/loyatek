@@ -5,6 +5,7 @@ export const ACTIVE_ORDER = ["HELD", "AWAITING_PAYMENT", "CONFIRMED"] as const;
 
 export type SeatOrderRow = Prisma.SeatOrderGetPayload<{}>;
 export type SeatEventRow = Prisma.SeatEventGetPayload<{}>;
+export type SeatPromoRow = Prisma.SeatPromoCodeGetPayload<{}>;
 
 export class SeatRepository {
   constructor(private readonly db: PrismaClient) {}
@@ -36,7 +37,17 @@ export class SeatRepository {
     return this.db.seatEvent.findFirst({ where: { id, tenantId }, include: { venue: { select: { name: true } } } });
   }
   publicEvents(tenantId: string, now: Date) {
-    return this.db.seatEvent.findMany({ where: { tenantId, status: "ON_SALE", startsAt: { gt: now } }, orderBy: { startsAt: "asc" }, take: 50, include: { venue: { select: { name: true } } } });
+    return this.db.seatEvent.findMany({ where: { tenantId, status: "ON_SALE", startsAt: { gt: now } }, orderBy: { startsAt: "asc" }, take: 100, include: { venue: { select: { name: true } } } });
+  }
+  // مواعيد تانية لنفس العرض
+  seriesEvents(tenantId: string, seriesId: string) {
+    return this.db.seatEvent.findMany({ where: { tenantId, seriesId }, orderBy: { startsAt: "asc" }, select: { id: true, startsAt: true, status: true, layout: true } });
+  }
+  // كام كرسي محجوز في كل عرض (للمواعيد التانية وقائمة الانتظار)
+  async takenCounts(eventIds: string[]) {
+    if (!eventIds.length) return new Map<string, number>();
+    const rows = await this.db.seatReservation.groupBy({ by: ["eventId"], where: { eventId: { in: eventIds } }, _count: { _all: true } });
+    return new Map(rows.map((r) => [r.eventId, r._count._all]));
   }
   createEvent(data: Prisma.SeatEventUncheckedCreateInput) {
     return this.db.seatEvent.create({ data });
@@ -94,6 +105,8 @@ export class SeatRepository {
     eventId: string;
     seatIds: string[];
     amount: number;
+    subtotal: number;
+    discount: number;
     holdTokenHash: string;
     holdExpiresAt: Date;
     ticketCode: string;
@@ -115,6 +128,8 @@ export class SeatRepository {
           status: "HELD",
           seatIds: input.seatIds,
           amount: input.amount,
+          subtotal: input.subtotal,
+          discount: input.discount,
           holdTokenHash: input.holdTokenHash,
           holdExpiresAt: input.holdExpiresAt,
           ticketCode: input.ticketCode,
@@ -135,7 +150,7 @@ export class SeatRepository {
     return this.db.seatOrder.findFirst({ where: { tenantId, myFatoorahPaymentId: paymentId, id: { not: notId } } });
   }
   listOrders(tenantId: string, eventId: string) {
-    return this.db.seatOrder.findMany({ where: { tenantId, eventId, status: { in: ["AWAITING_PAYMENT", "CONFIRMED", "CANCELLED"] } }, orderBy: { createdAt: "desc" }, take: 1000 });
+    return this.db.seatOrder.findMany({ where: { tenantId, eventId, status: { in: ["AWAITING_PAYMENT", "CONFIRMED", "CANCELLED"] } }, orderBy: { createdAt: "desc" }, take: 2000 });
   }
 
   // تغيير حالة طلب بشرط حالته الحالية (يمنع إن عمليتين يحصلوا على نفس الطلب)
@@ -145,14 +160,102 @@ export class SeatRepository {
     return this.db.seatOrder.findUnique({ where: { id } });
   }
 
-  // إلغاء طلب = الكراسي ترجع متاحة
+  // إلغاء طلب = الكراسي ترجع متاحة (وكود الخصم يرجع استخدام واحد)
   async cancelOrder(id: string, fromStatuses: string[]) {
     return this.db.$transaction(async (tx) => {
       const r = await tx.seatOrder.updateMany({ where: { id, status: { in: fromStatuses } }, data: { status: "CANCELLED", holdExpiresAt: null } });
       if (!r.count) return false;
       await tx.seatReservation.deleteMany({ where: { orderId: id } });
+      const o = await tx.seatOrder.findUnique({ where: { id }, select: { promoCodeId: true } });
+      if (o?.promoCodeId) await tx.seatPromoCode.updateMany({ where: { id: o.promoCodeId, usedCount: { gt: 0 } }, data: { usedCount: { decrement: 1 } } });
       return true;
     });
+  }
+
+  // طلب من التاجر مباشرة (بيع على الباب / تذكرة مجانية): مؤكد على طول.
+  // الـ unique على الكرسي بيرفض لو حد حجزه في نفس اللحظة (P2002)
+  async createDirect(data: Omit<Prisma.SeatOrderUncheckedCreateInput, "status"> & { seatIds: string[] }) {
+    return this.db.$transaction(async (tx) => {
+      const order = await tx.seatOrder.create({ data: { ...data, status: "CONFIRMED" } });
+      await tx.seatReservation.createMany({ data: data.seatIds.map((seatId) => ({ tenantId: data.tenantId, eventId: data.eventId, orderId: order.id, seatId })) });
+      return order;
+    });
+  }
+
+  // ---------- أكواد الخصم ----------
+  listPromos(tenantId: string) {
+    return this.db.seatPromoCode.findMany({ where: { tenantId }, orderBy: { createdAt: "desc" } });
+  }
+  findPromoByCode(tenantId: string, code: string) {
+    return this.db.seatPromoCode.findUnique({ where: { tenantId_code: { tenantId, code } } });
+  }
+  createPromo(data: Prisma.SeatPromoCodeUncheckedCreateInput) {
+    return this.db.seatPromoCode.create({ data });
+  }
+  async updatePromo(tenantId: string, id: string, data: Prisma.SeatPromoCodeUncheckedUpdateManyInput) {
+    const r = await this.db.seatPromoCode.updateMany({ where: { id, tenantId }, data });
+    return r.count ? this.db.seatPromoCode.findFirst({ where: { id, tenantId } }) : null;
+  }
+  async deletePromo(tenantId: string, id: string) {
+    return (await this.db.seatPromoCode.deleteMany({ where: { id, tenantId } })).count > 0;
+  }
+  // استخدام واحد من الكود (بشرط إنه لسه فيه) - ذرّي
+  async claimPromo(id: string) {
+    const p = await this.db.seatPromoCode.findUnique({ where: { id }, select: { maxUses: true } });
+    if (!p) return false;
+    const where: Prisma.SeatPromoCodeWhereInput = { id, active: true, ...(p.maxUses != null ? { usedCount: { lt: p.maxUses } } : {}) };
+    return (await this.db.seatPromoCode.updateMany({ where, data: { usedCount: { increment: 1 } } })).count > 0;
+  }
+  async unclaimPromo(id: string) {
+    await this.db.seatPromoCode.updateMany({ where: { id, usedCount: { gt: 0 } }, data: { usedCount: { decrement: 1 } } });
+  }
+
+  // ---------- قائمة الانتظار ----------
+  listWaitlist(tenantId: string, eventId: string) {
+    return this.db.seatWaitlistEntry.findMany({ where: { tenantId, eventId }, orderBy: { createdAt: "asc" } });
+  }
+  upsertWaitlist(data: { tenantId: string; eventId: string; name: string; phone: string; email: string | null; seats: number }) {
+    return this.db.seatWaitlistEntry.upsert({
+      where: { eventId_phone: { eventId: data.eventId, phone: data.phone } },
+      create: data,
+      update: { name: data.name, email: data.email, seats: data.seats, status: "WAITING", notifiedAt: null },
+    });
+  }
+  countWaitlist(eventId: string) {
+    return this.db.seatWaitlistEntry.count({ where: { eventId } });
+  }
+  async markWaitlistNotified(id: string, at: Date) {
+    return (await this.db.seatWaitlistEntry.updateMany({ where: { id, status: "WAITING" }, data: { status: "NOTIFIED", notifiedAt: at } })).count > 0;
+  }
+  async setWaitlistStatus(tenantId: string, id: string, status: string) {
+    return (await this.db.seatWaitlistEntry.updateMany({ where: { id, tenantId }, data: { status } })).count > 0;
+  }
+
+  // ---------- التذكير ----------
+  // طلبات مؤكدة لعروض جاية خلال 3 أيام وماخدتش تذكير
+  reminderCandidates(now: Date) {
+    return this.db.seatOrder.findMany({
+      where: {
+        status: "CONFIRMED",
+        reminderSentAt: null,
+        customerPhone: { not: null },
+        event: { status: { not: "CANCELLED" }, reminderHours: { not: null }, startsAt: { gt: now, lte: new Date(now.getTime() + 73 * 3600_000) } },
+        tenant: { OR: [{ accountStatus: "ACTIVE" }, { isPlatformOwner: true }] },
+      },
+      include: { event: true },
+      take: 500,
+    });
+  }
+  async claimReminder(id: string, at: Date) {
+    return (await this.db.seatOrder.updateMany({ where: { id, reminderSentAt: null }, data: { reminderSentAt: at } })).count > 0;
+  }
+
+  // ---------- الإعدادات ----------
+  settings(tenantId: string) {
+    return this.db.seatSettings.findUnique({ where: { tenantId } });
+  }
+  saveSettings(tenantId: string, data: Omit<Prisma.SeatSettingsUncheckedCreateInput, "tenantId">) {
+    return this.db.seatSettings.upsert({ where: { tenantId }, create: { tenantId, ...data }, update: data });
   }
 
   // تسجيل الدخول على الباب - مرة واحدة بس

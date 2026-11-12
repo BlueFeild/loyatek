@@ -1,7 +1,8 @@
 import { prisma } from "../config/db";
 import { SeatRepository } from "../modules/seats/seat.repository";
 import { SeatBookingService } from "../modules/seats/seat-booking.service";
-import { BookingTimezoneReader, SeatTicketNotifier, TenantSeatPayments } from "../modules/seats/seat-adapters";
+import { SeatSettingsStore, SeatTicketNotifier, TenantSeatPayments } from "../modules/seats/seat-adapters";
+import { TicketsAdminService } from "../modules/seats/tickets-admin.service";
 import { CreditRepository } from "../modules/credits/credit.repository";
 import { CreditService } from "../modules/credits/credit.service";
 import { TrialCreditsService } from "../modules/credits/trial-credits";
@@ -124,6 +125,10 @@ const flowRepository = new PrismaFlowRepository(prisma);
 const socialFlowService = new SocialFlowService(new PrismaSocialFlowStore(prisma, flowRepository), metaSocial, inboxRepository);
 const commentAutomation = new CommentAutomationService(new PrismaCommentRuleRepository(prisma), metaSocial);
 
+const seatRepository = new SeatRepository(prisma);
+const seatSettings = new SeatSettingsStore();
+const seats = new SeatBookingService(seatRepository, new TenantSeatPayments(), new SeatTicketNotifier(seatSettings), seatSettings);
+
 export const container = {
   creditService,
   // لإضافة نقاط جوه transaction تانية (تفعيل اشتراك)
@@ -152,6 +157,8 @@ export const container = {
   // الدخول بالواتساب: التوكن بيتوقّع بمفتاح مشتق من مفتاح الدخول (مش نفس المفتاح)
   waLogin: new WaLoginService(new PrismaWaLoginStore(prisma), new MetaOtpSender(), () => (process.env.JWT_ACCESS_SECRET || "dev-only") + ":wa-login"),
   waLoginStore: new PrismaWaLoginStore(prisma),
-  // حجز الكراسي (مسرح / VIP) جوه خدمة الحجز
-  seats: new SeatBookingService(new SeatRepository(prisma), new TenantSeatPayments(), new SeatTicketNotifier(new BookingTimezoneReader()), new BookingTimezoneReader()),
+  // التذاكر والمقاعد (مسرح / VIP) - خدمة tickets
+  seats,
+  seatSettings,
+  ticketsAdmin: new TicketsAdminService(seatRepository, seats, seatSettings, new TenantSeatPayments()),
 };

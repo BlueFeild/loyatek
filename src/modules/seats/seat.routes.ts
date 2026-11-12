@@ -1,6 +1,7 @@
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 import { container } from "../../core/container";
 import { prisma } from "../../config/db";
 import { isModuleLive } from "../../utils/platform-config";
@@ -10,12 +11,15 @@ import { getRates, isCurrencyCode, rateFor } from "../../utils/money";
 import { zodMessage } from "../../utils/validation";
 import { checkoutInput, eventInput, eventPatch, venueInput } from "./seat-booking.service";
 import { sampleLayout } from "./seat-layout";
+import { promoInput } from "./seat-pricing";
+import { datesInput, sellInput, settingsInput } from "./tickets-admin.service";
 import { bookingNeedsWaLogin } from "../wa-login/wa-login.routes";
 import { WaLoginService } from "../wa-login/wa-login.service";
 import { ValidationError } from "../../core/errors";
 
 // الراوترات بس: تتأكد من البيانات (zod) وتنادي الخدمة - المنطق في seat-booking.service.ts
 const svc = () => container.seats;
+const admin = () => container.ticketsAdmin;
 
 function body<T extends z.ZodTypeAny>(schema: T, req: Request): z.infer<T> {
   const parsed = schema.safeParse(req.body);
@@ -25,7 +29,7 @@ function body<T extends z.ZodTypeAny>(schema: T, req: Request): z.infer<T> {
 
 // ================= التاجر =================
 export const seatsRouter = Router();
-seatsRouter.use(requireAuth);
+seatsRouter.use(requireAuth, requireModule("tickets"));
 const editors = requireRole("OWNER", "ADMIN", "MANAGER");
 const door = requireRole("OWNER", "ADMIN", "MANAGER", "STAFF");
 
@@ -47,6 +51,45 @@ seatsRouter.delete("/events/:id", editors, async (req, res) => {
   res.status(204).end();
 });
 
+// ---------- إعدادات الصفحة ----------
+seatsRouter.get("/settings", async (req, res) => res.json(await admin().getSettings(req.auth!.tenantId)));
+seatsRouter.patch("/settings", editors, async (req, res) => res.json(await admin().saveSettings(req.auth!.tenantId, body(settingsInput, req))));
+
+// ---------- أكواد الخصم ----------
+seatsRouter.get("/promos", async (req, res) => res.json(await admin().listPromos(req.auth!.tenantId)));
+seatsRouter.post("/promos", editors, async (req, res) => res.status(201).json(await admin().createPromo(req.auth!.tenantId, body(promoInput, req))));
+seatsRouter.patch("/promos/:id", editors, async (req, res) => {
+  // نفس قواعد الإنشاء بس كل حاجة اختيارية
+  const partial = z.object({ active: z.boolean().optional(), maxUses: z.number().int().min(1).max(100_000).nullable().optional(), endsAt: z.coerce.date().nullable().optional(), startsAt: z.coerce.date().nullable().optional() });
+  res.json(await admin().updatePromo(req.auth!.tenantId, req.params.id, body(partial, req)));
+});
+seatsRouter.delete("/promos/:id", editors, async (req, res) => {
+  await admin().deletePromo(req.auth!.tenantId, req.params.id);
+  res.status(204).end();
+});
+
+// ---------- بيع على الباب / تذاكر مجانية / مواعيد / تقرير / انتظار ----------
+seatsRouter.post("/events/:id/sell", door, async (req, res) => {
+  const input = body(sellInput, req);
+  // التذكرة المجانية للمدير بس
+  if (input.kind === "COMP" && !["OWNER", "ADMIN", "MANAGER"].includes(req.auth!.role)) return res.status(403).json({ error: "Only managers can give free tickets." });
+  res.status(201).json(await admin().sell(req.auth!.tenantId, req.params.id, input));
+});
+seatsRouter.post("/events/:id/dates", editors, async (req, res) => res.status(201).json(await admin().addDates(req.auth!.tenantId, req.params.id, body(datesInput, req))));
+seatsRouter.get("/events/:id/report", async (req, res) => res.json(await admin().report(req.auth!.tenantId, req.params.id)));
+seatsRouter.get("/events/:id/orders.csv", async (req, res) => {
+  const csv = await admin().ordersCsv(req.auth!.tenantId, req.params.id);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", 'attachment; filename="tickets.csv"');
+  res.send(csv);
+});
+seatsRouter.get("/events/:id/waitlist", async (req, res) => res.json(await admin().waitlist(req.auth!.tenantId, req.params.id)));
+seatsRouter.post("/events/:id/waitlist/notify", editors, async (req, res) => res.json(await admin().notifyWaitlist(req.auth!.tenantId, req.params.id)));
+seatsRouter.delete("/waitlist/:id", editors, async (req, res) => {
+  await admin().removeWaitlist(req.auth!.tenantId, req.params.id);
+  res.status(204).end();
+});
+
 seatsRouter.post("/orders/:id/paid", door, async (req, res) => res.json(await svc().markPaid(req.auth!.tenantId, req.params.id)));
 seatsRouter.post("/orders/:id/cancel", editors, async (req, res) => res.json(await svc().cancelOrder(req.auth!.tenantId, req.params.id)));
 seatsRouter.post("/check-in", door, async (req, res) => {
@@ -59,9 +102,15 @@ export const publicSeatsRouter = Router();
 
 async function tenantBySlug(slug: string) {
   const tenant = await prisma.tenant.findUnique({ where: { slug } });
-  // نفس قاعدة صفحة الحجز: الاشتراك شغال والحساب مش موقوف
-  if (!tenant || !(await isModuleLive(tenant, "booking"))) return null;
+  // خدمة التذاكر لازم تكون شغالة (اشتراك/مهلة/تجربة صاحب المنصة) والحساب مش موقوف
+  if (!tenant || !(await isModuleLive(tenant, "tickets"))) return null;
   return tenant;
+}
+
+// اسم/لوجو/لون صفحة التذاكر (من إعدادات التذاكر، أو الحجز، أو اسم الشركة)
+async function business(tenantId: string) {
+  const b = await container.seatSettings.brand(tenantId);
+  return { name: b.name, logoDataUrl: b.logoDataUrl, color: b.color, slug: b.slug, template: b.template, style: b.style, coverDataUrl: b.coverDataUrl };
 }
 
 // كام حجز مؤقت لكل IP في 10 دقايق (يمنع حد يقفل القاعة كلها بسكربت)
@@ -79,30 +128,27 @@ publicSeatsRouter.get("/tickets/:code", async (req, res) => {
   const t = await svc().ticket(req.params.code);
   if (!t) return res.status(404).json({ error: "Ticket not found" });
   const tenant = await prisma.tenant.findUnique({ where: { id: t.tenantId } });
-  if (!tenant || !(await isModuleLive(tenant, "booking"))) return res.status(404).json({ error: "Ticket not found" });
-  const s = await prisma.bookingSettings.findUnique({ where: { tenantId: tenant.id }, select: { brandName: true, logoDataUrl: true, themeColor: true } });
+  if (!tenant || !(await isModuleLive(tenant, "tickets"))) return res.status(404).json({ error: "Ticket not found" });
   const currency = isCurrencyCode(tenant.displayCurrency) ? tenant.displayCurrency : "USD";
   const { tenantId: _t, ...ticket } = t;
-  res.json({ ...ticket, business: { name: s?.brandName || tenant.name, logoDataUrl: s?.logoDataUrl ?? null, color: s?.themeColor ?? null, slug: tenant.slug }, currency, rate: rateFor(currency, await getRates()) });
+  res.json({ ...ticket, business: await business(tenant.id), currency, rate: rateFor(currency, await getRates()) });
 });
 
 publicSeatsRouter.get("/:slug/events", async (req, res) => {
   const tenant = await tenantBySlug(req.params.slug);
   if (!tenant) return res.status(404).json({ error: "Page not found" });
-  const s = await prisma.bookingSettings.findUnique({ where: { tenantId: tenant.id }, select: { brandName: true, logoDataUrl: true, themeColor: true } });
   const currency = isCurrencyCode(tenant.displayCurrency) ? tenant.displayCurrency : "USD";
-  res.json({ business: { name: s?.brandName || tenant.name, logoDataUrl: s?.logoDataUrl ?? null, color: s?.themeColor ?? null }, currency, rate: rateFor(currency, await getRates()), events: await svc().publicEvents(tenant.id) });
+  res.json({ business: await business(tenant.id), currency, rate: rateFor(currency, await getRates()), events: await svc().publicEvents(tenant.id) });
 });
 
 publicSeatsRouter.get("/:slug/events/:id", async (req, res) => {
   const tenant = await tenantBySlug(req.params.slug);
   if (!tenant) return res.status(404).json({ error: "Page not found" });
   const event = await svc().publicEvent(tenant.id, req.params.id);
-  const s = await prisma.bookingSettings.findUnique({ where: { tenantId: tenant.id }, select: { brandName: true, logoDataUrl: true, themeColor: true } });
   const currency = isCurrencyCode(tenant.displayCurrency) ? tenant.displayCurrency : "USD";
   res.json({
     ...event,
-    business: { name: s?.brandName || tenant.name, logoDataUrl: s?.logoDataUrl ?? null, color: s?.themeColor ?? null },
+    business: await business(tenant.id),
     currency,
     rate: rateFor(currency, await getRates()),
     paymentMethods: publicPaymentMethods(await getTenantPaymentMethods(tenant.id)),
@@ -114,8 +160,35 @@ publicSeatsRouter.post("/:slug/events/:id/hold", async (req, res) => {
   const tenant = await tenantBySlug(req.params.slug);
   if (!tenant) return res.status(404).json({ error: "Page not found" });
   if (tooManyHolds(req.ip || "?")) return res.status(429).json({ error: "Too many tries — please wait a few minutes." });
-  const input = body(z.object({ seatIds: z.array(z.string().max(12)).min(1).max(50), replaceOrderId: z.string().uuid().optional(), replaceToken: z.string().max(80).optional() }), req);
-  res.status(201).json(await svc().hold(tenant.id, req.params.id, input.seatIds, { orderId: input.replaceOrderId, token: input.replaceToken }));
+  const input = body(
+    z.object({
+      seatIds: z.array(z.string().max(12)).max(50).default([]),
+      // "اختارلي أحسن كراسي"
+      best: z.object({ count: z.number().int().min(1).max(50), tierId: z.string().max(24).nullable().optional() }).optional(),
+      replaceOrderId: z.string().uuid().optional(),
+      replaceToken: z.string().max(80).optional(),
+    }),
+    req
+  );
+  res.status(201).json(await svc().hold(tenant.id, req.params.id, input.seatIds, { orderId: input.replaceOrderId, token: input.replaceToken }, input.best));
+});
+
+// قائمة الانتظار لعرض كامل
+publicSeatsRouter.post("/:slug/events/:id/waitlist", async (req, res) => {
+  const tenant = await tenantBySlug(req.params.slug);
+  if (!tenant) return res.status(404).json({ error: "Page not found" });
+  if (tooManyHolds(req.ip || "?")) return res.status(429).json({ error: "Too many tries — please wait a few minutes." });
+  const input = body(z.object({ name: z.string().trim().min(2).max(80), phone: z.string().trim().min(6).max(30), email: z.union([z.literal(""), z.string().trim().email().max(200)]).optional(), seats: z.number().int().min(1).max(50).default(1) }), req);
+  res.status(201).json(await svc().joinWaitlist(tenant.id, req.params.id, input));
+});
+
+// العميل كتب كود خصم: السعر الجديد (الكود بيتستهلك وقت الدفع بس)
+publicSeatsRouter.post("/:slug/orders/:id/promo", async (req, res) => {
+  const tenant = await tenantBySlug(req.params.slug);
+  if (!tenant) return res.status(404).json({ error: "Page not found" });
+  if (tooManyHolds(req.ip || "?")) return res.status(429).json({ error: "Too many tries — please wait a few minutes." });
+  const input = body(z.object({ holdToken: z.string().max(80), code: z.string().trim().min(1).max(24) }), req);
+  res.json(await svc().previewPromo(tenant.id, req.params.id, input.holdToken, input.code));
 });
 
 publicSeatsRouter.post("/:slug/orders/:id/release", async (req, res) => {
