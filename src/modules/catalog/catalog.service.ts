@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db";
 import { getOrCreateWhatsappSettings, sendWhatsappTextMessage } from "../whatsapp/whatsapp.service";
 import { sendOrderReceivedTemplate } from "./order-whatsapp";
@@ -37,11 +38,17 @@ interface UpdateCatalogSettingsInput {
   pageTemplate?: string;
   pageFont?: string;
   coverDataUrl?: string | null;
+  pageStyle?: Record<string, unknown> | null;
 }
 
 export async function updateCatalogSettings(tenantId: string, data: UpdateCatalogSettingsInput) {
   await getOrCreateCatalogSettings(tenantId);
-  return prisma.catalogSettings.update({ where: { tenantId }, data });
+  const { pageStyle, ...rest } = data;
+  return prisma.catalogSettings.update({
+    where: { tenantId },
+    // Json: null لازم يتبعت Prisma.DbNull
+    data: { ...rest, ...(pageStyle !== undefined ? { pageStyle: pageStyle === null ? Prisma.DbNull : (pageStyle as Prisma.InputJsonValue) } : {}) },
+  });
 }
 
 interface OrderItemInput {

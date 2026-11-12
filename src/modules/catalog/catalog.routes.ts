@@ -6,7 +6,7 @@ import { getOrCreateCatalogSettings, updateCatalogSettings, createOrder, confirm
 import { MENU_CURRENCY_CODES } from "../../utils/money";
 import { addDemoMenu, removeDemoMenu } from "./demo-menu";
 import { container } from "../../core/container";
-import { BOOKING_FONTS, BOOKING_TEMPLATES, COVER_MAX_CHARS, imageDataUrl } from "../booking/page-design";
+import { BOOKING_FONTS, BOOKING_TEMPLATES, COVER_MAX_CHARS, imageDataUrl, pageStyleSchema } from "../booking/page-design";
 
 export const catalogRouter = Router();
 
@@ -41,6 +41,7 @@ const updateSettingsSchema = z.object({
   pageTemplate: z.enum(BOOKING_TEMPLATES).optional(),
   pageFont: z.enum(BOOKING_FONTS).optional(),
   coverDataUrl: imageDataUrl(COVER_MAX_CHARS, "The cover photo").nullable().optional(),
+  pageStyle: pageStyleSchema.nullable().optional(),
 });
 
 catalogRouter.patch("/settings", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {

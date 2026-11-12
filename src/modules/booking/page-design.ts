@@ -6,9 +6,10 @@ import { z } from "zod";
 
 // لازم تفضل نفس القائمة اللي في الفرونت (frontend/src/data/bookingTemplates.ts)
 export const BOOKING_TEMPLATES = [
-  "classic", "mint", "blush", "sky", "sand", "lavender", "noir",
-  "ocean", "forest", "sunset", "mono", "rose", "citrus", "midnight",
+  "bluefield", "mint", "blush", "sky", "sand", "lavender",
+  "ocean", "sunset", "mono", "rose", "citrus",
 ] as const;
+// gold/night (غامقين) اتشالوا من الواجهة بس فاضلين هنا عشان الإعدادات القديمة تتحفظ من غير خطأ
 export const BOOKING_GRADIENTS = ["aurora", "peach", "lagoon", "dusk", "meadow", "candy", "gold", "night"] as const;
 export const BOOKING_FONTS = ["modern", "elegant", "rounded"] as const;
 
@@ -43,6 +44,11 @@ export const pageBackgroundSchema = z
 export const pageStyleSchema = z
   .object({
     accent: HEX.nullable().optional(),
+    // ألوان التاجر لكل حاجة (null = لون القالب): الكروت، الكلام، الزراير
+    colors: z
+      .object({ card: HEX.nullable().optional(), ink: HEX.nullable().optional(), button: HEX.nullable().optional() })
+      .strict()
+      .optional(),
     font: z.enum(BOOKING_FONTS).optional(),
     background: pageBackgroundSchema.optional(),
     // شكل الخدمات: لستة / شبكة صور / كروت كبيرة
