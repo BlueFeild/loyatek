@@ -30,7 +30,7 @@ publicLinktreeRouter.get("/:slug", async (req, res) => {
     avatarDataUrl: settings?.avatarDataUrl ?? null,
     avatarStyle: settings?.avatarStyle ?? null,
     themeColor: settings?.themeColor ?? "#38BDF8",
-    backgroundColor: settings?.backgroundColor ?? "#0f172a",
+    backgroundColor: settings?.backgroundColor ?? "#f0f9ff",
     links: links.map((l: any) => ({ id: l.id, label: l.label, url: l.url, kind: l.kind, fileName: l.fileName, fileSize: l.fileSize, icon: l.icon, iconDataUrl: l.iconDataUrl })),
   });
 });

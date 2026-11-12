@@ -2050,9 +2050,8 @@ model LinktreeSettings {
   avatarStyle     Json?
   themeColor      String   @default("#38BDF8")
   // خلفية صفحة اللينك-تري العامة - منفصلة عن themeColor اللي بيلوّن
-  // بس الأزرار والأفتار؛ افتراضيًا نفس الخلفية الغامقة القديمة عشان
-  // الصفحات الموجودة تفضل شكلها زي ما هو
-  backgroundColor String   @default("#0f172a")
+  // بس الأزرار والأفتار؛ افتراضيًا سماوي فاتح (الكحلي القديم اتشال 2026-11-12)
+  backgroundColor String   @default("#f0f9ff")
   updatedAt       DateTime @updatedAt
 
   @@map("linktree_settings")
