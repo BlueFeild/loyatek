@@ -25,7 +25,14 @@ export class PrismaReportRepository implements ReportStore {
   constructor(private readonly db: PrismaClient) {}
 
   async settings(tenantId: string): Promise<ReportSettingsView> {
-    const s = await this.db.socialReportSettings.upsert({ where: { tenantId }, create: { tenantId, shareToken: newToken() }, update: {} });
+    // أول زيارة: صفحة التقارير بتطلب الإعدادات والتقرير في نفس اللحظة، فطلبين بيحاولوا يعملوا الصف مع بعض.
+    // اللي يخسر السباق (P2002) يقرا الصف اللي التاني عمله بدل ما يرجع خطأ
+    const s = await this.db.socialReportSettings
+      .upsert({ where: { tenantId }, create: { tenantId, shareToken: newToken() }, update: {} })
+      .catch(async (err: unknown) => {
+        if ((err as { code?: string })?.code !== "P2002") throw err;
+        return this.db.socialReportSettings.findUniqueOrThrow({ where: { tenantId } });
+      });
     return { brandName: s.brandName, logoDataUrl: s.logoDataUrl, accentColor: s.accentColor, hidePlatformName: s.hidePlatformName, recipients: s.recipients, monthlyEmail: s.monthlyEmail, shareToken: s.shareToken, lastSentPeriod: s.lastSentPeriod };
   }
 
