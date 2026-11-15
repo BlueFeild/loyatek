@@ -17,6 +17,13 @@ export interface CampaignTemplate {
   bodyText: string;
   format: string | null;
   headerImageDataUrl: string | null;
+  headerType?: string | null;
+  headerMediaDataUrl?: string | null;
+  headerFileName?: string | null;
+  footerText?: string | null;
+  buttons?: unknown;
+  buttonText?: string | null;
+  buttonUrl?: string | null;
   cards: unknown;
 }
 
@@ -181,5 +188,12 @@ const templateFields = {
   bodyText: true,
   format: true,
   headerImageDataUrl: true,
+  headerType: true,
+  headerMediaDataUrl: true,
+  headerFileName: true,
+  footerText: true,
+  buttons: true,
+  buttonText: true,
+  buttonUrl: true,
   cards: true,
 } as const;

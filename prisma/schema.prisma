@@ -1564,6 +1564,14 @@ model WhatsappTemplate {
   headerImageDataUrl String?          @db.Text
   buttonText         String?
   buttonUrl          String?
+  // نوع الرأس: IMAGE (في headerImageDataUrl) | VIDEO | DOCUMENT (في headerMediaDataUrl - تقيل، مش بيرجع في القوايم)
+  headerType         String?
+  headerMediaDataUrl String?          @db.Text
+  headerFileName     String?
+  // سطر صغير تحت الرسالة (زي "للإلغاء ابعت STOP")
+  footerText         String?
+  // لحد 3 أزرار: [{type URL|PHONE_NUMBER|QUICK_REPLY, text, url?, phone?}] - null = الزرار القديم buttonText/buttonUrl
+  buttons            Json?
   // STANDARD (نص + صورة فوق اختياري + زرار) | CAROUSEL (كروت تتقلّب، كل كارت صورة + كلام + زرار/اتنين)
   format             String           @default("STANDARD")
   // كروت الكاروسيل: [{imageDataUrl, bodyText, buttons:[{type QUICK_REPLY|URL, text, url?}]}]

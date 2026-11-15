@@ -23,12 +23,21 @@ import { HELLO_WORLD_ID, HELLO_WORLD_TEXT, listInboxTemplates, renderTemplateTex
 import { categoryForTemplate } from "./meta-rates";
 import { container } from "../../core/container";
 import {
+  FOOTER_MAX,
+  HEADER_MAX_BYTES,
   MAX_CARDS,
+  MAX_STANDARD_BUTTONS,
   buildCarouselCreateComponents,
   buildSendComponents,
+  buildStandardCreateComponents,
   carouselCardSchema,
   carouselCardsProblem,
+  headerTypeForMime,
+  needsRichSend,
+  normalizeStandardButtons,
   renderTemplatePreview,
+  standardButtonSchema,
+  type StandardButton,
   sendTemplateComponents,
   templateVarCount,
   uploadTemplateImages,
@@ -445,13 +454,13 @@ whatsappRouter.post("/conversations/:phone/template", requireRole("OWNER", "ADMI
   const d = parsed.data;
   let name = "hello_world", language = "en_US", body = HELLO_WORLD_TEXT, params: string[] = [];
   // قالب بصورة/كروت: الصور بتترفع لـ Meta وتتبعت مع الرسالة
-  let richTpl: { format: string; bodyText: string; headerImageDataUrl: string | null; cards: unknown } | null = null;
+  let richTpl: Parameters<typeof buildSendComponents>[0] | null = null;
   if (d.templateId !== HELLO_WORLD_ID) {
     // القالب لازم يكون تبع نفس الشركة ومعتمد من Meta
     const tpl = await prisma.whatsappTemplate.findFirst({ where: { id: d.templateId, tenantId } });
     if (!tpl) return res.status(404).json({ error: "Template not found" });
     if (tpl.status !== "APPROVED") return res.status(400).json({ error: `This template isn't approved by Meta yet (status: ${tpl.status}).` });
-    if (tpl.headerImageDataUrl || tpl.format === "CAROUSEL") richTpl = tpl;
+    if (needsRichSend(tpl)) richTpl = tpl;
     const count = templateParamCount(tpl.bodyText);
     params = Array.from({ length: count }, (_, i) => d.params[i] ?? "");
     if (params.some((v) => !v.trim())) return res.status(400).json({ error: `Fill in all ${count} blanks of the template.` });
@@ -828,10 +837,18 @@ whatsappRouter.get("/campaigns/:id/report", async (req, res) => {
 
 // --- Message Templates (قوالب رسائل حقيقية بترفع لـ Meta للموافقة) ---
 
+// أعمدة القالب اللي بترجع للشاشة (من غير ملف الفيديو/PDF التقيل - headerType بيقول فيه رأس ولا لأ)
+const TEMPLATE_VIEW = {
+  id: true, tenantId: true, settingsId: true, name: true, language: true, category: true, bodyText: true,
+  headerImageDataUrl: true, buttonText: true, buttonUrl: true, headerType: true, headerFileName: true, footerText: true, buttons: true,
+  format: true, cards: true, status: true, metaTemplateId: true, rejectionReason: true, purpose: true, createdAt: true,
+} as const;
+
 whatsappRouter.get("/templates", async (req, res) => {
   const templates = await prisma.whatsappTemplate.findMany({
     where: { tenantId: req.auth!.tenantId },
     orderBy: { createdAt: "desc" },
+    select: TEMPLATE_VIEW,
   });
   res.json(templates);
 });
@@ -847,8 +864,12 @@ const createTemplateSchema = z.object({
   bodyExamples: z.array(z.string().trim().max(60)).max(10).optional(),
   buttonText: z.string().optional(),
   buttonUrl: z.string().url().optional(),
+  // ملف الرأس: صورة JPG/PNG أو فيديو MP4 أو PDF (الاسم القديم headerImage* فضل عشان التوافق)
   headerImageBase64: z.string().optional(),
   headerImageMimeType: z.string().optional(),
+  headerFileName: z.string().trim().max(80).optional(),
+  footerText: z.string().trim().max(FOOTER_MAX, `The bottom line can be up to ${FOOTER_MAX} characters`).optional(),
+  buttons: z.array(standardButtonSchema).max(MAX_STANDARD_BUTTONS, `A message can have up to ${MAX_STANDARD_BUTTONS} buttons`).optional(),
 });
 
 // إنشاء ورفع قالب حقيقي لـ Meta فورًا - مش بيتخزن بس، بيتبعت فعليًا
@@ -864,6 +885,24 @@ whatsappRouter.post("/templates", requireRole("OWNER", "ADMIN", "MANAGER"), asyn
     if (problem) return res.status(400).json({ error: problem });
   }
 
+  // القالب العادي: نوع ملف الرأس من نوعه (صورة/فيديو/PDF) + حجمه + الأزرار (لحد 3)
+  const headerMime = parsed.data.headerImageMimeType || "image/jpeg";
+  const headerType = !isCarousel && parsed.data.headerImageBase64 ? headerTypeForMime(headerMime) : null;
+  if (!isCarousel && parsed.data.headerImageBase64) {
+    if (!headerType) return res.status(400).json({ error: "The top file must be a JPG/PNG photo, an MP4 video or a PDF" });
+    const bytes = Math.floor((parsed.data.headerImageBase64.length * 3) / 4);
+    const max = HEADER_MAX_BYTES[headerType];
+    if (bytes > max) return res.status(400).json({ error: `The ${headerType === "IMAGE" ? "photo" : headerType === "VIDEO" ? "video" : "file"} is too big — up to ${Math.round(max / 1024 / 1024)} MB` });
+  }
+  let buttons: StandardButton[] = [];
+  if (!isCarousel) {
+    const given: StandardButton[] = parsed.data.buttons ?? (parsed.data.buttonText && parsed.data.buttonUrl ? [{ type: "URL", text: parsed.data.buttonText, url: parsed.data.buttonUrl }] : []);
+    const norm = normalizeStandardButtons(given);
+    if (norm.problem) return res.status(400).json({ error: norm.problem });
+    buttons = norm.buttons;
+  }
+  const headerFileName = headerType === "DOCUMENT" ? (parsed.data.headerFileName || "file.pdf").replace(/[\\/:*?"<>|]/g, "_") : null;
+
   const settings = await getOrCreateWhatsappSettings(req.auth!.tenantId);
   if (!settings.isConnected || !settings.metaAccessToken || !settings.metaWabaId) {
     return res.status(400).json({
@@ -878,14 +917,9 @@ whatsappRouter.post("/templates", requireRole("OWNER", "ADMIN", "MANAGER"), asyn
     if (!appId) {
       return res.status(400).json({ error: "Add your Meta App ID in settings first — it's required to upload a header image." });
     }
-    const upload = await uploadTemplateHeaderImage(
-      settings.metaAccessToken,
-      appId,
-      parsed.data.headerImageBase64,
-      parsed.data.headerImageMimeType || "image/jpeg"
-    );
+    const upload = await uploadTemplateHeaderImage(settings.metaAccessToken, appId, parsed.data.headerImageBase64, headerMime);
     if (!upload.ok || !upload.handle) {
-      return res.status(400).json({ error: upload.error || "Failed to upload the header image to Meta" });
+      return res.status(400).json({ error: upload.error || "Failed to upload the top file to Meta" });
     }
     headerImageHandle = upload.handle;
   }
@@ -904,6 +938,15 @@ whatsappRouter.post("/templates", requireRole("OWNER", "ADMIN", "MANAGER"), asyn
     }
     storedCards = cards.map((c) => ({ imageDataUrl: `data:${c.imageMimeType};base64,${c.imageBase64}`, bodyText: c.bodyText, buttons: c.buttons }));
     rawComponents = buildCarouselCreateComponents(parsed.data.bodyText, parsed.data.bodyExamples, storedCards, handles);
+  } else {
+    rawComponents = buildStandardCreateComponents({
+      headerType,
+      headerHandle: headerImageHandle,
+      bodyText: parsed.data.bodyText,
+      bodyExamples: parsed.data.bodyExamples,
+      footerText: parsed.data.footerText,
+      buttons,
+    });
   }
 
   const result = await createWhatsappTemplate(settings.metaAccessToken, settings.metaWabaId, {
@@ -929,16 +972,23 @@ whatsappRouter.post("/templates", requireRole("OWNER", "ADMIN", "MANAGER"), asyn
       language: parsed.data.language,
       category: parsed.data.category,
       bodyText: parsed.data.bodyText,
-      buttonText: parsed.data.buttonText,
-      buttonUrl: parsed.data.buttonUrl,
-      headerImageDataUrl: !isCarousel && parsed.data.headerImageBase64 ? `data:${parsed.data.headerImageMimeType || "image/jpeg"};base64,${parsed.data.headerImageBase64}` : undefined,
+      // الزرار القديم الواحد بيتملى برضه لو أول زرار لينك (الشاشات القديمة بتقراه)
+      buttonText: buttons[0]?.type === "URL" ? buttons[0].text : null,
+      buttonUrl: buttons[0]?.type === "URL" ? buttons[0].url : null,
+      headerImageDataUrl: headerType === "IMAGE" ? `data:${headerMime};base64,${parsed.data.headerImageBase64}` : undefined,
+      headerType,
+      headerMediaDataUrl: headerType === "VIDEO" || headerType === "DOCUMENT" ? `data:${headerMime};base64,${parsed.data.headerImageBase64}` : undefined,
+      headerFileName,
+      footerText: !isCarousel && parsed.data.footerText ? parsed.data.footerText : null,
+      buttons: !isCarousel && buttons.length ? (buttons as unknown as object) : undefined,
       format: parsed.data.format,
       cards: storedCards ? (storedCards as unknown as object) : undefined,
       metaTemplateId: result.metaTemplateId,
       status: "PENDING",
     },
   });
-  res.status(201).json(template);
+  const { headerMediaDataUrl: _heavy, ...light } = template;
+  res.status(201).json({ ...light, hasHeaderMedia: Boolean(_heavy) });
 });
 
 // الاستعلام الحقيقي عن حالة القالب من عند Meta نفسها - Pending لحد
@@ -957,6 +1007,7 @@ whatsappRouter.post("/templates/:id/check-status", async (req, res) => {
   const updated = await prisma.whatsappTemplate.update({
     where: { id: template.id },
     data: { status, rejectionReason: result.rejectionReason },
+    select: TEMPLATE_VIEW,
   });
   res.json(updated);
 });

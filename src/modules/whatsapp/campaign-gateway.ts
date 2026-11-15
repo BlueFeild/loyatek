@@ -12,6 +12,9 @@ export interface GatewayTemplate {
   format?: string | null;
   bodyText: string;
   headerImageDataUrl?: string | null;
+  headerType?: string | null;
+  headerMediaDataUrl?: string | null;
+  headerFileName?: string | null;
   cards?: unknown;
 }
 

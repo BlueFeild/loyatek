@@ -90,10 +90,11 @@ const keepRawBody = (req: unknown, _res: unknown, buf: Buffer) => {
 };
 const jsonParser = express.json({ limit: "10mb", verify: keepRawBody });
 // رفع ملفات Link-in-Bio لحد 20MB - بالـ base64 بيكبروا حوالي الثلث، فالحد ده
-// للمسار ده بس
+// للمسار ده بس. وقوالب واتساب برضه (فيديو الرأس لحد 16MB)
 const bigJsonParser = express.json({ limit: "30mb" });
+const BIG_JSON_PATHS = new Set(["/api/linktree/links/file", "/api/whatsapp/templates"]);
 app.use((req, res, next) =>
-  req.method === "POST" && req.path === "/api/linktree/links/file" ? bigJsonParser(req, res, next) : jsonParser(req, res, next)
+  req.method === "POST" && BIG_JSON_PATHS.has(req.path) ? bigJsonParser(req, res, next) : jsonParser(req, res, next)
 );
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
