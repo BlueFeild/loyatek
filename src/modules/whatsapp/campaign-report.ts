@@ -66,3 +66,32 @@ export function summarizeCampaign(messages: ReportMessage[], firstReplyAt: Map<s
     recipients,
   };
 }
+
+// "إعادة استهداف": حملة متابعة لجزء من اللي وصلتهم الحملة (زي WATI - بس من التقرير مباشرة)
+export const RETARGET_GROUPS = ["not_read", "not_replied", "replied", "failed"] as const;
+export type RetargetGroup = (typeof RETARGET_GROUPS)[number];
+
+export const RETARGET_LABEL: Record<RetargetGroup, string> = {
+  not_read: "didn't read it",
+  not_replied: "didn't reply",
+  replied: "replied",
+  failed: "didn't get it",
+};
+
+export function pickRetarget(recipients: CampaignReport["recipients"], group: RetargetGroup): { phone: string; name: string }[] {
+  const keep = (r: CampaignReport["recipients"][number]) => {
+    if (group === "failed") return r.status === "failed";
+    if (r.status === "failed") return false;
+    if (group === "not_read") return r.status !== "read";
+    if (group === "not_replied") return !r.replied;
+    return r.replied;
+  };
+  const seen = new Set<string>();
+  const out: { phone: string; name: string }[] = [];
+  for (const r of recipients) {
+    if (!keep(r) || seen.has(r.phone)) continue;
+    seen.add(r.phone);
+    out.push({ phone: r.phone, name: r.name ?? "" });
+  }
+  return out;
+}

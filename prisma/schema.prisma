@@ -129,6 +129,8 @@ model Tenant {
   whatsappSettings      WhatsappSettings?
   whatsappMessages      WhatsappMessage[]
   whatsappContacts      WhatsappContact[]
+  whatsappSequences     WhatsappSequence[]
+  whatsappSequenceRuns  WhatsappSequenceEnrollment[]
   whatsappAiAgent       WhatsappAiAgent?
   whatsappConversations WhatsappConversation[]
   whatsappFlows         WhatsappFlow[]
@@ -1496,6 +1498,53 @@ model WhatsappContact {
   @@unique([tenantId, phone])
   @@index([tenantId, optedOut])
   @@map("whatsapp_contacts")
+}
+
+// سلسلة رسايل (Drip): أول ما جهة اتصال ياخد تاج معيّن (أو يتضاف يدوي) بيوصله قالب 1، وبعد مدة قالب 2... ويقف لو رد
+model WhatsappSequence {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  enabled     Boolean  @default(false)
+  // التاج اللي بيبدأ السلسلة (حروف صغيرة) - null = إضافة يدوي بس
+  triggerTag  String?
+  // يقف أول ما العميل يرد بأي رسالة
+  stopOnReply Boolean  @default(true)
+  // [{delayMinutes, templateId}] - المدة من الرسالة اللي قبلها (الأولى من وقت الاشتراك)
+  steps       Json     @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  enrollments WhatsappSequenceEnrollment[]
+
+  @@index([tenantId])
+  @@index([enabled])
+  @@map("whatsapp_sequences")
+}
+
+model WhatsappSequenceEnrollment {
+  id         String           @id @default(uuid())
+  tenantId   String
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sequenceId String
+  sequence   WhatsappSequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  phone      String
+  name       String           @default("")
+  // الخطوة الجاية (0 = أول رسالة)
+  stepIndex  Int              @default(0)
+  nextAt     DateTime?
+  // ACTIVE | DONE | STOPPED | SKIPPED (كانوا عليهم التاج قبل التشغيل والتاجر اختار مايبعتلهمش)
+  status     String           @default("ACTIVE")
+  stopReason String?
+  lastError  String?
+  enrolledAt DateTime         @default(now())
+  lastSentAt DateTime?
+
+  @@unique([sequenceId, phone])
+  @@index([status, nextAt])
+  @@index([tenantId])
+  @@map("whatsapp_sequence_enrollments")
 }
 
 // رد تلقائي: لو رسالة العميل فيها أي كلمة من keywords، البوت يرد بـ reply

@@ -18,6 +18,9 @@ import { MetaRatesService, PrismaMetaRatesStore } from "../modules/whatsapp/meta
 import { PrismaCampaignRepository } from "../modules/whatsapp/campaign.repository";
 import { MetaCampaignGateway } from "../modules/whatsapp/campaign-gateway";
 import { CampaignSender } from "../modules/whatsapp/campaign-sender.service";
+import { SequenceService } from "../modules/whatsapp/sequence.service";
+import { PrismaSequenceRepository } from "../modules/whatsapp/sequence.repository";
+import { MetaSequenceSender } from "../modules/whatsapp/sequence.gateway";
 import { OrderReadyService } from "../modules/catalog/order-ready.service";
 import { PrismaOrderReadyStore } from "../modules/catalog/order-ready.repository";
 import { WhatsappOrderReadyNotifier } from "../modules/catalog/order-whatsapp";
@@ -144,6 +147,7 @@ export const container = {
   orderReady: new OrderReadyService(new PrismaOrderReadyStore(prisma), new WhatsappOrderReadyNotifier()),
   contactBookService: new ContactBookService(new PrismaContactBookRepository(prisma), { customers: async (tenantId: string) => [...(await getUnifiedContacts(tenantId)), ...(await getConversationContacts(tenantId))] }),
   whatsappNumbers,
+  sequenceService: new SequenceService(new PrismaSequenceRepository(prisma), new MetaSequenceSender(whatsappNumbers)),
   flowService: new FlowService(flowRepository, new MetaFlowMessenger(whatsappNumbers)),
   aiAgentService: new AiAgentService(new PrismaAiAgentRepository(prisma), new MetaAgentMessenger(whatsappNumbers), providers.agent, creditService, new PrismaAgentBooker(prisma)),
   socialAccountService: new SocialAccountService(socialStore, metaSocial, { tiktok, tokens: socialTokens, publicApiBaseUrl, frontendBaseUrl, adsAuth: socialAdsService, bluesky }),

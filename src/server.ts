@@ -7,6 +7,7 @@ import { startSocialPublisherScheduler } from "./jobs/social-publisher";
 import { startSocialReportScheduler } from "./jobs/social-reports";
 import { startCampaignScheduler } from "./jobs/campaign-scheduler";
 import { startSeatReminderScheduler } from "./jobs/seat-reminders";
+import { startWhatsappSequenceScheduler } from "./jobs/whatsapp-sequences";
 
 const PORT = process.env.PORT || 4000;
 
@@ -24,4 +25,6 @@ app.listen(PORT, () => {
   startCampaignScheduler(Number(process.env.CAMPAIGN_SCHEDULER_INTERVAL_MS) || undefined);
   // تذكير واتساب/إيميل قبل العروض (خدمة التذاكر)
   startSeatReminderScheduler(Number(process.env.SEAT_REMINDER_INTERVAL_MS) || undefined);
+  // سلاسل رسايل واتساب (Drip) كل دقيقة - DISABLE_WHATSAPP_SEQUENCES=1 يقفلها
+  startWhatsappSequenceScheduler(Number(process.env.SEQUENCE_INTERVAL_MS) || undefined);
 });

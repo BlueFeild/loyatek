@@ -47,10 +47,11 @@ import { embeddedSignupConfig, exchangeSignupCode, findWabaPhoneNumber, register
 import { contactBookRouter } from "./contact-book.routes";
 import { aiAgentRouter } from "./ai-agent.routes";
 import { flowRouter } from "./flow.routes";
+import { sequenceRouter } from "./sequence.routes";
 import { whatsappNumbersRouter } from "./whatsapp-numbers.routes";
 import { PrismaContactBookRepository } from "./contact-book.repository";
 import { normalizePhone, normalizeTags } from "./contact-book.service";
-import { summarizeCampaign } from "./campaign-report";
+import { RETARGET_GROUPS, RETARGET_LABEL, pickRetarget, summarizeCampaign } from "./campaign-report";
 import { summarizeWhatsapp } from "./analytics";
 import { BOOKING_TEMPLATE_PURPOSES, ORDER_TEMPLATE_PURPOSES, ensureBookingTemplates, ensureOrderTemplates, getApprovedBookingTemplate, type ManagedTemplatePurpose, type TemplateLang } from "./booking-templates";
 
@@ -63,6 +64,7 @@ whatsappRouter.use("/contact-book", contactBookRouter);
 // موظف الذكاء الاصطناعي - /api/whatsapp/ai-agent
 whatsappRouter.use("/ai-agent", aiAgentRouter);
 whatsappRouter.use("/flows", flowRouter);
+whatsappRouter.use("/sequences", sequenceRouter);
 whatsappRouter.use("/numbers", whatsappNumbersRouter);
 
 // --- Settings (ربط حساب Meta الحقيقي) ---
@@ -813,11 +815,10 @@ whatsappRouter.post("/campaigns/:id/unschedule", requireRole("OWNER", "ADMIN", "
   res.json(await container.campaignSender.unschedule(req.auth!.tenantId, req.params.id));
 });
 
-// تقرير الحملة: اتبعت / اتسلّم / اتقرا / فشل / رد (من حالات Meta على الـ webhook)
-whatsappRouter.get("/campaigns/:id/report", async (req, res) => {
-  const tenantId = req.auth!.tenantId;
-  const campaign = await prisma.whatsappCampaign.findFirst({ where: { id: req.params.id, tenantId }, select: { id: true, skippedCount: true } });
-  if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+// تقرير الحملة من رسايلها (statuses من Meta على الـ webhook) - listLimit = أقصى عدد في قايمة المستلمين
+async function campaignReport(tenantId: string, campaignId: string, listLimit = 300) {
+  const campaign = await prisma.whatsappCampaign.findFirst({ where: { id: campaignId, tenantId }, select: { id: true, skippedCount: true } });
+  if (!campaign) return null;
   const messages = await prisma.whatsappMessage.findMany({
     where: { tenantId, campaignId: campaign.id, direction: "OUT" },
     orderBy: { createdAt: "asc" },
@@ -832,7 +833,53 @@ whatsappRouter.get("/campaigns/:id/report", async (req, res) => {
     });
     for (const r of replies) if (!firstReplyAt.has(r.contactPhone)) firstReplyAt.set(r.contactPhone, r.createdAt);
   }
-  res.json(summarizeCampaign(messages, firstReplyAt, campaign.skippedCount));
+  return summarizeCampaign(messages, firstReplyAt, campaign.skippedCount, listLimit);
+}
+
+// تقرير الحملة: اتبعت / اتسلّم / اتقرا / فشل / رد (من حالات Meta على الـ webhook)
+whatsappRouter.get("/campaigns/:id/report", async (req, res) => {
+  const report = await campaignReport(req.auth!.tenantId, req.params.id);
+  if (!report) return res.status(404).json({ error: "Campaign not found" });
+  res.json(report);
+});
+
+// حملة متابعة: نفس الحملة (أو قالب تاني) لجزء من الناس - ماقروهاش / ماردوش / ردوا / ماوصلتهمش.
+// بتتعمل مسودة (DRAFT) والتاجر يبعتها أو يجدولها زي أي حملة
+const retargetSchema = z.object({
+  group: z.enum(RETARGET_GROUPS),
+  templateId: z.string().uuid().nullable().optional(),
+});
+whatsappRouter.post("/campaigns/:id/retarget", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  const parsed = retargetSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Choose who to send it to" });
+  const tenantId = req.auth!.tenantId;
+  const source = await prisma.whatsappCampaign.findFirst({ where: { id: req.params.id, tenantId } });
+  if (!source) return res.status(404).json({ error: "Campaign not found" });
+  if (source.status !== "SENT" && source.status !== "FAILED") return res.status(409).json({ error: "Wait until the campaign has finished sending." });
+  const report = await campaignReport(tenantId, source.id, Number.MAX_SAFE_INTEGER);
+  const recipients = pickRetarget(report!.recipients, parsed.data.group);
+  if (recipients.length === 0) return res.status(400).json({ error: `Nobody ${RETARGET_LABEL[parsed.data.group]} — there's no one to send to.` });
+
+  const templateId = parsed.data.templateId === undefined ? source.templateId : parsed.data.templateId;
+  let templateText = source.templateText;
+  if (templateId && templateId !== source.templateId) {
+    const tpl = await prisma.whatsappTemplate.findFirst({ where: { id: templateId, tenantId }, select: { bodyText: true } });
+    if (!tpl) return res.status(400).json({ error: "Template not found" });
+    templateText = tpl.bodyText;
+  }
+  const campaign = await prisma.whatsappCampaign.create({
+    data: {
+      tenantId,
+      name: `${source.name} · follow-up`.slice(0, 120),
+      segmentDesc: `People who ${RETARGET_LABEL[parsed.data.group]} "${source.name}"`.slice(0, 200),
+      templateText,
+      templateId: templateId ?? null,
+      kind: source.kind,
+      audioBase64: source.kind === "VOICE" ? source.audioBase64 : null,
+      recipients: recipients as unknown as object,
+    },
+  });
+  res.status(201).json({ ...campaignView(campaign), recipientCount: recipients.length });
 });
 
 // --- Message Templates (قوالب رسائل حقيقية بترفع لـ Meta للموافقة) ---
