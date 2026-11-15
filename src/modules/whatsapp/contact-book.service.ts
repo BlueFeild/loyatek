@@ -1,8 +1,29 @@
 import { NotFoundError, ValidationError } from "../../core/errors";
-import type { ContactBookStore, ContactInput, ContactQuery, TagMatch } from "./contact-book.repository";
+import type { ContactBookStore, ContactInput, ContactQuery, ContactRow, ContactUpdate, TagMatch } from "./contact-book.repository";
 import { optIntent, type OptIntent } from "./opt-out";
 
-export const CONTACT_LIMITS = { maxTags: 20, maxTagLength: 30, maxImportRows: 20_000, pageSize: 50 };
+export const CONTACT_LIMITS = { maxTags: 20, maxTagLength: 30, maxImportRows: 20_000, pageSize: 50, maxAttributes: 20, maxAttrKey: 40, maxAttrValue: 200, maxNotes: 2000, maxExport: 20_000 };
+
+// بيانات إضافية: {مفتاح: قيمة} نص بس، والقيم الفاضية بتتشال
+export function normalizeAttributes(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const key = String(k).trim().replace(/\s+/g, " ").slice(0, CONTACT_LIMITS.maxAttrKey);
+    const value = v == null ? "" : String(v).trim().slice(0, CONTACT_LIMITS.maxAttrValue);
+    if (!key || !value || key in out) continue;
+    out[key] = value;
+    if (Object.keys(out).length >= CONTACT_LIMITS.maxAttributes) break;
+  }
+  return out;
+}
+
+// خانة CSV: بين علامتين، واللي بيبدأ بـ = + - @ بيتحوّل لنص (عشان الإكسل مايشغّلوش كمعادلة) - إلا الأرقام زي +974...
+export function csvCell(v: unknown) {
+  let s = v == null ? "" : String(v);
+  if (/^[=+\-@\t\r]/.test(s) && !/^\+?\d[\d\s]*$/.test(s)) s = "'" + s;
+  return '"' + s.replace(/"/g, '""') + '"';
+}
 
 // رقم واتساب = أرقام بس مع كود الدولة (00974... ← 974...). أقل من 8 أرقام مش رقم حقيقي
 export function normalizePhone(raw: unknown): string | null {
@@ -29,6 +50,8 @@ export function rowsToContacts(rows: Record<string, unknown>[], extraTags: strin
   const phoneKey = keys.find((k) => /phone|mobile|whatsapp|رقم|جوال|موبايل|number/i.test(k)) ?? keys[0];
   const nameKey = keys.find((k) => k !== phoneKey && /name|اسم/i.test(k)) ?? keys.find((k) => k !== phoneKey);
   const tagsKey = keys.find((k) => /tag|label|segment|تاج|تصنيف|فئة/i.test(k));
+  // أي عمود تاني = بيانات إضافية للعميل (المدينة، المرحلة...)
+  const extraKeys = keys.filter((k) => k !== phoneKey && k !== nameKey && k !== tagsKey && !/^__empty/i.test(k)).slice(0, CONTACT_LIMITS.maxAttributes);
   const byPhone = new Map<string, ContactInput>();
   let invalid = 0;
   for (const r of rows.slice(0, CONTACT_LIMITS.maxImportRows)) {
@@ -40,7 +63,8 @@ export function rowsToContacts(rows: Record<string, unknown>[], extraTags: strin
     const name = nameKey ? String(r[nameKey] ?? "").trim().slice(0, 120) || null : null;
     const tags = normalizeTags([...normalizeTags(tagsKey ? r[tagsKey] : ""), ...extraTags]);
     const prev = byPhone.get(phone);
-    byPhone.set(phone, { phone, name: prev?.name || name, tags: normalizeTags([...(prev?.tags ?? []), ...tags]) });
+    const attributes = { ...(prev?.attributes ?? {}), ...normalizeAttributes(Object.fromEntries(extraKeys.map((k) => [k, r[k]]))) };
+    byPhone.set(phone, { phone, name: prev?.name || name, tags: normalizeTags([...(prev?.tags ?? []), ...tags]), ...(Object.keys(attributes).length ? { attributes } : {}) });
   }
   return { contacts: [...byPhone.values()], invalid };
 }
@@ -61,12 +85,13 @@ export class ContactBookService {
   async list(tenantId: string, query: Partial<ContactQuery> & { page?: number }) {
     const page = Math.max(1, query.page ?? 1);
     const take = CONTACT_LIMITS.pageSize;
-    const [result, tags, stats] = await Promise.all([
+    const [result, tags, stats, attributeKeys] = await Promise.all([
       this.store.list(tenantId, { q: query.q?.trim() || undefined, tag: query.tag ? normalizeTags([query.tag])[0] : undefined, status: query.status ?? "all", skip: (page - 1) * take, take }),
       this.store.tagCounts(tenantId),
       this.store.stats(tenantId),
+      this.store.attributeKeys(tenantId),
     ]);
-    return { ...result, page, pageSize: take, tags, stats };
+    return { ...result, page, pageSize: take, tags, stats, attributeKeys };
   }
 
   async create(tenantId: string, input: { phone: string; name?: string | null; tags?: unknown }) {
@@ -76,8 +101,10 @@ export class ContactBookService {
     return this.store.create(tenantId, { phone, name: input.name?.trim() || null, tags: normalizeTags(input.tags ?? []) }, "manual");
   }
 
-  async update(tenantId: string, id: string, input: { name?: string | null; tags?: unknown; optedOut?: boolean }) {
-    const data: { name?: string | null; tags?: string[]; optedOut?: boolean; optedOutAt?: Date | null } = {};
+  async update(tenantId: string, id: string, input: { name?: string | null; tags?: unknown; optedOut?: boolean; attributes?: unknown; notes?: string | null }) {
+    const data: ContactUpdate = {};
+    if (input.attributes !== undefined) data.attributes = normalizeAttributes(input.attributes);
+    if (input.notes !== undefined) data.notes = input.notes?.trim().slice(0, CONTACT_LIMITS.maxNotes) || null;
     if (input.name !== undefined) data.name = input.name?.trim() || null;
     if (input.tags !== undefined) data.tags = normalizeTags(input.tags);
     if (input.optedOut !== undefined) {
@@ -87,6 +114,16 @@ export class ContactBookService {
     const row = await this.store.update(tenantId, id, data);
     if (!row) throw new NotFoundError("Contact not found");
     return row;
+  }
+
+  // ملف CSV (يفتح في الإكسل بالعربي) بنفس الفلتر اللي في الشاشة
+  async exportCsv(tenantId: string, query: Partial<Omit<ContactQuery, "skip" | "take">>) {
+    const rows = await this.store.exportRows(
+      tenantId,
+      { q: query.q?.trim() || undefined, tag: query.tag ? normalizeTags([query.tag])[0] : undefined, status: query.status ?? "all" },
+      CONTACT_LIMITS.maxExport
+    );
+    return contactsCsv(rows);
   }
 
   async remove(tenantId: string, id: string) {
@@ -134,4 +171,14 @@ export class ContactBookService {
     await this.store.touchInbound(tenantId, phone, name, at);
     return intent;
   }
+}
+
+export function contactsCsv(rows: ContactRow[]) {
+  const keys: string[] = [];
+  const attrs = rows.map((r) => normalizeAttributes(r.attributes));
+  for (const a of attrs) for (const k of Object.keys(a)) if (!keys.includes(k)) keys.push(k);
+  const head = ["Phone", "Name", "Tags", "Status", "Source", "Added", "Last message", ...keys, "Notes"];
+  const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "");
+  const lines = rows.map((r, i) => ["+" + r.phone, r.name ?? "", r.tags.join(", "), r.optedOut ? "Unsubscribed" : "Subscribed", r.source, day(r.createdAt), day(r.lastInboundAt), ...keys.map((k) => attrs[i][k] ?? ""), r.notes ?? ""]);
+  return "\uFEFF" + [head, ...lines].map((l) => l.map(csvCell).join(",")).join("\r\n");
 }

@@ -30,11 +30,26 @@ contactBookRouter.get("/", async (req, res) => {
 
 const createSchema = z.object({ phone: z.string().min(4).max(30), name: z.string().max(120).nullable().optional(), tags: tagsField });
 
+// تصدير CSV (بنفس فلاتر القايمة)
+contactBookRouter.get("/export.csv", requireRole(...EDITORS), async (req, res) => {
+  const q = parse(listSchema, req.query);
+  const csv = await container.contactBookService.exportCsv(req.auth!.tenantId, q);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="whatsapp-contacts-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(csv);
+});
+
 contactBookRouter.post("/", requireRole(...EDITORS, "STAFF"), async (req, res) => {
   res.status(201).json(await container.contactBookService.create(req.auth!.tenantId, parse(createSchema, req.body)));
 });
 
-const updateSchema = z.object({ name: z.string().max(120).nullable().optional(), tags: tagsField, optedOut: z.boolean().optional() });
+const updateSchema = z.object({
+  name: z.string().max(120).nullable().optional(),
+  tags: tagsField,
+  optedOut: z.boolean().optional(),
+  attributes: z.record(z.string().max(60), z.union([z.string().max(500), z.number(), z.boolean(), z.null()])).optional(),
+  notes: z.string().max(5000).nullable().optional(),
+});
 
 contactBookRouter.patch("/:id", requireRole(...EDITORS, "STAFF"), async (req, res) => {
   res.json(await container.contactBookService.update(req.auth!.tenantId, req.params.id, parse(updateSchema, req.body)));

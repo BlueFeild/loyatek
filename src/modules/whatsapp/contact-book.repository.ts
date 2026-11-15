@@ -12,6 +12,8 @@ export interface ContactRow {
   source: string;
   lastInboundAt: Date | null;
   createdAt: Date;
+  attributes: Prisma.JsonValue | null;
+  notes: string | null;
 }
 
 export type ContactStatusFilter = "all" | "subscribed" | "opted_out";
@@ -29,7 +31,11 @@ export interface ContactInput {
   phone: string;
   name?: string | null;
   tags?: string[];
+  // أعمدة زيادة من ملف الإكسل (المدينة، المرحلة...) - بتتدمج مع اللي موجود
+  attributes?: Record<string, string>;
 }
+
+export type ContactUpdate = { name?: string | null; tags?: string[]; optedOut?: boolean; optedOutAt?: Date | null; attributes?: Record<string, string> | null; notes?: string | null };
 
 export interface ContactBookStore {
   list(tenantId: string, query: ContactQuery): Promise<{ items: ContactRow[]; total: number }>;
@@ -38,7 +44,10 @@ export interface ContactBookStore {
   findById(tenantId: string, id: string): Promise<ContactRow | null>;
   findByPhone(tenantId: string, phone: string): Promise<ContactRow | null>;
   create(tenantId: string, input: ContactInput, source: string): Promise<ContactRow>;
-  update(tenantId: string, id: string, data: { name?: string | null; tags?: string[]; optedOut?: boolean; optedOutAt?: Date | null }): Promise<ContactRow | null>;
+  update(tenantId: string, id: string, data: ContactUpdate): Promise<ContactRow | null>;
+  // كل جهات الاتصال بنفس الفلتر (للتصدير) - أقصى عدد limit
+  exportRows(tenantId: string, query: Omit<ContactQuery, "skip" | "take">, limit: number): Promise<ContactRow[]>;
+  attributeKeys(tenantId: string): Promise<string[]>;
   delete(tenantId: string, id: string): Promise<boolean>;
   // جهات اتصال كتير مرة واحدة: الجديد يتضاف، والموجود ياخد التاجز الجديدة (ومايتمسحش منه حاجة)
   upsertMany(tenantId: string, rows: ContactInput[], source: string): Promise<{ created: number; updated: number }>;
@@ -51,10 +60,19 @@ export interface ContactBookStore {
   optedOutAmong(tenantId: string, phones: string[]): Promise<Set<string>>;
 }
 
-const contactSelect = { id: true, phone: true, name: true, tags: true, optedOut: true, optedOutAt: true, source: true, lastInboundAt: true, createdAt: true } as const;
+const contactSelect = { id: true, phone: true, name: true, tags: true, optedOut: true, optedOutAt: true, source: true, lastInboundAt: true, createdAt: true, attributes: true, notes: true } as const;
 
 function audienceWhere(tenantId: string, tags: string[], match: TagMatch): Prisma.WhatsappContactWhereInput {
   return { tenantId, optedOut: false, tags: match === "all" ? { hasEvery: tags } : { hasSome: tags } };
+}
+
+function listWhere(tenantId: string, query: Omit<ContactQuery, "skip" | "take">): Prisma.WhatsappContactWhereInput {
+  const where: Prisma.WhatsappContactWhereInput = { tenantId };
+  if (query.status === "subscribed") where.optedOut = false;
+  if (query.status === "opted_out") where.optedOut = true;
+  if (query.tag) where.tags = { has: query.tag };
+  if (query.q) where.OR = [{ name: { contains: query.q, mode: "insensitive" } }, { phone: { contains: query.q.replace(/[^\d]/g, "") || query.q } }];
+  return where;
 }
 
 // الوصول لقاعدة البيانات بس - مفيش منطق هنا
@@ -62,11 +80,7 @@ export class PrismaContactBookRepository implements ContactBookStore {
   constructor(private readonly db: PrismaClient) {}
 
   async list(tenantId: string, query: ContactQuery) {
-    const where: Prisma.WhatsappContactWhereInput = { tenantId };
-    if (query.status === "subscribed") where.optedOut = false;
-    if (query.status === "opted_out") where.optedOut = true;
-    if (query.tag) where.tags = { has: query.tag };
-    if (query.q) where.OR = [{ name: { contains: query.q, mode: "insensitive" } }, { phone: { contains: query.q.replace(/[^\d]/g, "") || query.q } }];
+    const where = listWhere(tenantId, query);
     const [items, total] = await Promise.all([
       this.db.whatsappContact.findMany({ where, orderBy: [{ lastInboundAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }], skip: query.skip, take: query.take, select: contactSelect }),
       this.db.whatsappContact.count({ where }),
@@ -98,9 +112,24 @@ export class PrismaContactBookRepository implements ContactBookStore {
     return this.db.whatsappContact.create({ data: { tenantId, phone: input.phone, name: input.name ?? null, tags: input.tags ?? [], source }, select: contactSelect });
   }
 
-  async update(tenantId: string, id: string, data: { name?: string | null; tags?: string[]; optedOut?: boolean; optedOutAt?: Date | null }) {
-    const r = await this.db.whatsappContact.updateMany({ where: { id, tenantId }, data });
+  async update(tenantId: string, id: string, data: ContactUpdate) {
+    const { attributes, ...rest } = data;
+    const r = await this.db.whatsappContact.updateMany({
+      where: { id, tenantId },
+      data: { ...rest, ...(attributes !== undefined ? { attributes: attributes && Object.keys(attributes).length ? attributes : Prisma.DbNull } : {}) },
+    });
     return r.count ? this.findById(tenantId, id) : null;
+  }
+
+  exportRows(tenantId: string, query: Omit<ContactQuery, "skip" | "take">, limit: number) {
+    return this.db.whatsappContact.findMany({ where: listWhere(tenantId, query), orderBy: { createdAt: "asc" }, take: limit, select: contactSelect });
+  }
+
+  async attributeKeys(tenantId: string) {
+    const rows = await this.db.$queryRaw<{ key: string }[]>`
+      SELECT DISTINCT k AS "key" FROM "whatsapp_contacts", jsonb_object_keys("attributes") AS k
+      WHERE "tenantId" = ${tenantId} AND jsonb_typeof("attributes") = 'object' ORDER BY k LIMIT 50`;
+    return rows.map((x) => x.key);
   }
 
   async delete(tenantId: string, id: string) {
@@ -111,11 +140,11 @@ export class PrismaContactBookRepository implements ContactBookStore {
   async upsertMany(tenantId: string, rows: ContactInput[], source: string) {
     if (rows.length === 0) return { created: 0, updated: 0 };
     const phones = rows.map((r) => r.phone);
-    const existing = await this.db.whatsappContact.findMany({ where: { tenantId, phone: { in: phones } }, select: { id: true, phone: true, name: true, tags: true } });
+    const existing = await this.db.whatsappContact.findMany({ where: { tenantId, phone: { in: phones } }, select: { id: true, phone: true, name: true, tags: true, attributes: true } });
     const byPhone = new Map(existing.map((e) => [e.phone, e]));
     const fresh = rows.filter((r) => !byPhone.has(r.phone));
     const created = fresh.length
-      ? (await this.db.whatsappContact.createMany({ data: fresh.map((r) => ({ tenantId, phone: r.phone, name: r.name ?? null, tags: r.tags ?? [], source })), skipDuplicates: true })).count
+      ? (await this.db.whatsappContact.createMany({ data: fresh.map((r) => ({ tenantId, phone: r.phone, name: r.name ?? null, tags: r.tags ?? [], source, ...(r.attributes && Object.keys(r.attributes).length ? { attributes: r.attributes } : {}) })), skipDuplicates: true })).count
       : 0;
     let updated = 0;
     for (const r of rows) {
@@ -123,8 +152,11 @@ export class PrismaContactBookRepository implements ContactBookStore {
       if (!e) continue;
       const tags = [...new Set([...e.tags, ...(r.tags ?? [])])];
       const name = e.name || r.name || null;
-      if (tags.length === e.tags.length && name === e.name) continue;
-      await this.db.whatsappContact.update({ where: { id: e.id }, data: { tags, name } });
+      const oldAttrs = e.attributes && typeof e.attributes === "object" && !Array.isArray(e.attributes) ? (e.attributes as Record<string, string>) : {};
+      const attrs = r.attributes && Object.keys(r.attributes).length ? { ...oldAttrs, ...r.attributes } : null;
+      const attrsChanged = Boolean(attrs && JSON.stringify(attrs) !== JSON.stringify(oldAttrs));
+      if (tags.length === e.tags.length && name === e.name && !attrsChanged) continue;
+      await this.db.whatsappContact.update({ where: { id: e.id }, data: { tags, name, ...(attrsChanged && attrs ? { attributes: attrs } : {}) } });
       updated++;
     }
     return { created, updated };

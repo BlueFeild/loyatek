@@ -131,6 +131,8 @@ model Tenant {
   whatsappContacts      WhatsappContact[]
   whatsappSequences     WhatsappSequence[]
   whatsappSequenceRuns  WhatsappSequenceEnrollment[]
+  whatsappQuickReplies  WhatsappQuickReply[]
+  whatsappInboxSettings WhatsappInboxSettings?
   whatsappAiAgent       WhatsappAiAgent?
   whatsappConversations WhatsappConversation[]
   whatsappFlows         WhatsappFlow[]
@@ -1468,6 +1470,9 @@ model WhatsappConversation {
   sourceAdId       String?
   sourceAdHeadline String?
   sourceAt         DateTime?
+  // آخر مرة اتبعتله رسالة "إحنا برّه مواعيد الشغل" (مرة كل كام ساعة بس)
+  awaySentAt       DateTime?
+  assignedAt       DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -1491,6 +1496,9 @@ model WhatsappContact {
   optedOut      Boolean   @default(false)
   optedOutAt    DateTime?
   source        String    @default("manual") // manual | import | inbound | customers | campaign
+  // بيانات إضافية يكتبها التاجر (مرحلة العميل، المدينة، ...) {key: value} - أقصى 20
+  attributes    Json?
+  notes         String?   @db.Text
   lastInboundAt DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -2676,4 +2684,38 @@ model WaLoginCode {
   @@index([tenantId, phone, createdAt])
   @@index([tenantId, ip, createdAt])
   @@map("wa_login_codes")
+}
+
+// ردود جاهزة للفريق في Team Inbox (اكتب / واختار)
+model WhatsappQuickReply {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shortcut  String
+  title     String
+  body      String   @db.Text
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, shortcut])
+  @@map("whatsapp_quick_replies")
+}
+
+// إعدادات الـ Inbox: توزيع المحادثات على الموظفين + رسالة برّه مواعيد الشغل
+model WhatsappInboxSettings {
+  tenantId           String   @id
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  autoAssign         String   @default("off") // off | round_robin
+  assignUserIds      String[] @default([])
+  lastAssignedUserId String?
+  awayEnabled        Boolean  @default(false)
+  awayText           String   @default("") @db.Text
+  // {"0":[["09:00","17:00"]], ...} 0 = الأحد؛ يوم فاضي = مقفول
+  hours              Json?
+  timezone           String?
+  awayEveryHours     Int      @default(12)
+  updatedAt          DateTime @updatedAt
+
+  @@map("whatsapp_inbox_settings")
 }

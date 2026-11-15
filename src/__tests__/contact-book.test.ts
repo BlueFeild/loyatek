@@ -9,7 +9,7 @@ class MemoryBook implements ContactBookStore {
   rows: (ContactRow & { tenantId: string })[] = [];
   private n = 0;
   private make(tenantId: string, input: ContactInput, source: string) {
-    const row = { id: `c${++this.n}`, tenantId, phone: input.phone, name: input.name ?? null, tags: input.tags ?? [], optedOut: false, optedOutAt: null, source, lastInboundAt: null, createdAt: new Date() };
+    const row = { id: `c${++this.n}`, tenantId, phone: input.phone, name: input.name ?? null, tags: input.tags ?? [], optedOut: false, optedOutAt: null, source, lastInboundAt: null, createdAt: new Date(), attributes: (input.attributes ?? null) as ContactRow["attributes"], notes: null as string | null };
     this.rows.push(row);
     return row;
   }
@@ -18,6 +18,12 @@ class MemoryBook implements ContactBookStore {
     return { items, total: items.length };
   }
   async tagCounts() {
+    return [];
+  }
+  async exportRows(tenantId: string) {
+    return this.rows.filter((r) => r.tenantId === tenantId);
+  }
+  async attributeKeys() {
     return [];
   }
   async stats(tenantId: string) {
@@ -183,5 +189,29 @@ describe("campaign report", () => {
     expect(r).toMatchObject({ total: 4, sent: 3, delivered: 2, read: 1, failed: 1, replied: 1, skipped: 2 });
     expect(r.rates).toEqual({ delivered: 66.7, read: 33.3, replied: 33.3 });
     expect(r.recipients[0]).toMatchObject({ phone: "1", replied: true });
+  });
+});
+
+describe("contact attributes + export", () => {
+  it("extra Excel columns become attributes, empty ones are dropped", async () => {
+    const { contacts } = (await import("../modules/whatsapp/contact-book.service")).rowsToContacts([
+      { Phone: "+974 5555 0001", Name: "Sara", City: "Doha", Stage: "", "Lead source": "Instagram" },
+    ]);
+    expect(contacts[0].attributes).toEqual({ City: "Doha", "Lead source": "Instagram" });
+  });
+  it("update keeps attributes + notes, CSV has a column per attribute and blocks formulas", async () => {
+    const mod = await import("../modules/whatsapp/contact-book.service");
+    const { store, service } = setup();
+    const c = await service.create("t1", { phone: "+97455550009", name: "=HYPERLINK(evil)" });
+    await service.update("t1", c.id, { attributes: { City: "Doha", Empty: "  ", Stage: "Hot lead" }, notes: "  wants a quote  " });
+    expect(store.rows[0].attributes).toEqual({ City: "Doha", Stage: "Hot lead" });
+    expect(store.rows[0].notes).toBe("wants a quote");
+    const csv = await service.exportCsv("t1", {});
+    expect(csv.charCodeAt(0)).toBe(0xfeff);
+    const [head, line] = csv.slice(1).split("\r\n");
+    expect(head).toBe('"Phone","Name","Tags","Status","Source","Added","Last message","City","Stage","Notes"');
+    expect(line).toContain(`"+97455550009","'=HYPERLINK(evil)"`);
+    expect(line).toContain('"Doha","Hot lead","wants a quote"');
+    expect(mod.csvCell("+974 5555")).toBe('"+974 5555"');
   });
 });

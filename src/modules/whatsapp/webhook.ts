@@ -235,6 +235,7 @@ export async function handleWebhook(tenantId: string, body: any) {
       if (byFlow) {
         // المحادثة اتسجلت (عشان الموظف الذكي يعرف إن العميل كتب)
         await container.aiAgentService.noteInbound(tenantId, phone).catch(() => {});
+        await afterInbound(tenantId, phone, m.name ?? null, true);
         continue;
       }
       // الموظف الذكي الأول (لو مفعّل)؛ لو المحادثة مع موظف بشري محدش يرد؛ غير كده البوت العادي بالكلمات
@@ -244,7 +245,9 @@ export async function handleWebhook(tenantId: string, body: any) {
           console.warn(`[whatsapp-webhook] ai agent: ${(err as Error)?.message}`);
           return "skipped" as const;
         });
-      if (outcome !== "skipped") continue;
+      // توزيع المحادثة على الفريق + رسالة "برّه مواعيد الشغل" (لو الموظف الذكي مارد)
+      const routed = await afterInbound(tenantId, phone, m.name ?? null, outcome === "replied");
+      if (outcome !== "skipped" || routed.awaySent) continue;
       await runBot(tenantId, m);
     }
 
@@ -255,6 +258,13 @@ export async function handleWebhook(tenantId: string, body: any) {
       await recordWhatsappMessage({ tenantId, direction: "OUT", contactPhone: e.to, body: e.text, kind: "app", waMessageId: e.id, status: "sent" });
     }
   }
+}
+
+async function afterInbound(tenantId: string, phone: string, name: string | null, autoReplied: boolean) {
+  return container.inboxTools.afterInbound(tenantId, { phone, name, autoReplied }).catch((err) => {
+    console.warn(`[whatsapp-webhook] inbox routing: ${(err as Error)?.message}`);
+    return { assignedTo: null, awaySent: false };
+  });
 }
 
 async function recordAdSource(tenantId: string, phone: string, ref: AdReferral) {

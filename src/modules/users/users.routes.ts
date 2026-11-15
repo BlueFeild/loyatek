@@ -4,10 +4,28 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { assertTenantOwns } from "../../utils/tenant-owned";
+import { container } from "../../core/container";
 
 export const usersRouter = Router();
 
 usersRouter.use(requireAuth);
+
+// --- صفحة الفريق (/team) - المنطق في TeamService ---
+const managers = requireRole("OWNER", "ADMIN");
+const actor = (req: any) => ({ tenantId: req.auth!.tenantId, userId: req.auth!.userId, role: req.auth!.role });
+
+usersRouter.get("/team", async (req, res) => {
+  res.json(await container.team.list(req.auth!.tenantId));
+});
+usersRouter.post("/team", managers, async (req, res) => {
+  res.status(201).json(await container.team.add(actor(req), req.body));
+});
+usersRouter.patch("/team/:id", managers, async (req, res) => {
+  res.json(await container.team.edit(actor(req), req.params.id, req.body));
+});
+usersRouter.post("/team/:id/password-link", managers, async (req, res) => {
+  res.json(await container.team.sendPasswordLink(actor(req), req.params.id));
+});
 
 // عرض كل المستخدمين في نفس الشركة بس (معزول حسب tenantId)
 usersRouter.get("/", async (req, res) => {
