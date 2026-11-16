@@ -57,6 +57,8 @@ export const pageStyleSchema = z
     hero: z.enum(["left", "center"]).optional(),
     // الحواف: ناعمة / مدورة جدًا / حادة
     corners: z.enum(["soft", "round", "sharp"]).optional(),
+    // المنيو: الضغط على صورة الأكلة يفتحها كبيرة (افتراضي شغّال؛ false = مقفول)
+    photoZoom: z.boolean().optional(),
   })
   .strict();
 
