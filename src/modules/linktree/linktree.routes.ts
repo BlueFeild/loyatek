@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { linktreeDesignFields } from "./linktree-design";
 
 export const linktreeRouter = Router();
 linktreeRouter.use(requireAuth);
@@ -36,6 +37,7 @@ const updateSettingsSchema = z.object({
     .optional(),
   themeColor: z.string().optional(),
   backgroundColor: z.string().optional(),
+  ...linktreeDesignFields,
 });
 
 linktreeRouter.patch("/settings", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
@@ -45,7 +47,11 @@ linktreeRouter.patch("/settings", requireRole("OWNER", "ADMIN", "MANAGER"), asyn
   await getOrCreateSettings(req.auth!.tenantId);
   const updated = await prisma.linktreeSettings.update({
     where: { tenantId: req.auth!.tenantId },
-    data: { ...parsed.data, avatarStyle: parsed.data.avatarStyle === null ? Prisma.DbNull : parsed.data.avatarStyle },
+    data: {
+      ...parsed.data,
+      avatarStyle: parsed.data.avatarStyle === null ? Prisma.DbNull : parsed.data.avatarStyle,
+      pageStyle: parsed.data.pageStyle === null ? Prisma.DbNull : parsed.data.pageStyle,
+    },
   });
   res.json(updated);
 });

@@ -2117,6 +2117,12 @@ model LinktreeSettings {
   // خلفية صفحة اللينك-تري العامة - منفصلة عن themeColor اللي بيلوّن
   // بس الأزرار والأفتار؛ افتراضيًا سماوي فاتح (الكحلي القديم اتشال 2026-11-12)
   backgroundColor String   @default("#f0f9ff")
+  // شكل جاهز (القايمة في modules/linktree/linktree-design.ts = frontend/src/data/linktreeTemplates.ts)
+  pageTemplate    String   @default("classic")
+  // { shape, font, featured, socialRow, coverStyle, animate } - null = افتراضي الشكل
+  pageStyle       Json?
+  // صورة غلاف فوق اللوجو
+  coverDataUrl    String?  @db.Text
   updatedAt       DateTime @updatedAt
 
   @@map("linktree_settings")
