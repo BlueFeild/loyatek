@@ -5,6 +5,7 @@ import { createNotification } from "../notifications/notifications.service";
 import { checkPlatformInvoice } from "./myfatoorah";
 import { container } from "../../core/container";
 import { grantIncludedAiCredits } from "../ai/ai-subscription";
+import { grantIncludedSms } from "../sms/sms-subscription";
 import { getPlatformConfig } from "../../utils/platform-config";
 
 // تفعيل طلب اشتراك: بيتنادى أوتوماتيك أول ما الدفع يتأكد من MyFatoorah، أو
@@ -35,6 +36,8 @@ export async function activateSubscriptionOrder(orderId: string) {
           data: { subscribedModules: order.selectedModules, moduleExpirations: Object.fromEntries(order.selectedModules.map((m: string) => [m, expiry])) },
         });
         if (plan) await grantIncludedAiCredits(container.creditLedger, tx, newTenant.id, order.billingCycle, order.id, plan);
+        // رصيد رسايل SMS المشمول في الاشتراك (مرة واحدة لكل طلب)
+        if (order.selectedModules.includes("sms")) await grantIncludedSms(tx, newTenant.id, order.billingCycle, order.id);
       });
     }
     await createNotification({ tenantId: order.tenantId, type: "SUBSCRIPTION_ACTIVATED", title: "Your new company is ready", body: `${newTenant.name} has been created and its services are active.`, link: "/dashboard" }).catch(() => {});
@@ -61,6 +64,8 @@ export async function activateSubscriptionOrder(orderId: string) {
     if (claimed.count === 0) return false;
     await tx.tenant.update({ where: { id: tenant.id }, data: { subscribedModules: merged, moduleExpirations: nextExpirations } });
     if (plan) await grantIncludedAiCredits(container.creditLedger, tx, tenant.id, order.billingCycle, order.id, plan);
+    // رصيد رسايل SMS المشمول في الاشتراك (مرة واحدة لكل طلب - القفل فوق بيضمن ده)
+    if (order.selectedModules.includes("sms")) await grantIncludedSms(tx, tenant.id, order.billingCycle, order.id);
     return true;
   });
   if (!done) return { ok: true as const, alreadyActive: true };

@@ -8,6 +8,7 @@ import { startSocialReportScheduler } from "./jobs/social-reports";
 import { startCampaignScheduler } from "./jobs/campaign-scheduler";
 import { startSeatReminderScheduler } from "./jobs/seat-reminders";
 import { startWhatsappSequenceScheduler } from "./jobs/whatsapp-sequences";
+import { startSmsScheduler } from "./jobs/sms-scheduler";
 
 const PORT = process.env.PORT || 4000;
 
@@ -27,4 +28,6 @@ app.listen(PORT, () => {
   startSeatReminderScheduler(Number(process.env.SEAT_REMINDER_INTERVAL_MS) || undefined);
   // سلاسل رسايل واتساب (Drip) كل دقيقة - DISABLE_WHATSAPP_SEQUENCES=1 يقفلها
   startWhatsappSequenceScheduler(Number(process.env.SEQUENCE_INTERVAL_MS) || undefined);
+  // حملات SMS المجدولة (كل دقيقة) - DISABLE_SMS_SCHEDULER=1 يقفلها
+  startSmsScheduler(Number(process.env.SMS_SCHEDULER_INTERVAL_MS) || undefined);
 });
