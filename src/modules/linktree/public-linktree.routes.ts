@@ -34,6 +34,7 @@ publicLinktreeRouter.get("/:slug", async (req, res) => {
     pageTemplate: settings?.pageTemplate ?? "classic",
     pageStyle: settings?.pageStyle ?? null,
     coverDataUrl: settings?.coverDataUrl ?? null,
+    backgroundDataUrl: settings?.backgroundDataUrl ?? null,
     links: links.map((l: any) => ({ id: l.id, label: l.label, url: l.url, kind: l.kind, fileName: l.fileName, fileSize: l.fileSize, icon: l.icon, iconDataUrl: l.iconDataUrl })),
   });
 });

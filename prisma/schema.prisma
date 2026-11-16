@@ -2123,6 +2123,8 @@ model LinktreeSettings {
   pageStyle       Json?
   // صورة غلاف فوق اللوجو
   coverDataUrl    String?  @db.Text
+  // صورة خلفية الصفحة (pageStyle.bg.type = "photo")
+  backgroundDataUrl String? @db.Text
   updatedAt       DateTime @updatedAt
 
   @@map("linktree_settings")

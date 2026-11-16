@@ -3,3 +3,4 @@
 ALTER TABLE "linktree_settings" ADD COLUMN IF NOT EXISTS "pageTemplate" TEXT NOT NULL DEFAULT 'classic';
 ALTER TABLE "linktree_settings" ADD COLUMN IF NOT EXISTS "pageStyle" JSONB;
 ALTER TABLE "linktree_settings" ADD COLUMN IF NOT EXISTS "coverDataUrl" TEXT;
+ALTER TABLE "linktree_settings" ADD COLUMN IF NOT EXISTS "backgroundDataUrl" TEXT;

@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { imageDataUrl, COVER_MAX_CHARS } from "../booking/page-design";
 
+const HEX = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Pick a color like #14B8A6");
+
 // الأشكال الجاهزة لصفحة Link-in-Bio - لازم تطابق frontend/src/data/linktreeTemplates.ts
 export const LINKTREE_TEMPLATES = [
   "arch", "editorial", "olive", "studio", "champagne", "terracotta",
@@ -19,6 +21,19 @@ export const linktreePageStyleSchema = z
     // banner = كارت فوق / hero = الصورة بعرض الصفحة وبتدوب في الخلفية
     coverStyle: z.enum(["banner", "hero"]).optional(),
     animate: z.boolean().optional(),
+    // خلفية التاجر بدل خلفية الشكل: لون / تدرّج (ممكن يتحرك) / صورة (بتغميق ولون فوقها)
+    bg: z
+      .object({
+        type: z.enum(["color", "gradient", "photo"]),
+        color: HEX.optional(),
+        color2: HEX.optional(),
+        moving: z.boolean().optional(),
+        dim: z.number().int().min(0).max(85).optional(),
+        tint: HEX.optional(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict();
 
@@ -26,4 +41,5 @@ export const linktreeDesignFields = {
   pageTemplate: z.enum(LINKTREE_TEMPLATES).optional(),
   pageStyle: linktreePageStyleSchema.nullable().optional(),
   coverDataUrl: imageDataUrl(COVER_MAX_CHARS, "The cover photo").nullable().optional(),
+  backgroundDataUrl: imageDataUrl(COVER_MAX_CHARS, "The background photo").nullable().optional(),
 };
