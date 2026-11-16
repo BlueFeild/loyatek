@@ -2727,3 +2727,276 @@ model WhatsappInboxSettings {
 
   @@map("whatsapp_inbox_settings")
 }
+
+// ======================================================================
+// كتالوج العقارات (module "properties") - 2026-11-16
+// شركة عقارات بتعرض عقاراتها: ألبوم صور + مواصفات + سعر (بيع/إيجار) + طلبات الاهتمام
+// ======================================================================
+model PropertySettings {
+  id           String   @id @default(uuid())
+  tenantId     String   @unique
+  brandName    String?
+  about        String?  @db.Text
+  logoDataUrl  String?  @db.Text
+  coverDataUrl String?  @db.Text
+  accentColor  String   @default("#0f766e")
+  // أرقام بس مع كود الدولة (974...)
+  whatsapp     String?
+  phone        String?
+  email        String?
+  // false = "السعر عند الطلب" لكل العقارات
+  showPrices   Boolean  @default(true)
+  updatedAt    DateTime @updatedAt
+
+  @@map("property_settings")
+}
+
+model PropertyListing {
+  id           String          @id @default(uuid())
+  tenantId     String
+  title        String
+  purpose      String          @default("SALE") // SALE | RENT
+  propertyType String          @default("APARTMENT") // APARTMENT | VILLA | TOWNHOUSE | OFFICE | SHOP | LAND | BUILDING | WAREHOUSE | OTHER
+  status       String          @default("AVAILABLE") // AVAILABLE | RESERVED | SOLD | RENTED | HIDDEN
+  // بالدولار (زي كل الفلوس في المنصة)؛ null = السعر عند الطلب
+  price        Decimal?        @db.Decimal(18, 6)
+  rentPeriod   String? // MONTH | YEAR (للإيجار بس)
+  areaSqm      Int?
+  bedrooms     Int?
+  bathrooms    Int?
+  parking      Int?
+  furnished    String? // FURNISHED | SEMI | UNFURNISHED
+  location     String?
+  mapUrl       String?         @db.Text
+  description  String?         @db.Text
+  features     String[]        @default([])
+  featured     Boolean         @default(false)
+  sortOrder    Int             @default(0)
+  views        Int             @default(0)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  photos       PropertyPhoto[]
+
+  @@index([tenantId, status])
+  @@map("property_listings")
+}
+
+model PropertyPhoto {
+  id        String          @id @default(uuid())
+  tenantId  String
+  listingId String
+  listing   PropertyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  dataUrl   String          @db.Text
+  sortOrder Int             @default(0)
+  createdAt DateTime        @default(now())
+
+  @@index([listingId])
+  @@map("property_photos")
+}
+
+model PropertyInquiry {
+  id        String   @id @default(uuid())
+  tenantId  String
+  listingId String?
+  name      String
+  phone     String
+  email     String?
+  message   String?  @db.Text
+  status    String   @default("NEW") // NEW | CONTACTED | CLOSED
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@map("property_inquiries")
+}
+
+// ======================================================================
+// المتجر الإلكتروني (module "store") - 2026-11-16
+// منتجات بألبوم صور + اختيارات (مقاس/لون) + مخزون + سلة + طلبات توصيل/استلام + طرق دفع التاجر
+// ======================================================================
+model StoreSettings {
+  id               String   @id @default(uuid())
+  tenantId         String   @unique
+  brandName        String?
+  tagline          String?
+  about            String?  @db.Text
+  logoDataUrl      String?  @db.Text
+  coverDataUrl     String?  @db.Text
+  accentColor      String   @default("#111827")
+  template         String   @default("clean")
+  whatsapp         String?
+  phone            String?
+  email            String?
+  instagram        String?
+  address          String?
+  // توصيل: سعر ثابت أو حسب المنطقة [{name, fee(USD)}]؛ مجاني فوق مبلغ معين
+  deliveryEnabled  Boolean  @default(true)
+  deliveryFee      Decimal  @default(0) @db.Decimal(18, 6)
+  freeDeliveryOver Decimal? @db.Decimal(18, 6)
+  deliveryAreas    Json?
+  pickupEnabled    Boolean  @default(false)
+  pickupAddress    String?
+  // إيميل التاجر لتنبيه الطلبات الجديدة
+  merchantEmail    String?
+  updatedAt        DateTime @updatedAt
+
+  @@map("store_settings")
+}
+
+model StoreCategory {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@map("store_categories")
+}
+
+model StoreProduct {
+  id           String              @id @default(uuid())
+  tenantId     String
+  categoryId   String?
+  name         String
+  description  String?             @db.Text
+  price        Decimal             @db.Decimal(18, 6)
+  // السعر قبل الخصم (بيتشطب)
+  comparePrice Decimal?            @db.Decimal(18, 6)
+  sku          String?
+  // null = مخزون مفتوح
+  stock        Int?
+  // [{name: "Size", values: ["S","M","L"]}]
+  options      Json?
+  active       Boolean             @default(true)
+  featured     Boolean             @default(false)
+  sortOrder    Int                 @default(0)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  photos       StoreProductPhoto[]
+
+  @@index([tenantId, active])
+  @@map("store_products")
+}
+
+model StoreProductPhoto {
+  id        String       @id @default(uuid())
+  tenantId  String
+  productId String
+  product   StoreProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  dataUrl   String       @db.Text
+  sortOrder Int          @default(0)
+  createdAt DateTime     @default(now())
+
+  @@index([productId])
+  @@map("store_product_photos")
+}
+
+model StoreOrder {
+  id                   String   @id @default(uuid())
+  tenantId             String
+  // رقم الطلب جوه الشركة (1، 2، 3...)
+  number               Int
+  customerName         String
+  customerPhone        String
+  customerEmail        String?
+  fulfillment          String   @default("DELIVERY") // DELIVERY | PICKUP
+  address              String?  @db.Text
+  area                 String?
+  // [{productId, name, options: {Size: "M"}, price(USD), qty}]
+  items                Json
+  subtotal             Decimal  @db.Decimal(18, 6)
+  deliveryFee          Decimal  @default(0) @db.Decimal(18, 6)
+  total                Decimal  @db.Decimal(18, 6)
+  // المبلغ اللي اتطلب من العميل بعملة الشركة وقت الطلب
+  currency             String?
+  payableAmount        Decimal? @db.Decimal(18, 6)
+  status               String   @default("NEW") // NEW | CONFIRMED | SHIPPED | DELIVERED | CANCELLED
+  paymentStatus        String   @default("UNPAID") // UNPAID | PAID | NOT_REQUIRED
+  paymentMethodType    String?
+  paymentMethodLabel   String?
+  myFatoorahInvoiceId  String?
+  myFatoorahPaymentUrl String?  @db.Text
+  trackingUrl          String?  @db.Text
+  note                 String?  @db.Text
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([tenantId, number])
+  @@index([tenantId, createdAt])
+  @@map("store_orders")
+}
+
+// ======================================================================
+// رسايل SMS (module "sms") - 2026-11-16
+// رصيد رسايل لكل شركة + رسالة واحدة / حملات لجهات الاتصال + سجل بالحالة
+// ======================================================================
+model SmsSettings {
+  id         String   @id @default(uuid())
+  tenantId   String   @unique
+  // اسم المرسل (Sender ID) - بيحتاج تسجيل عند المزوّد في بعض الدول
+  senderName String?
+  // عدد الرسايل (segments) المتبقية
+  balance    Int      @default(0)
+  updatedAt  DateTime @updatedAt
+
+  @@map("sms_settings")
+}
+
+model SmsCampaign {
+  id            String    @id @default(uuid())
+  tenantId      String
+  name          String
+  body          String    @db.Text
+  // الجمهور: تاجات من دفتر جهات الاتصال (any/all) أو قايمة أرقام ملصوقة [{phone, name}]
+  audienceTags  String[]  @default([])
+  audienceMatch String    @default("any")
+  recipients    Json?
+  status        String    @default("DRAFT") // DRAFT | SCHEDULED | SENDING | SENT | FAILED
+  scheduledAt   DateTime?
+  sendingAt     DateTime?
+  sentAt        DateTime?
+  total         Int       @default(0)
+  sentCount     Int       @default(0)
+  failedCount   Int       @default(0)
+  segmentsUsed  Int       @default(0)
+  lastError     String?   @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@map("sms_campaigns")
+}
+
+model SmsMessage {
+  id         String   @id @default(uuid())
+  tenantId   String
+  campaignId String?
+  to         String
+  body       String   @db.Text
+  segments   Int      @default(1)
+  status     String   @default("QUEUED") // QUEUED | SENT | DELIVERED | FAILED
+  provider   String?
+  providerId String?
+  error      String?  @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([tenantId, createdAt])
+  @@index([campaignId])
+  @@map("sms_messages")
+}
+
+model SmsCreditTransaction {
+  id          String   @id @default(uuid())
+  tenantId    String
+  // + رصيد اتضاف / - رسايل اتبعتت
+  amount      Int
+  reason      String // GRANT | SEND | REFUND | SUBSCRIPTION | TRIAL
+  refId       String?
+  note        String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@map("sms_credit_transactions")
+}

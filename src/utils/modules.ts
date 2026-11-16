@@ -1,7 +1,8 @@
 // قايمة الخدمات اللي بتتباع - المصدر الوحيد في الباك إند (الدفع، السوبر أدمن، الأسعار)
 // "social" = خدمة السوشيال كلها: النشر + الرسايل + التقارير + الإعلانات المدفوعة + تحليل الحسابات
 // (من 2026-11-11 - قبل كده ads و audit كانوا خدمات لوحدهم)
-export const ALL_MODULES = ["erp", "booking", "wallet", "whatsapp", "catalog", "linktree", "ai", "social", "walogin", "tickets"] as const;
+export const ALL_MODULES = ["erp", "booking", "wallet", "whatsapp", "catalog", "linktree", "ai", "social", "walogin", "tickets", "properties", "store", "sms"] as const;
+// 2026-11-16: properties = كتالوج العقارات، store = المتجر الإلكتروني، sms = رسايل SMS
 // "tickets" = حجز التذاكر والمقاعد (عروض، مسرح، VIP) - خدمة لوحدها من 2026-11-12 (قبل كده كانت جوه الحجوزات)
 export type ModuleId = (typeof ALL_MODULES)[number];
 
