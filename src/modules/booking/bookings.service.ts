@@ -27,6 +27,7 @@ interface UpdateSettingsInput {
   logoDataUrl?: string | null;
   services?: string[];
   servicePrices?: Record<string, number>;
+  serviceDiscounts?: Record<string, { pct: number; endsAt?: string | null }>;
   openHour?: number;
   closeHour?: number;
   disabledHours?: number[];

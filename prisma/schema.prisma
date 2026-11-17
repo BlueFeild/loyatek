@@ -824,6 +824,8 @@ model BookingSettings {
   // سعر كل خدمة بالدولار { "اسم الخدمة": سعر } - العميل بيختار خدمة أو أكتر
   // والإجمالي بيتحسب على السيرفر (modules/booking/service-pricing.ts)
   servicePrices       Json     @default("{}")
+  // خصم كل خدمة { "اسم الخدمة": { pct: 1-90, endsAt: ISO | null } }
+  serviceDiscounts    Json?
   // إشعار للتاجر نفسه بكل حجز جديد: واتساب على رقمه و/أو إيميل (Resend).
   // waMerchantTemplate بيقبل {name} {phone} {resource} {date} {time} {payment} {services} {business} {reference}
   merchantWhatsapp    String   @default("")
@@ -1289,17 +1291,20 @@ model MenuCategory {
 }
 
 model MenuItem {
-  id           String       @id @default(uuid())
-  tenantId     String
-  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  categoryId   String
-  category     MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  name         String
-  description  String       @default("")
-  price        Decimal      @db.Decimal(18, 6)
-  photoDataUrl String?      @db.Text
-  sortOrder    Int          @default(0)
-  createdAt    DateTime     @default(now())
+  id             String       @id @default(uuid())
+  tenantId       String
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categoryId     String
+  category       MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  name           String
+  description    String       @default("")
+  price          Decimal      @db.Decimal(18, 6)
+  photoDataUrl   String?      @db.Text
+  sortOrder      Int          @default(0)
+  createdAt      DateTime     @default(now())
+  // خصم % (1-90، null = مفيش) + تاريخ انتهاء اختياري (null = مفتوح)
+  discountPct    Int?
+  discountEndsAt DateTime?
 
   orderItems OrderItem[]
 
@@ -2105,27 +2110,27 @@ model AutomationRule {
 // قابل للمشاركة بـ QR كود، مع تتبع نقرات حقيقي لكل رابط
 // ------------------------------------------------------------
 model LinktreeSettings {
-  id              String   @id @default(uuid())
-  tenantId        String   @unique
-  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  displayName     String   @default("My Business")
-  bio             String   @default("")
-  avatarDataUrl   String?  @db.Text
+  id                String   @id @default(uuid())
+  tenantId          String   @unique
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  displayName       String   @default("My Business")
+  bio               String   @default("")
+  avatarDataUrl     String?  @db.Text
   // شكل اللوجو: { fit: cover|contain, shape: circle|rounded|square, zoom, x, y } - null = الافتراضي
-  avatarStyle     Json?
-  themeColor      String   @default("#38BDF8")
+  avatarStyle       Json?
+  themeColor        String   @default("#38BDF8")
   // خلفية صفحة اللينك-تري العامة - منفصلة عن themeColor اللي بيلوّن
   // بس الأزرار والأفتار؛ افتراضيًا سماوي فاتح (الكحلي القديم اتشال 2026-11-12)
-  backgroundColor String   @default("#f0f9ff")
+  backgroundColor   String   @default("#f0f9ff")
   // شكل جاهز (القايمة في modules/linktree/linktree-design.ts = frontend/src/data/linktreeTemplates.ts)
-  pageTemplate    String   @default("classic")
+  pageTemplate      String   @default("classic")
   // { shape, font, featured, socialRow, coverStyle, animate } - null = افتراضي الشكل
-  pageStyle       Json?
+  pageStyle         Json?
   // صورة غلاف فوق اللوجو
-  coverDataUrl    String?  @db.Text
+  coverDataUrl      String?  @db.Text
   // صورة خلفية الصفحة (pageStyle.bg.type = "photo")
-  backgroundDataUrl String? @db.Text
-  updatedAt       DateTime @updatedAt
+  backgroundDataUrl String?  @db.Text
+  updatedAt         DateTime @updatedAt
 
   @@map("linktree_settings")
 }

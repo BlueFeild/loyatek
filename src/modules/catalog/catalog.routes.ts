@@ -6,9 +6,22 @@ import { getOrCreateCatalogSettings, updateCatalogSettings, createOrder, confirm
 import { MENU_CURRENCY_CODES } from "../../utils/money";
 import { addDemoMenu, removeDemoMenu } from "./demo-menu";
 import { container } from "../../core/container";
+import { DISCOUNT_MAX_PCT, DISCOUNT_MIN_PCT } from "../../utils/discount";
 import { BOOKING_FONTS, BOOKING_TEMPLATES, COVER_MAX_CHARS, imageDataUrl, pageStyleSchema } from "../booking/page-design";
 
 export const catalogRouter = Router();
+
+// خصم الصنف: نسبة 1-90 (null = من غير خصم) + تاريخ انتهاء اختياري (null = مفتوح)
+const discountPctField = z.number().int().min(DISCOUNT_MIN_PCT).max(DISCOUNT_MAX_PCT).nullable().optional();
+const discountEndsAtField = z.string().datetime({ offset: true }).nullable().optional();
+function discountData(d: { discountPct?: number | null; discountEndsAt?: string | null }) {
+  const out: { discountPct?: number | null; discountEndsAt?: Date | null } = {};
+  if (d.discountPct !== undefined) out.discountPct = d.discountPct;
+  if (d.discountEndsAt !== undefined) out.discountEndsAt = d.discountEndsAt ? new Date(d.discountEndsAt) : null;
+  // شيل الخصم = شيل تاريخه كمان
+  if (d.discountPct === null) out.discountEndsAt = null;
+  return out;
+}
 
 catalogRouter.use(requireAuth);
 
@@ -119,6 +132,8 @@ const createItemSchema = z.object({
   price: z.number().min(0),
   // صورة الصنف ممكن تتبعت مع الإضافة نفسها (التاجر بيختارها قبل ما يدوس Add)
   photoDataUrl: z.string().regex(/^data:image\/(png|jpeg|webp|gif);base64,/, "Use a PNG, JPG, WebP or GIF photo").max(6_000_000).optional(),
+  discountPct: discountPctField,
+  discountEndsAt: discountEndsAtField,
 });
 
 catalogRouter.post("/items", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
@@ -131,8 +146,9 @@ catalogRouter.post("/items", requireRole("OWNER", "ADMIN", "MANAGER"), async (re
   if (!category) return res.status(404).json({ error: "Category not found" });
 
   const count = await prisma.menuItem.count({ where: { categoryId: category.id } });
+  const { discountPct, discountEndsAt, ...fields } = parsed.data;
   const item = await prisma.menuItem.create({
-    data: { tenantId: req.auth!.tenantId, ...parsed.data, sortOrder: count },
+    data: { tenantId: req.auth!.tenantId, ...fields, ...discountData({ discountPct, discountEndsAt }), sortOrder: count },
   });
   res.status(201).json(item);
 });
@@ -142,6 +158,8 @@ const updateItemSchema = z.object({
   description: z.string().optional(),
   price: z.number().min(0).optional(),
   photoDataUrl: z.string().nullable().optional(),
+  discountPct: discountPctField,
+  discountEndsAt: discountEndsAtField,
 });
 
 catalogRouter.patch("/items/:id", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
@@ -151,8 +169,34 @@ catalogRouter.patch("/items/:id", requireRole("OWNER", "ADMIN", "MANAGER"), asyn
   const item = await prisma.menuItem.findFirst({ where: { id: req.params.id, tenantId: req.auth!.tenantId } });
   if (!item) return res.status(404).json({ error: "Item not found" });
 
-  const updated = await prisma.menuItem.update({ where: { id: item.id }, data: parsed.data });
+  const { discountPct, discountEndsAt, ...fields } = parsed.data;
+  const updated = await prisma.menuItem.update({ where: { id: item.id }, data: { ...fields, ...discountData({ discountPct, discountEndsAt }) } });
   res.json(updated);
+});
+
+// خصم على كل الأصناف مرة واحدة (pct = null يشيل الخصم من الكل) - أصناف الشركة دي بس
+const bulkDiscountSchema = z.object({
+  discountPct: z.number().int().min(DISCOUNT_MIN_PCT).max(DISCOUNT_MAX_PCT).nullable(),
+  discountEndsAt: discountEndsAtField,
+  categoryId: z.string().uuid().optional(),
+});
+
+catalogRouter.post("/items/discount", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  const parsed = bulkDiscountSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const tenantId = req.auth!.tenantId;
+  if (parsed.data.categoryId) {
+    const category = await prisma.menuCategory.findFirst({ where: { id: parsed.data.categoryId, tenantId } });
+    if (!category) return res.status(404).json({ error: "Category not found" });
+  }
+  const result = await prisma.menuItem.updateMany({
+    where: { tenantId, ...(parsed.data.categoryId ? { categoryId: parsed.data.categoryId } : {}) },
+    data: {
+      discountPct: parsed.data.discountPct,
+      discountEndsAt: parsed.data.discountPct && parsed.data.discountEndsAt ? new Date(parsed.data.discountEndsAt) : null,
+    },
+  });
+  res.json({ updated: result.count });
 });
 
 catalogRouter.delete("/items/:id", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {

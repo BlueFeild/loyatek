@@ -7,6 +7,7 @@ import { getTenantPaymentMethods } from "../checkout/myfatoorah";
 import { publicPaymentMethods } from "../payment-settings/payment-methods";
 import { getRates, isCurrencyCode, rateFor } from "../../utils/money";
 import { zodMessage } from "../../utils/validation";
+import { publicMenuItem } from "./menu-pricing";
 
 // راوتر عام بالكامل - مفيهوش requireAuth خالص، لأن العميل اللي بيسكان
 // الـ QR على الترابيزة معندوش حساب ولا هيسجّل دخول. العزل هنا بيتم عن
@@ -47,7 +48,9 @@ publicCatalogRouter.get("/:slug/categories", async (req, res) => {
     include: { items: { orderBy: { sortOrder: "asc" } } },
     orderBy: { sortOrder: "asc" },
   });
-  res.json(categories);
+  // كل صنف: السعر الأصلي + الخصم الشغال + السعر النهائي
+  const now = new Date();
+  res.json(categories.map((c) => ({ ...c, items: c.items.map((i) => publicMenuItem(i, now)) })));
 });
 
 const createOrderSchema = z.object({

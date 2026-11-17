@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { menuItemFinalPrice } from "./menu-pricing";
 import { prisma } from "../../config/db";
 import { getOrCreateWhatsappSettings, sendWhatsappTextMessage } from "../whatsapp/whatsapp.service";
 import { sendOrderReceivedTemplate } from "./order-whatsapp";
@@ -150,12 +151,14 @@ async function createOrderInner(input: CreateOrderInput) {
     throw new Error("One or more menu items were not found");
   }
 
+  const now = new Date();
   const lines = input.items.map((line) => {
     const item = menuItems.find((m: (typeof menuItems)[number]) => m.id === line.menuItemId)!;
-    return { menuItemId: item.id, name: item.name, price: item.price, quantity: line.quantity };
+    // السعر بعد الخصم الشغال (الخصم المنتهي = السعر الكامل) - من قاعدة البيانات بس
+    return { menuItemId: item.id, name: item.name, price: menuItemFinalPrice(item, now), quantity: line.quantity };
   });
 
-  const totalAmount = lines.reduce((sum, l) => sum + Number(l.price) * l.quantity, 0);
+  const totalAmount = Math.round(lines.reduce((sum, l) => sum + Number(l.price) * l.quantity, 0) * 1e6) / 1e6;
   const paymentOn = settings.paymentRequired && totalAmount > 0;
 
   // بنختار طريقة الدفع قبل ما الأوردر يتحفظ - اختيار غلط = رسالة واضحة

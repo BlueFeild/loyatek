@@ -61,6 +61,7 @@ import { publicApiRouter } from "./modules/integrations/public-api.routes";
 import { adminMetaRatesRouter, publicMetaRatesRouter } from "./modules/whatsapp/meta-rates.routes";
 import { AppError } from "./core/errors";
 import { getPlatformConfig, getRegionalPricing } from "./utils/platform-config";
+import { visitorCountry } from "./utils/visitor-country";
 
 export const app = express();
 
@@ -144,11 +145,14 @@ app.use("/api/public/whatsapp/platform-webhook", platformWhatsappWebhookRouter);
 app.use("/api/public/exchange-rates", publicExchangeRatesRouter);
 // أسعار الخدمات الحالية (اللي السوبر أدمن حاطها) - لصفحة الأسعار العامة
 // ?country=EG -> الأسعار بالجنيه (أو السعر الخاص بمصر) وبعد الخصم + السعر قبل الخصم
+// الدولة بيحددها السيرفر من الـ IP (visitorCountry) - ?country= بيتجاهل لو التحديد بالـ IP شغال
 app.get("/api/public/pricing", async (req, res) => {
-  const pricing = await getRegionalPricing(typeof req.query.country === "string" ? req.query.country : null);
+  const visitor = visitorCountry(req, req.query.country);
+  const pricing = await getRegionalPricing(visitor.country);
   const config = await getPlatformConfig();
   res.json({
     ...pricing,
+    countryLocked: visitor.locked,
     regions: config.regions.map((r) => ({ country: r.country, name: r.name, currency: r.currency })),
     // نقاط استوديو الذكاء الاصطناعي (الصفحات بتعرضها من هنا بدل رقم ثابت)
     aiCredits: { monthly: config.aiMonthlyCredits, yearly: config.aiYearlyCredits, trial: config.defaultTrialCredits },

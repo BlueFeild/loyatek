@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { DISCOUNT_MAX_PCT, DISCOUNT_MIN_PCT, readServiceDiscounts } from "../../utils/discount";
 import { keepKnownServices, pageDesignFields } from "./page-design";
 import { phoneMatch } from "../../utils/phone";
 import { z } from "zod";
@@ -36,6 +37,10 @@ const updateSettingsSchema = z.object({
   services: z.array(z.string()).optional(),
   // سعر كل خدمة بالدولار (الفرونت بيحوّل من عملة الشركة)
   servicePrices: z.record(z.string().max(120), z.number().min(0).max(1_000_000)).optional(),
+  // خصم كل خدمة: نسبة 1-90 + تاريخ انتهاء اختياري (null = مفتوح)
+  serviceDiscounts: z
+    .record(z.string().max(120), z.object({ pct: z.number().int().min(DISCOUNT_MIN_PCT).max(DISCOUNT_MAX_PCT), endsAt: z.string().datetime({ offset: true }).nullable().optional() }))
+    .optional(),
   openHour: z.number().int().min(0).max(23).optional(),
   closeHour: z.number().int().min(1).max(24).optional(),
   disabledHours: z.array(z.number().int()).optional(),
@@ -68,9 +73,11 @@ bookingsRouter.patch("/settings", requireRole("OWNER", "ADMIN", "MANAGER"), asyn
 
   const data = { ...parsed.data };
   // تفاصيل خدمة مش موجودة في القائمة مابتتحفظش
-  if (data.serviceDetails) {
+  if (data.serviceDetails || data.serviceDiscounts) {
     const services = data.services ?? (await getOrCreateSettings(req.auth!.tenantId)).services;
-    data.serviceDetails = keepKnownServices(data.serviceDetails, services);
+    if (data.serviceDetails) data.serviceDetails = keepKnownServices(data.serviceDetails, services);
+    // خصم لخدمة مش موجودة بيتشال (زي servicePrices)
+    if (data.serviceDiscounts) data.serviceDiscounts = readServiceDiscounts(data.serviceDiscounts, services);
   }
   const settings = await updateSettings(req.auth!.tenantId, data);
   res.json(settings);

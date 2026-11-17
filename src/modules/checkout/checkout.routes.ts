@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "../../middleware/auth";
 import { initiateMyFatoorahPayment } from "./myfatoorah";
 import { modulesOrderAmount, extraCompanyAmount } from "./pricing";
 import { getRegionalPricing, pricingForCycle } from "../../utils/platform-config";
+import { visitorCountry } from "../../utils/visitor-country";
 import { ALL_MODULES, normalizeModules } from "../../utils/modules";
 
 // المبلغ بخانات العملة (KWD/BHD/OMR/JOD = 3) + نفس المبلغ بالدولار للتقارير
@@ -36,7 +37,8 @@ checkoutRouter.post("/orders", requireRole("OWNER", "ADMIN"), async (req, res) =
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const { selectedModules, billingCycle, country } = parsed.data;
-  const pricing = await getRegionalPricing(country);
+  // الدولة من السيرفر (الـ IP)، مش اللي الصفحة بعتتها
+  const pricing = await getRegionalPricing(visitorCountry(req, country).country);
   const money = orderMoney(modulesOrderAmount(selectedModules, billingCycle, pricingForCycle(pricing, billingCycle)), pricing);
   const amount = money.amount;
 
@@ -91,7 +93,8 @@ checkoutRouter.post("/extra-company-orders", requireRole("OWNER"), async (req, r
 
   const { name, industry, billingCycle, country } = parsed.data;
   const selectedModules = Array.from(new Set(parsed.data.selectedModules));
-  const pricing = await getRegionalPricing(country);
+  // الدولة من السيرفر (الـ IP)، مش اللي الصفحة بعتتها
+  const pricing = await getRegionalPricing(visitorCountry(req, country).country);
   const money = orderMoney(extraCompanyAmount(selectedModules, billingCycle, pricingForCycle(pricing, billingCycle)), pricing);
   const amount = money.amount;
 
@@ -133,7 +136,7 @@ checkoutRouter.post("/extra-company-orders", requireRole("OWNER"), async (req, r
 // الأسعار الفعلية اللي الباك إند بيحاسب بيها - الفرونت بيعرض منها بس
 checkoutRouter.get("/pricing", async (req, res) => {
   // نفس الأسعار اللي السوبر أدمن حاطها (أو الافتراضي) - بعملة الدولة وبعد الخصم
-  res.json(await getRegionalPricing(typeof req.query.country === "string" ? req.query.country : null));
+  res.json(await getRegionalPricing(visitorCountry(req, req.query.country).country));
 });
 
 checkoutRouter.get("/orders", async (req, res) => {

@@ -12,7 +12,7 @@ import { getTenantPaymentMethods } from "../checkout/myfatoorah";
 import { publicPaymentMethods } from "../payment-settings/payment-methods";
 import { calendarDateKey, parseCalendarDate, todayKeyInTimezone } from "../../utils/calendarDate";
 import { getRates, isCurrencyCode, rateFor } from "../../utils/money";
-import { pricesForServices } from "./service-pricing";
+import { discountedServicePrices, publicServicePricing } from "./service-pricing";
 import { zodMessage } from "../../utils/validation";
 
 // راوتر عام بالكامل - العميل بيحجز موعد من غير حساب ولا تسجيل دخول،
@@ -36,15 +36,18 @@ publicBookingRouter.get("/:slug/settings", async (req, res) => {
   // طرق الدفع اللي العميل يختار منها (من غير اللينكات نفسها)
   const paymentMethods = publicPaymentMethods(await getTenantPaymentMethods(tenant.id));
   // بيانات التاجر الخاصة (رقمه وإيميله ورسالة إشعاره) ماتطلعش للعامة
-  const { merchantWhatsapp: _w, merchantEmail: _e, waMerchantTemplate: _t, ...publicSettings } = settings;
+  const { merchantWhatsapp: _w, merchantEmail: _e, waMerchantTemplate: _t, serviceDiscounts: _d, ...publicSettings } = settings;
   // مبلغ الحجز متخزن بالدولار - الصفحة بتعرضه بعملة الشركة بالسعر ده
   const rates = await getRates();
   const currency = isCurrencyCode(tenant.displayCurrency) ? tenant.displayCurrency : "USD";
-  // أسعار الخدمات الموجودة بس (بالدولار)
-  const servicePrices = pricesForServices(settings.servicePrices, settings.services);
+  // أسعار الخدمات الموجودة بس (بالدولار) - servicePrices = السعر النهائي بعد
+  // الخصم (اللي هيتحسب فعلًا)، و servicePricing = الأصلي + % + النهائي للعرض
+  const now = new Date();
+  const servicePrices = discountedServicePrices(settings, now);
+  const servicePricing = publicServicePricing(settings, now);
   const serviceDetails = keepKnownServices((settings.serviceDetails ?? {}) as Record<string, unknown>, settings.services);
   const whatsappLogin = { required: await bookingNeedsWaLogin(tenant) };
-  res.json({ ...publicSettings, servicePrices, serviceDetails, paymentMethods, currency, rate: rateFor(currency, rates), whatsappLogin });
+  res.json({ ...publicSettings, servicePrices, servicePricing, serviceDetails, paymentMethods, currency, rate: rateFor(currency, rates), whatsappLogin });
 });
 
 publicBookingRouter.get("/:slug/resources", async (req, res) => {

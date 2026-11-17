@@ -2,6 +2,8 @@ import { PrismaClient } from "@prisma/client";
 import type { AgentBusinessContext, AgentDialect, AgentTurn } from "../ai/agent-types";
 import { AGENT_LIMITS } from "../ai/agent-types";
 import { formatUsdAs, getRates } from "../../utils/money";
+import { activeServiceDiscounts, priceView } from "../../utils/discount";
+import { discountedServicePrices } from "../booking/service-pricing";
 import { recordWhatsappMessage, sendWhatsappTextMessage } from "./whatsapp.service";
 
 // اللي موظف واتساب الذكي + حالة المحادثات محتاجينه من التخزين (Prisma أو نسخة في الذاكرة للاختبار)
@@ -92,13 +94,17 @@ export class PrismaAiAgentRepository implements AiAgentStore {
         where: { tenantId, category: { isDemo: false } },
         orderBy: [{ category: { sortOrder: "asc" } }, { sortOrder: "asc" }],
         take: AGENT_LIMITS.maxMenuItems,
-        select: { name: true, description: true, price: true, category: { select: { name: true } } },
+        select: { name: true, description: true, price: true, discountPct: true, discountEndsAt: true, category: { select: { name: true } } },
       }),
-      this.db.bookingSettings.findUnique({ where: { tenantId }, select: { services: true, servicePrices: true, openHour: true, closeHour: true } }),
+      this.db.bookingSettings.findUnique({ where: { tenantId }, select: { services: true, servicePrices: true, serviceDiscounts: true, openHour: true, closeHour: true } }),
       getRates(),
     ]);
     const currency = tenant.displayCurrency || "USD";
-    const prices = (booking?.servicePrices ?? {}) as Record<string, number>;
+    // الأسعار بعد الخصم الشغال (نفس اللي هيتحسب في الحجز/الطلب)
+    const now = new Date();
+    const prices = booking ? discountedServicePrices(booking, now) : {};
+    const discounts = booking ? activeServiceDiscounts(booking.serviceDiscounts, booking.services, now) : {};
+    const withDiscount = (text: string, pct: number | null | undefined) => (pct ? `${text} (${pct}% off now)` : text);
     const base = publicBase();
     return {
       name: tenant.name,
@@ -106,8 +112,11 @@ export class PrismaAiAgentRepository implements AiAgentStore {
       currency,
       knowledge: settings.knowledge,
       dialect: settings.dialect,
-      menu: items.map((i) => ({ name: i.name, price: formatUsdAs(String(i.price), currency, rates), category: i.category.name, description: i.description })),
-      services: (booking?.services ?? []).slice(0, AGENT_LIMITS.maxServices).map((name) => ({ name, price: prices[name] ? formatUsdAs(prices[name], currency, rates) : null })),
+      menu: items.map((i) => {
+        const v = priceView(Number(i.price), i.discountPct, i.discountEndsAt, now);
+        return { name: i.name, price: withDiscount(formatUsdAs(v.finalPrice, currency, rates), v.discountPct), category: i.category.name, description: i.description };
+      }),
+      services: (booking?.services ?? []).slice(0, AGENT_LIMITS.maxServices).map((name) => ({ name, price: prices[name] ? withDiscount(formatUsdAs(prices[name], currency, rates), discounts[name]) : null })),
       bookingHours: booking ? `${booking.openHour}:00 – ${booking.closeHour}:00` : null,
       links: {
         booking: tenant.slug && booking ? `${base}/book/${tenant.slug}` : null,
