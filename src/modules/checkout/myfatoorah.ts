@@ -182,7 +182,13 @@ export async function checkMyFatoorahPaymentStatus(paymentId: string): Promise<{
 export async function getOrCreateTenantPaymentSettings(tenantId: string) {
   const existing = await prisma.tenantPaymentSettings.findUnique({ where: { tenantId } });
   if (existing) return existing;
-  return prisma.tenantPaymentSettings.create({ data: { tenantId } });
+  // طلبين في نفس اللحظة أول مرة: اللي يتأخر يقرا الصف اللي اتعمل
+  try {
+    return await prisma.tenantPaymentSettings.create({ data: { tenantId } });
+  } catch (err) {
+    if ((err as { code?: string }).code !== "P2002") throw err;
+    return prisma.tenantPaymentSettings.findUniqueOrThrow({ where: { tenantId } });
+  }
 }
 
 export async function initiateTenantMyFatoorahPayment(

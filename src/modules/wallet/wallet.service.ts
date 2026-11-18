@@ -3,7 +3,13 @@ import { prisma } from "../../config/db";
 export async function getOrCreateWalletSettings(tenantId: string) {
   const existing = await prisma.walletSettings.findUnique({ where: { tenantId } });
   if (existing) return existing;
-  return prisma.walletSettings.create({ data: { tenantId } });
+  // طلبين في نفس اللحظة أول مرة: اللي يتأخر يقرا الصف اللي اتعمل
+  try {
+    return await prisma.walletSettings.create({ data: { tenantId } });
+  } catch (err) {
+    if ((err as { code?: string }).code !== "P2002") throw err;
+    return prisma.walletSettings.findUniqueOrThrow({ where: { tenantId } });
+  }
 }
 
 interface UpdateWalletSettingsInput {

@@ -1,4 +1,5 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
+const DbNull = Prisma.DbNull;
 import { prisma } from "../../config/db";
 import { getOrCreateWhatsappSettings, recordWhatsappMessage, sendWhatsappTestMessage, sendWhatsappTextMessage } from "../whatsapp/whatsapp.service";
 import { sendBookingTemplate, type TemplateLang } from "../whatsapp/booking-templates";
@@ -6,7 +7,8 @@ import { renderMessageTemplate } from "../../utils/messageTemplate";
 import { createNotification } from "../notifications/notifications.service";
 import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus, paymentInvoiceMatch } from "../checkout/myfatoorah";
 import { confirmsOnOrder, pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
-import { formatCalendarDate, parseCalendarDate, todayCalendarDate } from "../../utils/calendarDate";
+import { calendarDateKey, formatCalendarDate, parseCalendarDate, todayCalendarDate } from "../../utils/calendarDate";
+import { dayRange, openHoursForDay, weeklyOpenHours } from "./opening-hours";
 import { isValidEmail, sendEmail } from "../../utils/email";
 import { getTenantMoney, payableAmount } from "../../utils/money";
 import { computeBookingAmount, hasPricedServices } from "./service-pricing";
@@ -18,7 +20,13 @@ import { assertTenantOwns } from "../../utils/tenant-owned";
 export async function getOrCreateSettings(tenantId: string) {
   const existing = await prisma.bookingSettings.findUnique({ where: { tenantId } });
   if (existing) return existing;
-  return prisma.bookingSettings.create({ data: { tenantId } });
+  // أول زيارة: طلبين في نفس اللحظة ممكن يحاولوا يعملوا الصف → اللي يتأخر يقرا اللي اتعمل
+  try {
+    return await prisma.bookingSettings.create({ data: { tenantId } });
+  } catch (err) {
+    if ((err as { code?: string }).code !== "P2002") throw err;
+    return prisma.bookingSettings.findUniqueOrThrow({ where: { tenantId } });
+  }
 }
 
 interface UpdateSettingsInput {
@@ -31,6 +39,9 @@ interface UpdateSettingsInput {
   openHour?: number;
   closeHour?: number;
   disabledHours?: number[];
+  // مواعيد كل يوم لوحده (null = يوم مقفول) + أيام الإجازة - شوفي opening-hours.ts
+  weeklyHours?: Record<string, { open: number; close: number } | null> | null;
+  holidays?: string[];
   slotDurationMin?: number;
   bufferMin?: number;
   peakFlag?: boolean;
@@ -59,7 +70,10 @@ interface UpdateSettingsInput {
 
 export async function updateSettings(tenantId: string, data: UpdateSettingsInput) {
   await getOrCreateSettings(tenantId); // يضمن وجود صف قبل التحديث
-  return prisma.bookingSettings.update({ where: { tenantId }, data: data as Prisma.BookingSettingsUpdateInput });
+  // weeklyHours = null → يرجع لنفس المواعيد كل يوم (عمود JSON محتاج DbNull)
+  const { weeklyHours, ...rest } = data;
+  const patch = { ...rest, ...(weeklyHours === undefined ? {} : { weeklyHours: weeklyHours === null ? DbNull : weeklyHours }) };
+  return prisma.bookingSettings.update({ where: { tenantId }, data: patch as Prisma.BookingSettingsUpdateInput });
 }
 
 // الأماكن المتاحة فعليًا لمورد معيّن في يوم معيّن - بناءً على إعدادات
@@ -75,13 +89,8 @@ export async function getAvailableSlots(tenantId: string, resourceId: string, da
   });
   const takenHours = new Set(existingBookings.map((b: { hour: number }) => b.hour));
 
-  const disabled = new Set(settings.disabledHours);
-  const slots: { hour: number; available: boolean }[] = [];
-  for (let h = settings.openHour; h < settings.closeHour; h++) {
-    if (disabled.has(h)) continue;
-    slots.push({ hour: h, available: !takenHours.has(h) });
-  }
-  return slots;
+  // مواعيد اليوم ده بالذات (يوم إجازة / مقفول = مفيش مواعيد)
+  return openHoursForDay(settings, calendarDateKey(dayStart)).map((hour) => ({ hour, available: !takenHours.has(hour) }));
 }
 
 interface CreateBookingInput {
@@ -216,6 +225,8 @@ async function createBookingInner(input: CreateBookingInput & { redirectionUrlBa
   await assertTenantOwns(input.tenantId, { branchIds: [input.branchId], resourceIds: [input.resourceId] });
 
   const settings = await getOrCreateSettings(input.tenantId);
+  // يوم إجازة / اليوم ده مقفول
+  if (!dayRange(settings, calendarDateKey(dayStart))) throw new Error("We're closed on this day — please pick another day.");
   // المبلغ = مجموع أسعار الخدمات اللي اختارها (من الأسعار المحفوظة)، أو
   // المبلغ الثابت لو مفيش خدمات بسعر
   const pricing = computeBookingAmount(settings, input.services);
@@ -399,8 +410,7 @@ export async function getBookingStats(tenantId: string, branchId: string) {
     prisma.resource.count({ where: { tenantId, branchId } }),
   ]);
 
-  const hoursPerDay = Math.max(0, settings.closeHour - settings.openHour - settings.disabledHours.length);
-  const totalWeeklyCapacity = hoursPerDay * 7 * Math.max(1, resources);
+  const totalWeeklyCapacity = weeklyOpenHours(settings) * Math.max(1, resources);
   const utilization = totalWeeklyCapacity > 0 ? Math.round((bookingsThisWeek / totalWeeklyCapacity) * 100) : 0;
 
   return {

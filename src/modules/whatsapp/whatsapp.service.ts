@@ -13,7 +13,13 @@ const META_UPLOAD_TIMEOUT_MS = 60_000;
 export async function getOrCreateWhatsappSettings(tenantId: string) {
   const existing = await prisma.whatsappSettings.findUnique({ where: { tenantId } });
   if (existing) return existing;
-  return prisma.whatsappSettings.create({ data: { tenantId } });
+  // طلبين في نفس اللحظة أول مرة: اللي يتأخر يقرا الصف اللي اتعمل
+  try {
+    return await prisma.whatsappSettings.create({ data: { tenantId } });
+  } catch (err) {
+    if ((err as { code?: string }).code !== "P2002") throw err;
+    return prisma.whatsappSettings.findUniqueOrThrow({ where: { tenantId } });
+  }
 }
 
 interface SendMessageResult {

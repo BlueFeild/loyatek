@@ -18,6 +18,7 @@ import {
 } from "./bookings.service";
 import { parseCalendarDate } from "../../utils/calendarDate";
 import { isValidTimeZone } from "../../utils/timezone";
+import { holidaysSchema, weeklyHoursSchema } from "./opening-hours";
 
 export const bookingsRouter = Router();
 
@@ -44,6 +45,9 @@ const updateSettingsSchema = z.object({
   openHour: z.number().int().min(0).max(23).optional(),
   closeHour: z.number().int().min(1).max(24).optional(),
   disabledHours: z.array(z.number().int()).optional(),
+  // مواعيد كل يوم لوحده + أيام الإجازة
+  weeklyHours: weeklyHoursSchema.optional(),
+  holidays: holidaysSchema.optional(),
   slotDurationMin: z.number().int().min(5).optional(),
   bufferMin: z.number().int().min(0).optional(),
   peakFlag: z.boolean().optional(),

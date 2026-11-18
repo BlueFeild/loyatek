@@ -807,6 +807,10 @@ model BookingSettings {
   openHour            Int      @default(9)
   closeHour           Int      @default(21)
   disabledHours       Int[]    @default([])
+  // مواعيد كل يوم لوحده {"0".."6": {open, close} | null} (null = مقفول) - null كله = openHour/closeHour كل يوم
+  weeklyHours         Json?
+  // أيام إجازة كاملة "YYYY-MM-DD"
+  holidays            String[] @default([])
   slotDurationMin     Int      @default(60)
   bufferMin           Int      @default(15)
   peakFlag            Boolean  @default(true)

@@ -16,7 +16,13 @@ import { assertTenantOwns } from "../../utils/tenant-owned";
 export async function getOrCreateCatalogSettings(tenantId: string) {
   const existing = await prisma.catalogSettings.findUnique({ where: { tenantId } });
   if (existing) return existing;
-  return prisma.catalogSettings.create({ data: { tenantId } });
+  // طلبين في نفس اللحظة أول مرة: اللي يتأخر يقرا الصف اللي اتعمل
+  try {
+    return await prisma.catalogSettings.create({ data: { tenantId } });
+  } catch (err) {
+    if ((err as { code?: string }).code !== "P2002") throw err;
+    return prisma.catalogSettings.findUniqueOrThrow({ where: { tenantId } });
+  }
 }
 
 interface UpdateCatalogSettingsInput {

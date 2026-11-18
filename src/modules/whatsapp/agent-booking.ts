@@ -5,6 +5,7 @@ import { hasPricedServices, computeBookingAmount } from "../booking/service-pric
 import { getTenantPaymentMethods } from "../checkout/myfatoorah";
 import { confirmsOnOrder } from "../payment-settings/payment-methods";
 import { calendarDateKey, parseCalendarDate, todayKeyInTimezone } from "../../utils/calendarDate";
+import { openHoursForDay, type OpeningSettings } from "../booking/opening-hours";
 import { isModuleLive } from "../../utils/platform-config";
 
 // الموظف الذكي يحجز بنفسه من محادثة واتساب: المواعيد الفاضية الحقيقية + إنشاء الحجز
@@ -36,21 +37,23 @@ export function freeDays(input: {
   openHour: number;
   closeHour: number;
   disabledHours: number[];
+  // مواعيد كل يوم + الإجازات (اختياري - من غيرهم نفس المواعيد كل يوم)
+  weeklyHours?: unknown;
+  holidays?: string[] | null;
   resourceIds: string[];
   taken: { resourceId: string; dateKey: string; hour: number }[];
   days?: number;
 }): AgentBookingInfo["days"] {
   const start = parseCalendarDate(input.todayKey);
   if (!start || !input.resourceIds.length) return [];
-  const disabled = new Set(input.disabledHours);
+  const opening: OpeningSettings = { openHour: input.openHour, closeHour: input.closeHour, disabledHours: input.disabledHours, weeklyHours: input.weeklyHours, holidays: input.holidays };
   const busy = new Set(input.taken.map((t) => `${t.resourceId}|${t.dateKey}|${t.hour}`));
   const out: AgentBookingInfo["days"] = [];
   for (let i = 0; i < (input.days ?? AGENT_BOOKING_DAYS); i++) {
     const day = new Date(start.getTime() + i * 86400_000);
     const key = calendarDateKey(day);
     const hours: number[] = [];
-    for (let h = input.openHour; h < input.closeHour; h++) {
-      if (disabled.has(h)) continue;
+    for (const h of openHoursForDay(opening, key)) {
       if (i === 0 && h <= input.currentHour) continue;
       if (input.resourceIds.some((r) => !busy.has(`${r}|${key}|${h}`))) hours.push(h);
     }
@@ -84,7 +87,7 @@ export class PrismaAgentBooker implements AgentBooker {
       select: { resourceId: true, date: true, hour: true },
     });
     const taken = bookings.map((b) => ({ resourceId: b.resourceId, dateKey: calendarDateKey(b.date), hour: b.hour }));
-    const days = freeDays({ todayKey, currentHour: hourInTimezone(timezone, now), openHour: settings.openHour, closeHour: settings.closeHour, disabledHours: settings.disabledHours, resourceIds: resources.map((r) => r.id), taken });
+    const days = freeDays({ todayKey, currentHour: hourInTimezone(timezone, now), openHour: settings.openHour, closeHour: settings.closeHour, disabledHours: settings.disabledHours, weeklyHours: settings.weeklyHours, holidays: settings.holidays, resourceIds: resources.map((r) => r.id), taken });
 
     // الحجز من المحادثة: مجاني، أو فيه طريقة دفع كاش (بتأكد الحجز على طول)
     const pricedServices = hasPricedServices(settings.servicePrices, settings.services);

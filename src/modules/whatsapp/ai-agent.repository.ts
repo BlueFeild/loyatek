@@ -4,6 +4,7 @@ import { AGENT_LIMITS } from "../ai/agent-types";
 import { formatUsdAs, getRates } from "../../utils/money";
 import { activeServiceDiscounts, priceView } from "../../utils/discount";
 import { discountedServicePrices } from "../booking/service-pricing";
+import { describeOpeningHours } from "../booking/opening-hours";
 import { recordWhatsappMessage, sendWhatsappTextMessage } from "./whatsapp.service";
 
 // اللي موظف واتساب الذكي + حالة المحادثات محتاجينه من التخزين (Prisma أو نسخة في الذاكرة للاختبار)
@@ -96,7 +97,7 @@ export class PrismaAiAgentRepository implements AiAgentStore {
         take: AGENT_LIMITS.maxMenuItems,
         select: { name: true, description: true, price: true, discountPct: true, discountEndsAt: true, category: { select: { name: true } } },
       }),
-      this.db.bookingSettings.findUnique({ where: { tenantId }, select: { services: true, servicePrices: true, serviceDiscounts: true, openHour: true, closeHour: true } }),
+      this.db.bookingSettings.findUnique({ where: { tenantId }, select: { services: true, servicePrices: true, serviceDiscounts: true, openHour: true, closeHour: true, disabledHours: true, weeklyHours: true, holidays: true } }),
       getRates(),
     ]);
     const currency = tenant.displayCurrency || "USD";
@@ -117,7 +118,7 @@ export class PrismaAiAgentRepository implements AiAgentStore {
         return { name: i.name, price: withDiscount(formatUsdAs(v.finalPrice, currency, rates), v.discountPct), category: i.category.name, description: i.description };
       }),
       services: (booking?.services ?? []).slice(0, AGENT_LIMITS.maxServices).map((name) => ({ name, price: prices[name] ? withDiscount(formatUsdAs(prices[name], currency, rates), discounts[name]) : null })),
-      bookingHours: booking ? `${booking.openHour}:00 – ${booking.closeHour}:00` : null,
+      bookingHours: booking ? describeOpeningHours(booking) : null,
       links: {
         booking: tenant.slug && booking ? `${base}/book/${tenant.slug}` : null,
         menu: tenant.slug && items.length ? `${base}/menu/${tenant.slug}` : null,
