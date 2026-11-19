@@ -1,5 +1,7 @@
 import { prisma } from "../../config/db";
 import { buildPaymentLink, resolvePaymentMethods, type PaymentMethod } from "../payment-settings/payment-methods";
+import { getTenantMoney, payableAmount, toUsd } from "../../utils/money";
+import type { SkipCashCustomer } from "../payments/skipcash.service";
 
 // بيانات نداءات MyFatoorah الحقيقية - v3 API (v2 قديم ومتروك رسميًا،
 // MyFatoorah نفسهم بيقولوا "Older versions /v2 should not be used for
@@ -220,20 +222,78 @@ export async function getTenantPaymentMethods(tenantId: string): Promise<Payment
 }
 
 // نقطة دخول موحّدة لدفع التاجر حسب الطريقة اللي العميل اختارها:
-//  - MyFatoorah: بنكلّم API بتاعها (تأكيد تلقائي)
+//  - SkipCash: بنعمل دفعة بمفاتيح التاجر نفسه (تأكيد تلقائي) - البوابة الجديدة
+//  - MyFatoorah: بنكلّم API بتاعها (تأكيد تلقائي) - للتجار القدام اللي لسه عليها
 //  - لينك: بنرجّع لينك التاجر بعد استبدال {amount} و{reference}
 //  - تحويل بنكي / كاش: مفيش لينك - العميل بيشوف التعليمات، والتاجر بيأكد
-export async function startTenantPayment(
-  tenantId: string,
-  method: PaymentMethod,
-  input: { amount: number; redirectionUrl: string; reference: string }
-): Promise<InitiatePaymentResult> {
+// رقم دفعة SkipCash بيتخزن في نفس عمود myFatoorahInvoiceId بتاع الحجز/الأوردر (paymentMethodType بيفرّق)
+export interface TenantPaymentInput {
+  amount: number;
+  redirectionUrl: string;
+  reference: string;
+  // العملة اللي amount بيها (عملة الشركة) - SkipCash بيقبض بالريال القطري بس فبنحوّل
+  currency?: string;
+  customer?: SkipCashCustomer;
+}
+
+export async function startTenantPayment(tenantId: string, method: PaymentMethod, input: TenantPaymentInput): Promise<InitiatePaymentResult> {
+  if (method.type === "SKIPCASH") return startTenantSkipCashPayment(tenantId, input);
   if (method.type === "MYFATOORAH") return initiateTenantMyFatoorahPayment(tenantId, input);
   if (method.type === "LINK") {
     if (!method.url) return { ok: false, error: "The business hasn't set up its payment link yet." };
     return { ok: true, paymentUrl: buildPaymentLink(method.url, input.amount, input.reference) };
   }
   return { ok: true };
+}
+
+// الـ container بيتجاب وقت الاستخدام بس: الملف ده جزء من سلسلة الـ imports بتاعة الـ container نفسه
+// (container -> seats / agent-booking -> ... -> هنا)، فاستيراده فوق كان بيعمل حلقة
+async function skipcashService() {
+  return (await import("../../core/container")).container.skipcash;
+}
+
+// المبلغ بعملة الشركة -> ريال قطري (لو الشركة أصلًا بالريال مفيش تحويل)
+export async function toQar(tenantId: string, amount: number, currency?: string) {
+  const money = await getTenantMoney(tenantId);
+  const from = currency || money.currency;
+  if (from === "QAR") return Math.round(amount * 100) / 100;
+  return payableAmount(toUsd(amount, from, money.rates), "QAR", money.rates);
+}
+
+async function startTenantSkipCashPayment(tenantId: string, input: TenantPaymentInput): Promise<InitiatePaymentResult> {
+  const skipcash = await skipcashService();
+  const [creds, status] = await Promise.all([skipcash.merchantCredentials(tenantId), skipcash.merchantStatus(tenantId)]);
+  if (!creds || !status.webhookToken) return { ok: false, error: "The business hasn't connected its SkipCash account yet." };
+  const r = await skipcash.start(creds, {
+    amountQar: await toQar(tenantId, input.amount, input.currency),
+    reference: input.reference,
+    customer: input.customer ?? {},
+    returnUrl: input.redirectionUrl,
+    webhookUrl: skipcash.merchantWebhookUrl(status.webhookToken),
+  });
+  return r.ok ? { ok: true, paymentUrl: r.payUrl, invoiceId: r.paymentId } : { ok: false, error: r.error };
+}
+
+// هل الحجز/الأوردر ده اتدفع فعلًا؟ (بنسأل البوابة نفسها بمفتاح التاجر)
+//  - SkipCash: برقم الدفعة اللي إحنا عملناها ومتخزنة عندنا (مش محتاجين حاجة من الرابط)
+//  - MyFatoorah: بالـ paymentId اللي بيرجع في الرابط + لازم يخص فاتورة الطلب ده
+export async function verifyTenantGatewayPayment(
+  tenantId: string,
+  entity: { paymentMethodType: string | null; invoiceId: string | null },
+  paymentIdFromQuery?: string | null
+): Promise<{ paid: boolean; paymentId: string | null }> {
+  if (entity.paymentMethodType === "SKIPCASH") {
+    if (!entity.invoiceId) return { paid: false, paymentId: null };
+    const skipcash = await skipcashService();
+    const creds = await skipcash.merchantCredentials(tenantId);
+    if (!creds) return { paid: false, paymentId: null };
+    const r = await skipcash.check(creds, { paymentId: entity.invoiceId });
+    return { paid: r.ok && r.paid, paymentId: entity.invoiceId };
+  }
+  if (!paymentIdFromQuery) return { paid: false, paymentId: null };
+  const check = await checkTenantMyFatoorahPaymentStatus(tenantId, paymentIdFromQuery);
+  const ok = check.paid && paymentInvoiceMatch(check.raw, entity.invoiceId) !== "mismatch";
+  return { paid: ok, paymentId: paymentIdFromQuery };
 }
 
 export { getPlatformSettings };

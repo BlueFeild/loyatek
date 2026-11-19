@@ -8,7 +8,7 @@ import { grantIncludedAiCredits } from "../ai/ai-subscription";
 import { grantIncludedSms } from "../sms/sms-subscription";
 import { getPlatformConfig } from "../../utils/platform-config";
 
-// تفعيل طلب اشتراك: بيتنادى أوتوماتيك أول ما الدفع يتأكد من MyFatoorah، أو
+// تفعيل طلب اشتراك: بيتنادى أوتوماتيك أول ما الدفع يتأكد من البوابة (SkipCash / MyFatoorah)، أو
 // يدويًا من السوبر أدمن (طلبات اتدفعت بره البوابة مثلًا). نفس المنطق للاتنين
 export async function activateSubscriptionOrder(orderId: string) {
   const order = await prisma.subscriptionOrder.findUnique({ where: { id: orderId }, include: { tenant: { include: { users: true } } } });
@@ -79,6 +79,7 @@ export async function activateSubscriptionOrder(orderId: string) {
 export async function syncOrderPayment(orderId: string) {
   const order = await prisma.subscriptionOrder.findUnique({ where: { id: orderId } });
   if (!order) throw new Error("Order not found");
+  if (order.paymentProvider === "SKIPCASH") return syncSkipCashOrder(order);
   if (!order.myFatoorahInvoiceId) return { status: order.status, gateway: "no MyFatoorah invoice on this order" };
   if (order.status !== "PENDING" && order.status !== "PAID") return { status: order.status, gateway: "already handled" };
   const check = await checkPlatformInvoice(order.myFatoorahInvoiceId);
@@ -95,3 +96,38 @@ export async function syncOrderPayment(orderId: string) {
   await activateSubscriptionOrder(order.id);
   return { status: "ACTIVATED", gateway: check.status };
 }
+
+// SkipCash: بنسأل SkipCash عن دفعة الطلب نفسه (رقمها متخزن عندنا) - المبلغ والعملة ورقم الطلب لازم يطابقوا.
+// الطلب ده بيتنادى من رجوع العميل، والـ webhook، والـ sync كل دقيقتين، وزرار "Check payment" - التفعيل مرة واحدة بس
+async function syncSkipCashOrder(order: NonNullable<Awaited<ReturnType<typeof prisma.subscriptionOrder.findUnique>>>) {
+  if (!order.skipcashPaymentId) return { status: order.status, gateway: "no SkipCash payment on this order" };
+  if (order.status !== "PENDING" && order.status !== "PAID") return { status: order.status, gateway: "already handled" };
+  const skipcash = container.skipcash;
+  if (!skipcash.platformReady()) return { status: order.status, gateway: "SkipCash is not set up on the server" };
+  const check = await skipcash.check(skipcash.platformCredentials(), { paymentId: order.skipcashPaymentId, amountQar: Number(order.amount), reference: order.id });
+  if (!check.ok) return { status: order.status, gateway: check.error };
+  const label = SKIPCASH_STATUS_LABELS[check.payment.statusId] ?? `status ${check.payment.statusId}`;
+  if (check.problem) {
+    console.warn(`[checkout] SkipCash order ${order.id} not activated: ${check.problem}`);
+    return { status: order.status, gateway: check.problem };
+  }
+  if (!check.paid) return { status: order.status, gateway: label };
+  if (order.status === "PENDING") {
+    await prisma.subscriptionOrder.updateMany({ where: { id: order.id, status: "PENDING" }, data: { status: "PAID", skipcashVisaId: check.payment.visaId } });
+  }
+  await activateSubscriptionOrder(order.id);
+  return { status: "ACTIVATED", gateway: label };
+}
+
+const SKIPCASH_STATUS_LABELS: Record<number, string> = {
+  0: "new (not paid yet)",
+  1: "pending",
+  2: "paid",
+  3: "canceled",
+  4: "failed",
+  5: "rejected",
+  6: "refunded",
+  7: "pending refund",
+  8: "refund failed",
+  12: "customer is on the payment page",
+};

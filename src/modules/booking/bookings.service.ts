@@ -5,7 +5,7 @@ import { getOrCreateWhatsappSettings, recordWhatsappMessage, sendWhatsappTestMes
 import { sendBookingTemplate, type TemplateLang } from "../whatsapp/booking-templates";
 import { renderMessageTemplate } from "../../utils/messageTemplate";
 import { createNotification } from "../notifications/notifications.service";
-import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus, paymentInvoiceMatch } from "../checkout/myfatoorah";
+import { startTenantPayment, getTenantPaymentMethods, verifyTenantGatewayPayment } from "../checkout/myfatoorah";
 import { confirmsOnOrder, pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
 import { calendarDateKey, formatCalendarDate, parseCalendarDate, todayCalendarDate } from "../../utils/calendarDate";
 import { dayRange, openHoursForDay, weeklyOpenHours } from "./opening-hours";
@@ -304,8 +304,10 @@ async function createBookingInner(input: CreateBookingInput & { redirectionUrlBa
   // ما الدفع ينجح (MyFatoorah تلقائي / اللينك بـ "Mark paid")
   const payment = await startTenantPayment(input.tenantId, method, {
     amount: payAmount,
+    currency: money.currency,
     redirectionUrl: `${input.redirectionUrlBase ?? ""}?bookingId=${booking.id}`,
     reference: booking.id,
+    customer: { name: input.customerName, phone: input.customerPhone, email: input.customerEmail },
   });
 
   if (!payment.ok) {
@@ -321,28 +323,27 @@ async function createBookingInner(input: CreateBookingInput & { redirectionUrlBa
   return { ...updated, whatsappConfirmationSent: false, paymentUrl: payment.paymentUrl, paymentError: null, paymentInstructions: null };
 }
 
-// بيتأكد من حالة دفع حجز حقيقي بالسؤال المباشر لـ MyFatoorah (بمفتاح
+// بيتأكد من حالة دفع حجز حقيقي بالسؤال المباشر للبوابة (SkipCash / MyFatoorah بمفتاح
 // التاجر نفسه)، ولو الدفع نجح فعليًا بيأكّد الحجز (واتساب + إشعار) -
-// أول مرة بس، مش في كل استعلام
-export async function confirmBookingPaymentIfPaid(bookingId: string, paymentId: string) {
+// أول مرة بس، مش في كل استعلام. SkipCash مش محتاج paymentId من الرابط (رقم الدفعة متخزن عندنا)
+export async function confirmBookingPaymentIfPaid(bookingId: string, paymentIdFromQuery?: string | null) {
   const booking = await prisma.booking.findUnique({ where: { id: bookingId }, include: { resource: true } });
   if (!booking) throw new Error("Booking not found");
 
   if (booking.paymentStatus === "PAID") return { ...booking, whatsappConfirmationSent: false };
   if (booking.paymentStatus !== "AWAITING_PAYMENT") return { ...booking, whatsappConfirmationSent: false };
 
-  const check = await checkTenantMyFatoorahPaymentStatus(booking.tenantId, paymentId);
-  if (!check.paid) return { ...booking, whatsappConfirmationSent: false };
-  // الدفعة لازم تخص فاتورة الحجز ده، ومتكونش اتستخدمت لحجز تاني قبل كده
-  if (paymentInvoiceMatch(check.raw, booking.myFatoorahInvoiceId) === "mismatch") return { ...booking, whatsappConfirmationSent: false };
+  // الدفعة لازم تخص فاتورة/دفعة الحجز ده، ومتكونش اتستخدمت لحجز تاني قبل كده
+  const check = await verifyTenantGatewayPayment(booking.tenantId, { paymentMethodType: booking.paymentMethodType, invoiceId: booking.myFatoorahInvoiceId }, paymentIdFromQuery);
+  if (!check.paid || !check.paymentId) return { ...booking, whatsappConfirmationSent: false };
+  const paymentId = check.paymentId;
   const reused = await prisma.booking.findFirst({ where: { myFatoorahPaymentId: paymentId, id: { not: booking.id } } });
   if (reused) return { ...booking, whatsappConfirmationSent: false };
 
-  const updated = await prisma.booking.update({
-    where: { id: booking.id },
-    data: { paymentStatus: "PAID", myFatoorahPaymentId: paymentId },
-    include: { resource: true },
-  });
+  // قفل: لو الـ webhook ورجوع العميل وصلوا في نفس اللحظة، التأكيد (والواتساب) مرة واحدة بس
+  const claimed = await prisma.booking.updateMany({ where: { id: booking.id, paymentStatus: "AWAITING_PAYMENT" }, data: { paymentStatus: "PAID", myFatoorahPaymentId: paymentId } });
+  const updated = await prisma.booking.findUniqueOrThrow({ where: { id: booking.id }, include: { resource: true } });
+  if (claimed.count === 0) return { ...updated, whatsappConfirmationSent: false };
 
   const whatsappConfirmationSent = await runBookingConfirmationSideEffects(updated, updated.tenantId, updated.resource.name);
   return { ...updated, whatsappConfirmationSent };

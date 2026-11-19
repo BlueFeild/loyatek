@@ -66,6 +66,8 @@ import { setEventSink } from "../modules/integrations/events";
 import { WaLoginService } from "../modules/wa-login/wa-login.service";
 import { PrismaWaLoginStore } from "../modules/wa-login/wa-login.repository";
 import { MetaOtpSender } from "../modules/wa-login/wa-login.gateway";
+import { HttpSkipCashApi } from "../modules/payments/skipcash.gateway";
+import { PrismaSkipCashCredentialStore, SkipCashService } from "../modules/payments/skipcash.service";
 
 // المكان الوحيد اللي بيقرر "مين بيكلم مين" (Composition Root).
 // الخدمات بتاخد اللي محتاجاه من برّه، فسهل نغيّر مزوّد أو نختبر بنسخة وهمية
@@ -182,4 +184,6 @@ export const container = {
   seats,
   seatSettings,
   ticketsAdmin: new TicketsAdminService(seatRepository, seats, seatSettings, new TenantSeatPayments()),
+  // بوابة الدفع SkipCash (اشتراكات المنصة + حسابات التجار) - المفاتيح من Railway / متشفّرة في الداتابيز
+  skipcash: new SkipCashService(new HttpSkipCashApi(), new PrismaSkipCashCredentialStore(prisma), publicApiBaseUrl),
 };

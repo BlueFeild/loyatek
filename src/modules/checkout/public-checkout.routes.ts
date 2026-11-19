@@ -16,7 +16,8 @@ publicCheckoutRouter.get("/orders/:id/status", async (req, res) => {
 
   const paymentId = req.query.paymentId as string | undefined;
 
-  if (order.status === "PENDING" && paymentId) {
+  // paymentId من الرابط = MyFatoorah بس. طلبات SkipCash بتتأكد تحت برقم الدفعة المتخزن عندنا
+  if (order.status === "PENDING" && paymentId && order.paymentProvider !== "SKIPCASH") {
     const check = await checkMyFatoorahPaymentStatus(paymentId);
     // الدفعة لازم تخص فاتورة الطلب ده ومتكونش اتستخدمت لطلب تاني
     const match = paymentInvoiceMatch(check.raw, order.myFatoorahInvoiceId);

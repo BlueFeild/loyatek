@@ -104,7 +104,8 @@ publicCatalogRouter.get("/:slug/orders/:id/payment-status", async (req, res) => 
   if (!order) return res.status(404).json({ error: "Order not found" });
 
   const paymentId = req.query.paymentId as string | undefined;
-  if (order.paymentStatus === "AWAITING_PAYMENT" && paymentId) {
+  // SkipCash: بنسأل برقم الدفعة المتخزن عندنا (مش محتاجين paymentId في الرابط)
+  if (order.paymentStatus === "AWAITING_PAYMENT" && (paymentId || order.paymentMethodType === "SKIPCASH")) {
     try {
       const updated = await confirmOrderPaymentIfPaid(order.id, paymentId);
       return res.json(updated);

@@ -1,5 +1,5 @@
 import { prisma } from "../../config/db";
-import { checkTenantMyFatoorahPaymentStatus, getTenantPaymentMethods, paymentInvoiceMatch, startTenantPayment } from "../checkout/myfatoorah";
+import { getTenantPaymentMethods, startTenantPayment, verifyTenantGatewayPayment } from "../checkout/myfatoorah";
 import { getTenantMoney, payableAmount } from "../../utils/money";
 import { getOrCreateWhatsappSettings, recordWhatsappMessage, sendWhatsappTextMessage } from "../whatsapp/whatsapp.service";
 import { createNotification } from "../notifications/notifications.service";
@@ -19,9 +19,8 @@ export class TenantSeatPayments implements SeatPayments {
   start(tenantId: string, method: Parameters<typeof startTenantPayment>[1], input: Parameters<typeof startTenantPayment>[2]) {
     return startTenantPayment(tenantId, method, input);
   }
-  async check(tenantId: string, paymentId: string, invoiceId: string | null) {
-    const r = await checkTenantMyFatoorahPaymentStatus(tenantId, paymentId);
-    return r.paid && paymentInvoiceMatch(r.raw, invoiceId) !== "mismatch";
+  verify(tenantId: string, methodType: string | null, invoiceId: string | null, paymentId: string | undefined) {
+    return verifyTenantGatewayPayment(tenantId, { paymentMethodType: methodType, invoiceId }, paymentId);
   }
 }
 

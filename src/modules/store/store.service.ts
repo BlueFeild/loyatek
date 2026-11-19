@@ -7,8 +7,8 @@ import { formatUsdAs, getRates, getTenantMoney, isCurrencyCode, payableAmount, r
 import { isModuleLive } from "../../utils/platform-config";
 import { todayKeyInTimezone } from "../../utils/calendarDate";
 import { zonedDateHourToUtc } from "../../utils/timezone";
-import { checkTenantMyFatoorahPaymentStatus, getTenantPaymentMethods, paymentInvoiceMatch, startTenantPayment } from "../checkout/myfatoorah";
-import { confirmsOnOrder, pickPaymentMethod, publicPaymentMethods, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
+import { checkTenantMyFatoorahPaymentStatus, getTenantPaymentMethods, paymentInvoiceMatch, startTenantPayment, verifyTenantGatewayPayment } from "../checkout/myfatoorah";
+import { confirmsOnOrder, isAutoGateway, pickPaymentMethod, publicPaymentMethods, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
 import {
   MAX_PHOTOS,
   MAX_PRODUCTS,
@@ -457,9 +457,11 @@ export class StoreService {
 
     // لينك دفع / MyFatoorah: بنجهز اللينك بعد ما الطلب يتحفظ (برقم المرجع الصح)
     let paymentError: string | null = null;
-    if (method && (method.type === "LINK" || method.type === "MYFATOORAH")) {
+    if (method && (method.type === "LINK" || method.type === "MYFATOORAH" || method.type === "SKIPCASH")) {
       const pay = await startTenantPayment(tenant.id, method, {
         amount: payAmount,
+        currency: money.currency,
+        customer: { name: input.customerName, phone: input.customerPhone, email: input.customerEmail ?? null },
         redirectionUrl: `${frontendBase}/shop/${slug}/order/${order.id}`,
         reference: shortReference(order.id),
       }).catch((e: Error) => ({ ok: false as const, error: e.message }));
@@ -468,8 +470,8 @@ export class StoreService {
       } else paymentError = (pay as any).error ?? "Couldn't start the payment.";
     }
 
-    // MyFatoorah: التاجر بيتبلّغ بعد ما الدفع يتأكد؛ أي طريقة تانية: دلوقتي
-    if (method?.type !== "MYFATOORAH") await this.notifyMerchant(tenant.id, order);
+    // SkipCash / MyFatoorah: التاجر بيتبلّغ بعد ما الدفع يتأكد؛ أي طريقة تانية: دلوقتي
+    if (!isAutoGateway(method?.type)) await this.notifyMerchant(tenant.id, order);
     const view = await this.customerOrder(slug, order.id);
     return { ...view, paymentError };
   }
@@ -509,6 +511,17 @@ export class StoreService {
       const check = await checkTenantMyFatoorahPaymentStatus(tenant.id, paymentId).catch(() => ({ paid: false, raw: null }));
       if (check.paid && paymentInvoiceMatch(check.raw, o.myFatoorahInvoiceId) === "match") {
         const r = await this.repo.updateOrder(tenant.id, o.id, { paymentStatus: "PAID" });
+        if (r.count) {
+          o = (await this.repo.order(tenant.id, id))!;
+          await this.notifyMerchant(tenant.id, o);
+        }
+      }
+    }
+    // SkipCash: بنسأل SkipCash برقم الدفعة اللي عملناها (متخزن عندنا) - مش محتاجين حاجة من الرابط
+    if (o.paymentMethodType === "SKIPCASH" && o.paymentStatus === "UNPAID" && o.status !== "CANCELLED" && o.myFatoorahInvoiceId) {
+      const check = await verifyTenantGatewayPayment(tenant.id, { paymentMethodType: "SKIPCASH", invoiceId: o.myFatoorahInvoiceId }).catch(() => ({ paid: false, paymentId: null }));
+      if (check.paid) {
+        const r = await this.repo.markPaidIfUnpaid(tenant.id, o.id);
         if (r.count) {
           o = (await this.repo.order(tenant.id, id))!;
           await this.notifyMerchant(tenant.id, o);

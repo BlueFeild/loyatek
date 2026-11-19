@@ -14,8 +14,13 @@ export interface SeatPayments {
   methods(tenantId: string): Promise<PaymentMethod[]>;
   // المبلغ بالدولار -> المبلغ اللي العميل يدفعه بعملة الشركة
   payable(tenantId: string, usd: number): Promise<{ amount: number; currency: string }>;
-  start(tenantId: string, method: PaymentMethod, input: { amount: number; redirectionUrl: string; reference: string }): Promise<{ ok: boolean; paymentUrl?: string; invoiceId?: string; error?: string }>;
-  check(tenantId: string, paymentId: string, invoiceId: string | null): Promise<boolean>;
+  start(
+    tenantId: string,
+    method: PaymentMethod,
+    input: { amount: number; currency?: string; redirectionUrl: string; reference: string; customer?: { name?: string | null; phone?: string | null; email?: string | null } }
+  ): Promise<{ ok: boolean; paymentUrl?: string; invoiceId?: string; error?: string }>;
+  // اتدفع فعلًا؟ (SkipCash برقم الدفعة المتخزن، MyFatoorah بالـ paymentId من الرابط) -> رقم الدفعة اللي هنسجّله
+  verify(tenantId: string, methodType: string | null, invoiceId: string | null, paymentId: string | undefined): Promise<{ paid: boolean; paymentId: string | null }>;
 }
 
 export interface SeatTicketInfo {
@@ -395,7 +400,13 @@ export class SeatBookingService {
     }
     if (method!.type === "BANK_TRANSFER") return { order: publicOrder(updated), paymentUrl: null, paymentInstructions: instructions };
 
-    const started = await this.payments.start(tenantId, method!, { amount: pay!.amount, redirectionUrl: `${redirectionUrlBase}?seatOrder=${order.id}`, reference: order.id });
+    const started = await this.payments.start(tenantId, method!, {
+      amount: pay!.amount,
+      currency: pay!.currency,
+      redirectionUrl: `${redirectionUrlBase}?seatOrder=${order.id}`,
+      reference: order.id,
+      customer: { name: input.customerName, phone: input.customerPhone, email: input.customerEmail || null },
+    });
     if (!started.ok) {
       // الدفع مااشتغلش - نرجّع الكراسي متاحة عشان ماتفضلش محجوزة على الفاضي
       await this.repo.cancelOrder(order.id, ["AWAITING_PAYMENT"]);
@@ -405,12 +416,15 @@ export class SeatBookingService {
     return { order: publicOrder(withPay ?? updated), paymentUrl: started.paymentUrl ?? null, paymentInstructions: null };
   }
 
-  // رجوع العميل من MyFatoorah: بنسأل MyFatoorah نفسها (مش بنصدق الرابط)
-  async confirmPayment(tenantId: string, orderId: string, paymentId: string | undefined) {
+  // رجوع العميل من صفحة الدفع (أو webhook SkipCash): بنسأل البوابة نفسها (مش بنصدق الرابط)
+  async confirmPayment(tenantId: string, orderId: string, paymentIdFromQuery: string | undefined) {
     const order = await this.repo.findOrder(tenantId, orderId);
     if (!order) throw new NotFoundError("Booking not found");
-    if (order.status === "AWAITING_PAYMENT" && order.paymentMethodType === "MYFATOORAH" && paymentId) {
-      if ((await this.repo.findOrderByInvoice(tenantId, paymentId, order.id)) === null && (await this.payments.check(tenantId, paymentId, order.myFatoorahInvoiceId))) {
+    const auto = (order.paymentMethodType === "MYFATOORAH" && paymentIdFromQuery) || order.paymentMethodType === "SKIPCASH";
+    if (order.status === "AWAITING_PAYMENT" && auto) {
+      const check = await this.payments.verify(tenantId, order.paymentMethodType, order.myFatoorahInvoiceId, paymentIdFromQuery);
+      const paymentId = check.paymentId;
+      if (check.paid && paymentId && (await this.repo.findOrderByInvoice(tenantId, paymentId, order.id)) === null) {
         const paid = await this.repo.transition(order.id, { status: "AWAITING_PAYMENT" }, { status: "CONFIRMED", paymentStatus: "PAID", myFatoorahPaymentId: paymentId });
         if (paid) {
           await this.notifyConfirmed(paid);

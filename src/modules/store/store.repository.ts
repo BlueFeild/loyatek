@@ -144,6 +144,10 @@ export class StoreRepository {
   updateOrder(tenantId: string, id: string, data: Prisma.StoreOrderUpdateManyMutationInput) {
     return this.db.storeOrder.updateMany({ where: { id, tenantId }, data });
   }
+  // الدفع اتأكد من البوابة: UNPAID -> PAID مرة واحدة بس (رجوع العميل + webhook في نفس اللحظة)
+  markPaidIfUnpaid(tenantId: string, id: string) {
+    return this.db.storeOrder.updateMany({ where: { id, tenantId, paymentStatus: "UNPAID" }, data: { paymentStatus: "PAID" } });
+  }
   // تحويل الحالة بشرط (claim) - بيرجع 1 لو اتغيرت فعلًا
   claimOrder(tx: Tx, tenantId: string, id: string, where: Prisma.StoreOrderWhereInput, data: Prisma.StoreOrderUpdateManyMutationInput) {
     return tx.storeOrder.updateMany({ where: { ...where, id, tenantId }, data });

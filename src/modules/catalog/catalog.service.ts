@@ -5,7 +5,7 @@ import { getOrCreateWhatsappSettings, sendWhatsappTextMessage } from "../whatsap
 import { sendOrderReceivedTemplate } from "./order-whatsapp";
 import { renderMessageTemplate } from "../../utils/messageTemplate";
 import { createNotification } from "../notifications/notifications.service";
-import { startTenantPayment, getTenantPaymentMethods, checkTenantMyFatoorahPaymentStatus, paymentInvoiceMatch } from "../checkout/myfatoorah";
+import { startTenantPayment, getTenantPaymentMethods, verifyTenantGatewayPayment } from "../checkout/myfatoorah";
 import { confirmsOnOrder, pickPaymentMethod, shortReference, type PaymentMethod } from "../payment-settings/payment-methods";
 import { formatUsdAs, getTenantMoney, payableAmount } from "../../utils/money";
 import { isValidEmail, sendEmail } from "../../utils/email";
@@ -221,8 +221,10 @@ async function createOrderInner(input: CreateOrderInput) {
   // وميوصلش إشعار للمطبخ إلا بعد ما الدفع يتأكد
   const payment = await startTenantPayment(input.tenantId, method, {
     amount: payAmount,
+    currency: money.currency,
     redirectionUrl: `${input.redirectionUrlBase ?? ""}?orderId=${order.id}`,
     reference: order.id,
+    customer: { name: input.customerName, phone: input.customerPhone },
   });
 
   if (!payment.ok) {
@@ -240,24 +242,23 @@ async function createOrderInner(input: CreateOrderInput) {
 
 // بيتأكد من حالة دفع أوردر حقيقي بالسؤال المباشر لـ MyFatoorah (بمفتاح
 // التاجر)، ولو نجح فعليًا بيبعت إشعار المطبخ - أول مرة بس
-export async function confirmOrderPaymentIfPaid(orderId: string, paymentId: string) {
+export async function confirmOrderPaymentIfPaid(orderId: string, paymentIdFromQuery?: string | null) {
   const order = await prisma.catalogOrder.findUnique({ where: { id: orderId }, include: { items: true } });
   if (!order) throw new Error("Order not found");
 
   if (order.paymentStatus !== "AWAITING_PAYMENT") return order;
 
-  const check = await checkTenantMyFatoorahPaymentStatus(order.tenantId, paymentId);
-  if (!check.paid) return order;
-  // الدفعة لازم تخص فاتورة الأوردر ده، ومتكونش اتستخدمت لأوردر تاني قبل كده
-  if (paymentInvoiceMatch(check.raw, order.myFatoorahInvoiceId) === "mismatch") return order;
+  // الدفعة لازم تخص فاتورة/دفعة الأوردر ده (SkipCash أو MyFatoorah)، ومتكونش اتستخدمت لأوردر تاني قبل كده
+  const check = await verifyTenantGatewayPayment(order.tenantId, { paymentMethodType: order.paymentMethodType, invoiceId: order.myFatoorahInvoiceId }, paymentIdFromQuery);
+  if (!check.paid || !check.paymentId) return order;
+  const paymentId = check.paymentId;
   const reused = await prisma.catalogOrder.findFirst({ where: { myFatoorahPaymentId: paymentId, id: { not: order.id } } });
   if (reused) return order;
 
-  const updated = await prisma.catalogOrder.update({
-    where: { id: order.id },
-    data: { paymentStatus: "PAID", myFatoorahPaymentId: paymentId },
-    include: { items: true },
-  });
+  // قفل: إشعار المطبخ مرة واحدة بس حتى لو الـ webhook ورجوع العميل وصلوا مع بعض
+  const claimed = await prisma.catalogOrder.updateMany({ where: { id: order.id, paymentStatus: "AWAITING_PAYMENT" }, data: { paymentStatus: "PAID", myFatoorahPaymentId: paymentId } });
+  const updated = await prisma.catalogOrder.findUniqueOrThrow({ where: { id: order.id }, include: { items: true } });
+  if (claimed.count === 0) return updated;
 
   await notifyNewOrder(updated, updated.tenantId);
   return updated;

@@ -391,6 +391,7 @@ function ordersWhere(q: Record<string, unknown>) {
       { tenant: { name: { contains: term, mode: "insensitive" } } },
       { id: { startsWith: term } },
       { myFatoorahInvoiceId: { contains: term } },
+      { skipcashPaymentId: { startsWith: term.toLowerCase() } },
       { extraCompanyName: { contains: term, mode: "insensitive" } },
     ];
   }
@@ -418,7 +419,7 @@ superAdminRouter.get("/orders/export.csv", async (req, res) => {
     return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
   };
   const rows = [
-    ["Date", "Invoice", "Client", "Type", "Items", "Billing", "Amount", "Currency", "Amount (USD)", "Status", "MyFatoorah #"],
+    ["Date", "Invoice", "Client", "Type", "Items", "Billing", "Amount", "Currency", "Amount (USD)", "Status", "Payment provider", "Payment #"],
     ...orders.map((o: any) => [
       o.createdAt.toISOString().slice(0, 10),
       o.id.slice(0, 8).toUpperCase(),
@@ -430,7 +431,8 @@ superAdminRouter.get("/orders/export.csv", async (req, res) => {
       o.currency,
       Number(o.amountUsd ?? o.amount).toFixed(2),
       o.status,
-      o.myFatoorahInvoiceId ?? "",
+      o.paymentProvider ?? "MYFATOORAH",
+      o.skipcashPaymentId ?? o.myFatoorahInvoiceId ?? "",
     ]),
   ];
   // BOM عشان Excel يفتح العربي صح
@@ -442,7 +444,7 @@ superAdminRouter.get("/orders/export.csv", async (req, res) => {
 
 // تفعيل طلب اشتراك - بيضيف الخدمات المطلوبة لقائمة اشتراكات الشركة
 // فعليًا، وميحصلش أوتوماتيك حتى لو الدفع نجح، السوبر أدمن لازم يدوسه بنفسه
-// "Check payment": نسأل MyFatoorah عن فاتورة الطلب دلوقتي - لو اتدفعت بتتفعّل
+// "Check payment": نسأل بوابة الدفع (SkipCash / MyFatoorah) عن دفعة الطلب دلوقتي - لو اتدفعت بتتفعّل
 superAdminRouter.post("/orders/:id/check-payment", async (req, res) => {
   try {
     const r = await syncOrderPayment(req.params.id);

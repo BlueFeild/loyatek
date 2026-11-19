@@ -35,6 +35,7 @@ import { publicWalletRouter } from "./modules/wallet/public-wallet.routes";
 import { publicContactRouter } from "./modules/contact/public-contact.routes";
 import { checkoutRouter } from "./modules/checkout/checkout.routes";
 import { publicCheckoutRouter } from "./modules/checkout/public-checkout.routes";
+import { publicSkipCashWebhookRouter } from "./modules/payments/skipcash-webhook.routes";
 import { platformSettingsRouter } from "./modules/platform-settings/platform-settings.routes";
 import { opsRouter } from "./modules/operations/ops.routes";
 import { assetsRouter } from "./modules/assets/assets.routes";
@@ -166,6 +167,8 @@ app.use("/api/public/wallet", publicWalletRouter);
 app.use("/api/public/contact", publicContactRouter);
 app.use("/api/checkout", checkoutRouter);
 app.use("/api/public/checkout", publicCheckoutRouter);
+// SkipCash بتبلّغنا بحالة الدفع هنا (موقّع بالـ Webhook Key): المنصة على "/"، وكل تاجر على "/<token>" بتاعه
+app.use("/api/public/payments/skipcash/webhook", publicSkipCashWebhookRouter);
 app.use("/api/platform-settings", platformSettingsRouter);
 app.use("/api/ops", opsRouter);
 app.use("/api/assets", assetsRouter);

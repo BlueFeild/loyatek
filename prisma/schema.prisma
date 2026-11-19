@@ -1601,6 +1601,15 @@ model TenantPaymentSettings {
   // MyFatoorah) - شوفي payment-methods.ts. null = لسه على الإعداد القديم
   // (provider + customPaymentUrl) وبيتحوّل تلقائيًا لطريقة واحدة
   methods            Json?
+  // مفاتيح SkipCash الخاصة بالتاجر - متشفّرة (social/token-crypto.ts)، مابترجعش للمتصفح
+  skipcashClientId     String?  @db.Text
+  skipcashKeyId        String?  @db.Text
+  skipcashSecretKey    String?  @db.Text
+  skipcashWebhookKey   String?  @db.Text
+  skipcashIsTest       Boolean  @default(true)
+  skipcashKeyLast4     String?
+  // جزء عشوائي في رابط الـ webhook: /api/public/payments/skipcash/webhook/<token>
+  skipcashWebhookToken String?  @unique
   updatedAt          DateTime @updatedAt
 
   @@map("tenant_payment_settings")
@@ -1881,6 +1890,12 @@ model SubscriptionOrder {
   myFatoorahInvoiceId  String?
   myFatoorahPaymentId  String?
   myFatoorahPaymentUrl String?                 @db.Text
+  // البوابة اللي الطلب اتعمل بيها: MYFATOORAH (الطلبات القديمة) | SKIPCASH
+  paymentProvider      String                  @default("MYFATOORAH")
+  // رقم الدفعة عند SkipCash (resultObj.id) - بنسأل عنه GET /api/v1/payments/{id}
+  skipcashPaymentId    String?                 @unique
+  skipcashPaymentUrl   String?                 @db.Text
+  skipcashVisaId       String?
   createdAt            DateTime                @default(now())
   updatedAt            DateTime                @updatedAt
 

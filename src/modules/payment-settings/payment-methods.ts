@@ -3,20 +3,26 @@ import { z } from "zod";
 
 // طرق الدفع اللي التاجر بيعرضها لعملاءه - ممكن أكتر من طريقة مع بعض،
 // والعميل بيختار وهو بيحجز/بيطلب:
-//  - MYFATOORAH: دفع أونلاين بمفتاح التاجر، والتأكيد تلقائي
+//  - SKIPCASH: دفع أونلاين بمفاتيح SkipCash بتاعة التاجر، والتأكيد تلقائي (البوابة الجديدة)
+//  - MYFATOORAH: دفع أونلاين بمفتاح التاجر، والتأكيد تلقائي (للتجار القدام - لسه شغالة)
 //  - LINK: لينك دفع من أي مزوّد (SADAD / Dibsy / Tap / PayTabs / Stripe...)
 //  - BANK_TRANSFER: تحويل بنكي / Fawran / محفظة - بنعرض البيانات للعميل
 //  - CASH: كاش عند الوصول أو الاستلام - الحجز/الأوردر بيتأكد فورًا
 //  - CASH_OR_TRANSFER: اختيار واحد مدموج - العميل بيدفع كاش أو تحويل (براحته)
 //    عند الوصول/الاستلام؛ بنعرضله بيانات التحويل، والحجز/الأوردر بيتأكد فورًا زي الكاش
-// كل الطرق ماعدا MyFatoorah التاجر بيأكد فيها الدفع بنفسه بزرار "Mark paid"
-export const PAYMENT_METHOD_TYPES = ["MYFATOORAH", "LINK", "BANK_TRANSFER", "CASH", "CASH_OR_TRANSFER"] as const;
+// كل الطرق ماعدا SkipCash و MyFatoorah التاجر بيأكد فيها الدفع بنفسه بزرار "Mark paid"
+export const PAYMENT_METHOD_TYPES = ["SKIPCASH", "MYFATOORAH", "LINK", "BANK_TRANSFER", "CASH", "CASH_OR_TRANSFER"] as const;
 export type PaymentMethodType = (typeof PAYMENT_METHOD_TYPES)[number];
 
 // الدفع بيحصل في المكان (كاش، أو كاش/تحويل) - الحجز/الأوردر بيتأكد فورًا
 // وقت الطلب، و"Mark paid" بعدها مابيبعتش تأكيد تاني
 export function confirmsOnOrder(type: string | null | undefined): boolean {
   return type === "CASH" || type === "CASH_OR_TRANSFER";
+}
+
+// البوابات اللي بتأكد الدفع لوحدها (العميل بيتحوّل لصفحة دفع، والتأكيد بييجي من البوابة)
+export function isAutoGateway(type: string | null | undefined): boolean {
+  return type === "SKIPCASH" || type === "MYFATOORAH";
 }
 
 export interface PaymentMethod {
@@ -81,6 +87,8 @@ interface PaymentSettingsLike {
   customProviderName: string | null;
   customPaymentUrl: string | null;
   myFatoorahApiKey: string | null;
+  // SkipCash متوصّل؟ (المفتاح السري متشفّر - بنشوف إنه موجود بس)
+  skipcashSecretKey?: string | null;
 }
 
 // طرق الدفع الفعلية للتاجر. methods = null معناها التاجر لسه ما استخدمش
@@ -93,7 +101,8 @@ export function resolvePaymentMethods(settings: PaymentSettingsLike): PaymentMet
     return parsed.data
       .filter((m) => m.id)
       .map((m) => m as PaymentMethod)
-      .filter((m) => m.type !== "MYFATOORAH" || Boolean(settings.myFatoorahApiKey));
+      .filter((m) => m.type !== "MYFATOORAH" || Boolean(settings.myFatoorahApiKey))
+      .filter((m) => m.type !== "SKIPCASH" || Boolean(settings.skipcashSecretKey));
   }
   if (settings.provider === "CUSTOM_LINK" && settings.customPaymentUrl) {
     return [{ id: "legacy-link", type: "LINK", label: settings.customProviderName || "Pay online", url: settings.customPaymentUrl }];

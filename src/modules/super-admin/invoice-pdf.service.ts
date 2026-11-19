@@ -15,6 +15,7 @@ interface InvoiceOrderData {
   extraCompanyName: string | null;
   selectedModules: string[];
   myFatoorahInvoiceId: string | null;
+  skipcashPaymentId?: string | null;
   createdAt: Date;
 }
 
@@ -48,7 +49,8 @@ export function buildInvoicePdf(order: InvoiceOrderData, tenantName: string): Pr
     doc.text(`Invoice / Order ID: ${order.id}`);
     doc.text(`Client: ${tenantName}`);
     doc.text(`Date: ${new Date(order.createdAt).toLocaleDateString()}`);
-    if (order.myFatoorahInvoiceId) doc.text(`MyFatoorah Invoice #: ${order.myFatoorahInvoiceId}`);
+    if (order.skipcashPaymentId) doc.text(`SkipCash payment #: ${order.skipcashPaymentId}`);
+    else if (order.myFatoorahInvoiceId) doc.text(`MyFatoorah Invoice #: ${order.myFatoorahInvoiceId}`);
     doc.moveDown(1);
 
     doc.fontSize(12).fillColor("#0f172a").text("Item", 50, doc.y, { continued: true });

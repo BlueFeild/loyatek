@@ -147,7 +147,8 @@ publicBookingRouter.get("/:slug/bookings/:id/payment-status", async (req, res) =
   if (!booking) return res.status(404).json({ error: "Booking not found" });
 
   const paymentId = req.query.paymentId as string | undefined;
-  if (booking.paymentStatus === "AWAITING_PAYMENT" && paymentId) {
+  // SkipCash: بنسأل برقم الدفعة المتخزن عندنا (مش محتاجين paymentId في الرابط)
+  if (booking.paymentStatus === "AWAITING_PAYMENT" && (paymentId || booking.paymentMethodType === "SKIPCASH")) {
     try {
       const updated = await confirmBookingPaymentIfPaid(booking.id, paymentId);
       return res.json(updated);

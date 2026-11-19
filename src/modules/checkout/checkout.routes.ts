@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
-import { initiateMyFatoorahPayment } from "./myfatoorah";
+import { checkoutProvider, moneyForProvider, startSubscriptionPayment, validCheckoutPhone } from "./order-payment";
 import { modulesOrderAmount, extraCompanyAmount } from "./pricing";
 import { getRegionalPricing, pricingForCycle } from "../../utils/platform-config";
 import { visitorCountry } from "../../utils/visitor-country";
@@ -28,49 +28,39 @@ const createOrderSchema = z.object({
   billingCycle: z.enum(["monthly", "yearly"]).default("monthly"),
   // الدولة اللي العميل شايف أسعارها (العملة والسعر بيتحسبوا هنا مش من الفرونت)
   country: z.string().regex(/^[A-Za-z]{2}$/).optional(),
+  // تليفون اللي بيدفع - SkipCash بيطلبه (مش بيتخزن عندنا)
+  phone: z.string().trim().max(30).optional(),
 });
 
-// إنشاء طلب اشتراك حقيقي وفاتورة دفع حقيقية على MyFatoorah - الطلب
-// بيفضل PENDING حتى لو الدفع نجح، لحد ما السوبر أدمن يفعّله يدويًا
+// البوابة المستخدمة دلوقتي (الصفحة بتعرض الاسم الصح وبتطلب التليفون لو SkipCash)
+checkoutRouter.get("/payment-provider", (_req, res) => {
+  res.json(checkoutProvider());
+});
+
+const PHONE_REQUIRED = { error: "Please add your mobile number — the payment page needs it.", code: "PHONE_REQUIRED" };
+
+// إنشاء طلب اشتراك حقيقي + دفعة حقيقية على بوابة المنصة (SkipCash، أو MyFatoorah لو PAYMENT_PROVIDER=myfatoorah).
+// الطلب بيتفعّل تلقائيًا أول ما الدفع يتأكد من البوابة نفسها (رجوع العميل / webhook / sync كل دقيقتين)
 checkoutRouter.post("/orders", requireRole("OWNER", "ADMIN"), async (req, res) => {
   const parsed = createOrderSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { selectedModules, billingCycle, country } = parsed.data;
+  const { selectedModules, billingCycle, country, phone } = parsed.data;
+  const { provider } = checkoutProvider();
+  if (provider === "SKIPCASH" && !validCheckoutPhone(phone)) return res.status(400).json(PHONE_REQUIRED);
   // الدولة من السيرفر (الـ IP)، مش اللي الصفحة بعتتها
   const pricing = await getRegionalPricing(visitorCountry(req, country).country);
-  const money = orderMoney(modulesOrderAmount(selectedModules, billingCycle, pricingForCycle(pricing, billingCycle)), pricing);
-  const amount = money.amount;
+  // SkipCash = ريال قطري بس (بنحوّل لو أسعار الدولة بعملة تانية)
+  const money = await moneyForProvider(orderMoney(modulesOrderAmount(selectedModules, billingCycle, pricingForCycle(pricing, billingCycle)), pricing), provider);
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   if (!tenant) return res.status(404).json({ error: "Tenant not found" });
 
   const order = await prisma.subscriptionOrder.create({
-    data: { tenantId: tenant.id, selectedModules, billingCycle, ...money, country: pricing.country },
+    data: { tenantId: tenant.id, selectedModules, billingCycle, ...money, country: pricing.country, paymentProvider: provider },
   });
-
-  const frontendBase = process.env.FRONTEND_BASE_URL || "http://localhost:5173";
-  // MyFatoorah v3 بيستخدم رابط رجوع واحد بس (Redirection) للنجاح
-  // والفشل مع بعض - بيضيف paymentId في الآخر، وإحنا اللي بنتأكد من
-  // الحالة الحقيقية بنداء GetPaymentDetails بعد كده
-  const payment = await initiateMyFatoorahPayment({
-    amount,
-    currency: money.currency,
-    redirectionUrl: `${frontendBase}/checkout/success?orderId=${order.id}`,
-  });
-
-  if (!payment.ok) {
-    // الطلب لسه محفوظ فعليًا كـ PENDING حتى لو بوابة الدفع مش متوصّلة -
-    // السوبر أدمن يقدر يفعّله يدويًا بعد ما يتأكد من الدفع بطريقة تانية
-    return res.status(200).json({ order, paymentUrl: null, paymentError: payment.error });
-  }
-
-  const updated = await prisma.subscriptionOrder.update({
-    where: { id: order.id },
-    data: { myFatoorahInvoiceId: payment.invoiceId, myFatoorahPaymentUrl: payment.paymentUrl },
-  });
-
-  res.status(201).json({ order: updated, paymentUrl: payment.paymentUrl, paymentError: null });
+  const started = await startSubscriptionPayment(order, { userId: req.auth!.userId, phone });
+  res.status(started.paymentUrl ? 201 : 200).json(started);
 });
 
 const createExtraCompanyOrderSchema = z.object({
@@ -81,6 +71,7 @@ const createExtraCompanyOrderSchema = z.object({
   selectedModules: z.array(z.enum(MODULE_IDS)).default([]),
   billingCycle: z.enum(["monthly", "yearly"]).default("monthly"),
   country: z.string().regex(/^[A-Za-z]{2}$/).optional(),
+  phone: z.string().trim().max(30).optional(),
 });
 
 // طلب شراء شركة إضافية لنفس المالك - بيعدّي بنفس خط الدفع الحقيقي
@@ -91,12 +82,13 @@ checkoutRouter.post("/extra-company-orders", requireRole("OWNER"), async (req, r
   const parsed = createExtraCompanyOrderSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { name, industry, billingCycle, country } = parsed.data;
+  const { name, industry, billingCycle, country, phone } = parsed.data;
+  const { provider } = checkoutProvider();
+  if (provider === "SKIPCASH" && !validCheckoutPhone(phone)) return res.status(400).json(PHONE_REQUIRED);
   const selectedModules = Array.from(new Set(parsed.data.selectedModules));
   // الدولة من السيرفر (الـ IP)، مش اللي الصفحة بعتتها
   const pricing = await getRegionalPricing(visitorCountry(req, country).country);
-  const money = orderMoney(extraCompanyAmount(selectedModules, billingCycle, pricingForCycle(pricing, billingCycle)), pricing);
-  const amount = money.amount;
+  const money = await moneyForProvider(orderMoney(extraCompanyAmount(selectedModules, billingCycle, pricingForCycle(pricing, billingCycle)), pricing), provider);
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   if (!tenant) return res.status(404).json({ error: "Tenant not found" });
@@ -111,26 +103,11 @@ checkoutRouter.post("/extra-company-orders", requireRole("OWNER"), async (req, r
       orderType: "EXTRA_COMPANY",
       extraCompanyName: name,
       extraCompanyIndustry: industry,
+      paymentProvider: provider,
     },
   });
-
-  const frontendBase = process.env.FRONTEND_BASE_URL || "http://localhost:5173";
-  const payment = await initiateMyFatoorahPayment({
-    amount,
-    currency: money.currency,
-    redirectionUrl: `${frontendBase}/checkout/success?orderId=${order.id}`,
-  });
-
-  if (!payment.ok) {
-    return res.status(200).json({ order, paymentUrl: null, paymentError: payment.error });
-  }
-
-  const updated = await prisma.subscriptionOrder.update({
-    where: { id: order.id },
-    data: { myFatoorahInvoiceId: payment.invoiceId, myFatoorahPaymentUrl: payment.paymentUrl },
-  });
-
-  res.status(201).json({ order: updated, paymentUrl: payment.paymentUrl, paymentError: null });
+  const started = await startSubscriptionPayment(order, { userId: req.auth!.userId, phone });
+  res.status(started.paymentUrl ? 201 : 200).json(started);
 });
 
 // الأسعار الفعلية اللي الباك إند بيحاسب بيها - الفرونت بيعرض منها بس

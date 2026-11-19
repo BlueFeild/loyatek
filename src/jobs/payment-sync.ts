@@ -1,7 +1,7 @@
 import { prisma } from "../config/db";
 import { syncOrderPayment } from "../modules/checkout/order-activation";
 
-// كل دقيقتين: أي طلب اشتراك لسه PENDING/PAID وليه فاتورة MyFatoorah (آخر 3
+// كل دقيقتين: أي طلب اشتراك لسه PENDING/PAID وليه دفعة SkipCash أو فاتورة MyFatoorah (آخر 3
 // أيام) بنسأل عنه MyFatoorah - لو اتدفع بيتفعّل. كده الخدمة بتتفعّل حتى لو
 // العميل قفل الصفحة بعد الدفع ومرجعش للموقع. DISABLE_PAYMENT_SYNC=1 يوقفه
 let timer: NodeJS.Timeout | null = null;
@@ -9,7 +9,7 @@ let timer: NodeJS.Timeout | null = null;
 export async function runPaymentSync() {
   const since = new Date(Date.now() - 3 * 86400000);
   const orders = await prisma.subscriptionOrder.findMany({
-    where: { status: { in: ["PENDING", "PAID"] }, myFatoorahInvoiceId: { not: null }, createdAt: { gte: since } },
+    where: { status: { in: ["PENDING", "PAID"] }, OR: [{ myFatoorahInvoiceId: { not: null } }, { skipcashPaymentId: { not: null } }], createdAt: { gte: since } },
     select: { id: true },
     take: 50,
   });
