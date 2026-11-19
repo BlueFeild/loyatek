@@ -3009,3 +3009,69 @@ model SmsCreditTransaction {
   @@index([tenantId, createdAt])
   @@map("sms_credit_transactions")
 }
+
+// ======================================================================
+// الموقع التعريفي (module "website") - 2026-11-19
+// موقع صفحة واحدة للشركة (عيادة، صالون، استوديو، شركة): أقسام بتتفتح وتتقفل وتترتب
+// ======================================================================
+model WebsiteSettings {
+  id             String    @id @default(uuid())
+  tenantId       String    @unique
+  // false = الصفحة العامة بتقول "الموقع لسه مش منشور"
+  published      Boolean   @default(false)
+  template       String    @default("bluefield")
+  // {accent, font}
+  pageStyle      Json?
+  // كل الأقسام (ترتيب + فتح/قفل + محتوى كل قسم) - بيتحقق منها بـ zod في website.schemas.ts
+  content        Json?
+  brandName      String?
+  logoDataUrl    String?   @db.Text
+  coverDataUrl   String?   @db.Text
+  seoTitle       String?
+  seoDescription String?
+  // لغة الكلام الثابت في الموقع (en | ar)
+  language       String    @default("en")
+  // أول مرة اتحفظ (null = لسه ماعملش الخطوات الأولى)
+  savedAt        DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@map("website_settings")
+}
+
+model WebsitePhoto {
+  id        String   @id @default(uuid())
+  tenantId  String
+  kind      String   @default("gallery") // gallery | about | team | service
+  dataUrl   String   @db.Text
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, kind])
+  @@map("website_photos")
+}
+
+model WebsiteInquiry {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  phone     String?
+  email     String?
+  message   String   @db.Text
+  status    String   @default("NEW") // NEW | READ
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@map("website_inquiries")
+}
+
+model WebsiteVisitDay {
+  id       String @id @default(uuid())
+  tenantId String
+  // YYYY-MM-DD (UTC)
+  day      String
+  count    Int    @default(0)
+
+  @@unique([tenantId, day])
+  @@map("website_visit_days")
+}
