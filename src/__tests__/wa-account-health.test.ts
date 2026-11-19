@@ -141,7 +141,38 @@ describe("AccountHealthService cache", () => {
 // خريطة الأخطاء بتاعة الفرونت (ملف واحد من غير imports) - بنقراها من هنا بمسار متغير عشان tsc الباك إند مايشيلهاش
 describe("WhatsApp connect error help (frontend map)", async () => {
   const file = path.resolve(__dirname, "../../../frontend/src/lib/whatsappConnectHelp.ts");
-  const mod: { connectHelp: (e: unknown) => { id: string; switchTo?: string; raw: string }; errorCodes: (s: string) => number[] } = await import(file);
+  type H = { title: string; text: string; steps: string[] };
+  const mod: {
+    connectHelp: (e: unknown, lang?: "en" | "ar") => H & { id: string; switchTo?: string; raw: string };
+    errorCodes: (s: string) => number[];
+    CONNECT_HELP_RULES: ({ id: string; en: H; ar: H })[];
+  } = await import(file);
+  const arabic = /[؀-ۿ]/;
+
+  it("every error has English AND Arabic (title, text, same number of steps)", () => {
+    expect(mod.CONNECT_HELP_RULES.length).toBeGreaterThan(15);
+    for (const r of mod.CONNECT_HELP_RULES) {
+      for (const l of ["en", "ar"] as const) {
+        expect(r[l].title.trim(), r.id + " " + l).not.toBe("");
+        expect(r[l].text.trim(), r.id + " " + l).not.toBe("");
+        expect(r[l].steps.length, r.id + " " + l).toBeGreaterThan(0);
+      }
+      expect(r.ar.steps.length, r.id).toBe(r.en.steps.length);
+      expect(arabic.test(r.ar.title + r.ar.text), r.id).toBe(true);
+      expect(arabic.test(r.en.title + r.en.text), r.id).toBe(false);
+    }
+  });
+
+  it("returns Arabic when asked, same id and the raw Meta text kept", () => {
+    const raw = "(#2655111) Partner app lacks required advanced permissions";
+    const en = mod.connectHelp(raw);
+    const ar = mod.connectHelp(raw, "ar");
+    expect(ar.id).toBe(en.id);
+    expect(arabic.test(ar.title)).toBe(true);
+    expect(ar.raw).toBe(raw);
+    expect(arabic.test(mod.connectHelp("Totally new Meta message", "ar").title)).toBe(true);
+    expect(mod.connectHelp("Couldn't load Facebook — check your internet", "ar").id).toBe("network");
+  });
 
   it("reads error codes from Meta text", () => {
     expect(mod.errorCodes("(#2655111) Partner app lacks required advanced...")).toEqual([2655111]);
