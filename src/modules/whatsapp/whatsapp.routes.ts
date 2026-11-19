@@ -50,6 +50,7 @@ import { flowRouter } from "./flow.routes";
 import { sequenceRouter } from "./sequence.routes";
 import { inboxToolsRouter } from "./inbox-tools.routes";
 import { whatsappNumbersRouter } from "./whatsapp-numbers.routes";
+import { accountHealthRouter } from "./account-health.routes";
 import { PrismaContactBookRepository } from "./contact-book.repository";
 import { normalizePhone, normalizeTags } from "./contact-book.service";
 import { RETARGET_GROUPS, RETARGET_LABEL, pickRetarget, summarizeCampaign } from "./campaign-report";
@@ -68,6 +69,8 @@ whatsappRouter.use("/flows", flowRouter);
 whatsappRouter.use("/sequences", sequenceRouter);
 whatsappRouter.use("/inbox-tools", inboxToolsRouter);
 whatsappRouter.use("/numbers", whatsappNumbersRouter);
+// صحة الحساب (اسم العرض / الجودة / حد المحادثات / توثيق البيزنس) - /api/whatsapp/health
+whatsappRouter.use("/health", accountHealthRouter);
 
 // --- Settings (ربط حساب Meta الحقيقي) ---
 

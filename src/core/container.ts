@@ -36,6 +36,7 @@ import { MetaAgentMessenger, PrismaAiAgentRepository } from "../modules/whatsapp
 import { PrismaAgentBooker } from "../modules/whatsapp/agent-booking";
 import { FlowService } from "../modules/whatsapp/flow.service";
 import { WhatsappNumbersService } from "../modules/whatsapp/whatsapp-numbers.service";
+import { AccountHealthService, MetaAccountHealthGateway } from "../modules/whatsapp/account-health";
 import { MetaFlowMessenger, PrismaFlowRepository } from "../modules/whatsapp/flow.repository";
 import { PrismaContactBookRepository } from "../modules/whatsapp/contact-book.repository";
 import { getConversationContacts, getUnifiedContacts } from "../modules/whatsapp/whatsapp.service";
@@ -151,6 +152,16 @@ export const container = {
   orderReady: new OrderReadyService(new PrismaOrderReadyStore(prisma), new WhatsappOrderReadyNotifier()),
   contactBookService: new ContactBookService(new PrismaContactBookRepository(prisma), { customers: async (tenantId: string) => [...(await getUnifiedContacts(tenantId)), ...(await getConversationContacts(tenantId))] }),
   whatsappNumbers,
+  // صحة حساب الواتساب (اسم/جودة/حد المحادثات/توثيق) من Meta - كاش 5 دقايق
+  accountHealth: new AccountHealthService(
+    {
+      connection: async (tenantId) => {
+        const s = await prisma.whatsappSettings.findUnique({ where: { tenantId }, select: { isConnected: true, metaAccessToken: true, metaPhoneNumberId: true, metaWabaId: true, displayPhoneNumber: true, verifiedName: true } });
+        return s ? { isConnected: s.isConnected, token: s.metaAccessToken, phoneNumberId: s.metaPhoneNumberId, wabaId: s.metaWabaId, display: s.displayPhoneNumber, name: s.verifiedName } : null;
+      },
+    },
+    new MetaAccountHealthGateway()
+  ),
   sequenceService: new SequenceService(new PrismaSequenceRepository(prisma), new MetaSequenceSender(whatsappNumbers)),
   team: new TeamService(new PrismaTeamRepository(prisma), new EmailTeamMailer()),
   inboxTools: new InboxToolsService(new PrismaInboxToolsRepository(prisma), new MetaInboxMessenger(whatsappNumbers)),
