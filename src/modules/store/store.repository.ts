@@ -4,6 +4,10 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 export type Tx = Prisma.TransactionClient;
 
 const PHOTO_META = { id: true, sortOrder: true, createdAt: true } as const;
+const WITH_ALL = {
+  photos: { select: PHOTO_META, orderBy: [{ sortOrder: "asc" as const }, { createdAt: "asc" as const }] },
+  variations: { orderBy: [{ sortOrder: "asc" as const }, { createdAt: "asc" as const }] },
+};
 
 export class StoreRepository {
   constructor(private readonly db: PrismaClient) {}
@@ -39,59 +43,43 @@ export class StoreRepository {
     return b?.timezone || "Asia/Qatar";
   }
 
-  // ---------- الأقسام ----------
-  categories(tenantId: string) {
-    return this.db.storeCategory.findMany({ where: { tenantId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] });
-  }
-  category(tenantId: string, id: string) {
-    return this.db.storeCategory.findFirst({ where: { id, tenantId } });
-  }
-  async createCategory(tenantId: string, name: string) {
-    const last = await this.db.storeCategory.aggregate({ where: { tenantId }, _max: { sortOrder: true } });
-    return this.db.storeCategory.create({ data: { tenantId, name, sortOrder: (last._max.sortOrder ?? -1) + 1 } });
-  }
-  renameCategory(tenantId: string, id: string, name: string) {
-    return this.db.storeCategory.updateMany({ where: { id, tenantId }, data: { name } });
-  }
-  async deleteCategory(tenantId: string, id: string) {
-    return this.db.$transaction([
-      this.db.storeProduct.updateMany({ where: { tenantId, categoryId: id }, data: { categoryId: null } }),
-      this.db.storeCategory.deleteMany({ where: { id, tenantId } }),
-    ]);
-  }
-  orderCategories(tenantId: string, ids: string[]) {
-    return this.db.$transaction(ids.map((id, i) => this.db.storeCategory.updateMany({ where: { id, tenantId }, data: { sortOrder: i } })));
-  }
-
   // ---------- المنتجات ----------
-  products(tenantId: string, onlyActive = false) {
+  // status: PUBLISHED = في القوايم، HIDDEN = بالرابط بس، DRAFT = مقفول
+  products(tenantId: string, statuses?: string[]) {
     return this.db.storeProduct.findMany({
-      where: { tenantId, ...(onlyActive ? { active: true } : {}) },
-      include: { photos: { select: PHOTO_META, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] } },
+      where: { tenantId, ...(statuses ? { status: { in: statuses } } : {}) },
+      include: WITH_ALL,
       orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
     });
   }
   product(tenantId: string, id: string) {
-    return this.db.storeProduct.findFirst({
-      where: { id, tenantId },
-      include: { photos: { select: PHOTO_META, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] } },
-    });
+    return this.db.storeProduct.findFirst({ where: { id, tenantId }, include: WITH_ALL });
+  }
+  productBySlug(tenantId: string, slug: string) {
+    return this.db.storeProduct.findFirst({ where: { slug, tenantId }, include: WITH_ALL });
   }
   productsByIds(tenantId: string, ids: string[]) {
-    return this.db.storeProduct.findMany({
-      where: { tenantId, id: { in: ids } },
-      include: { photos: { select: { id: true }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], take: 1 } },
-    });
+    return this.db.storeProduct.findMany({ where: { tenantId, id: { in: ids } }, include: WITH_ALL });
+  }
+  productRefs(tenantId: string, ids: string[]) {
+    return this.db.storeProduct.findMany({ where: { tenantId, id: { in: ids } }, select: { id: true } });
+  }
+  productSlugs(tenantId: string) {
+    return this.db.storeProduct.findMany({ where: { tenantId, slug: { not: null } }, select: { id: true, slug: true } });
+  }
+  productsBySku(tenantId: string, skus: string[]) {
+    return this.db.storeProduct.findMany({ where: { tenantId, sku: { in: skus } }, select: { id: true, sku: true } });
   }
   countProducts(tenantId: string) {
     return this.db.storeProduct.count({ where: { tenantId } });
   }
-  async createProduct(tenantId: string, data: Omit<Prisma.StoreProductUncheckedCreateInput, "tenantId">) {
-    const first = await this.db.storeProduct.aggregate({ where: { tenantId }, _min: { sortOrder: true } });
-    return this.db.storeProduct.create({ data: { ...data, tenantId, sortOrder: (first._min.sortOrder ?? 1) - 1 } });
+  async createProduct(tenantId: string, data: Omit<Prisma.StoreProductUncheckedCreateInput, "tenantId">, tx?: Tx) {
+    const db = tx ?? this.db;
+    const first = await db.storeProduct.aggregate({ where: { tenantId }, _min: { sortOrder: true } });
+    return db.storeProduct.create({ data: { ...data, tenantId, sortOrder: (first._min.sortOrder ?? 1) - 1 } });
   }
-  updateProduct(tenantId: string, id: string, data: Prisma.StoreProductUncheckedUpdateManyInput) {
-    return this.db.storeProduct.updateMany({ where: { id, tenantId }, data });
+  updateProduct(tenantId: string, id: string, data: Prisma.StoreProductUncheckedUpdateManyInput, tx?: Tx) {
+    return (tx ?? this.db).storeProduct.updateMany({ where: { id, tenantId }, data });
   }
   deleteProduct(tenantId: string, id: string) {
     return this.db.storeProduct.deleteMany({ where: { id, tenantId } });
@@ -101,6 +89,9 @@ export class StoreRepository {
   }
 
   // ---------- الصور ----------
+  photosMeta(tenantId: string, productId: string) {
+    return this.db.storeProductPhoto.findMany({ where: { tenantId, productId }, select: { id: true } });
+  }
   photoCount(tenantId: string, productId: string) {
     return this.db.storeProductPhoto.count({ where: { tenantId, productId } });
   }
@@ -157,18 +148,33 @@ export class StoreRepository {
     return this.db.$transaction(fn);
   }
 
-  // بينقص المخزون بشرط إنه يكفي (null = مفتوح، والطرح من null بيفضل null)
+  // بينقص المخزون بشرط إنه يكفي (null = مفتوح، والطرح من null بيفضل null). backorders = يقبل حتى لو مفيش
   takeStock(tx: Tx, tenantId: string, productId: string, qty: number) {
     return tx.storeProduct.updateMany({
-      where: { id: productId, tenantId, active: true, OR: [{ stock: null }, { stock: { gte: qty } }] },
+      where: { id: productId, tenantId, active: true, OR: [{ stock: null }, { stock: { gte: qty } }, { backorders: true }] },
+      data: { stock: { decrement: qty } },
+    });
+  }
+  takeVariationStock(tx: Tx, tenantId: string, productId: string, variationId: string, qty: number, backorders: boolean) {
+    return tx.storeProductVariation.updateMany({
+      where: { id: variationId, productId, tenantId, enabled: true, ...(backorders ? {} : { OR: [{ stock: null }, { stock: { gte: qty } }] }) },
       data: { stock: { decrement: qty } },
     });
   }
   returnStock(tx: Tx, tenantId: string, productId: string, qty: number) {
     return tx.storeProduct.updateMany({ where: { id: productId, tenantId, stock: { not: null } }, data: { stock: { increment: qty } } });
   }
+  returnVariationStock(tx: Tx, tenantId: string, variationId: string, qty: number) {
+    return tx.storeProductVariation.updateMany({ where: { id: variationId, tenantId, stock: { not: null } }, data: { stock: { increment: qty } } });
+  }
   stockOf(tx: Tx, tenantId: string, productId: string) {
-    return tx.storeProduct.findFirst({ where: { id: productId, tenantId }, select: { stock: true, name: true } });
+    return tx.storeProduct.findFirst({ where: { id: productId, tenantId }, select: { stock: true, name: true, lowStockAt: true } });
+  }
+  variationStockOf(tx: Tx, tenantId: string, variationId: string) {
+    return tx.storeProductVariation.findFirst({ where: { id: variationId, tenantId }, select: { stock: true } });
+  }
+  addSold(tx: Tx, tenantId: string, productId: string, qty: number) {
+    return tx.storeProduct.updateMany({ where: { id: productId, tenantId }, data: { soldCount: { increment: qty } } });
   }
   async nextOrderNumber(tx: Tx, tenantId: string) {
     const max = await tx.storeOrder.aggregate({ where: { tenantId }, _max: { number: true } });

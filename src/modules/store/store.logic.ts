@@ -1,23 +1,27 @@
 import { z } from "zod";
-import { AppError } from "../../core/errors";
 import { imageDataUrl } from "../booking/page-design";
+import { MAX_LINES, MAX_QTY, type DeliveryArea } from "./store-pricing.logic";
+import { COUPON_KINDS } from "./store-pricing.logic";
+import { productAttrsSchema } from "./store-catalog.logic";
 
-// منطق المتجر "النقي" (من غير داتابيز): التحقق من البيانات، الاختيارات (مقاس/لون)،
-// حساب السلة والتوصيل. كل الأسعار هنا بالدولار (زي ما هي متخزنة).
+// مدخلات المتجر (zod) + أدوات صغيرة. الحساب نفسه في store-pricing.logic.ts والكتالوج في store-catalog.logic.ts.
+// كل الأسعار هنا بالدولار (زي ما هي متخزنة).
 
 export const MAX_PRODUCTS = 1000;
 export const MAX_PHOTOS = 12;
-export const MAX_OPTIONS = 3;
 export const MAX_OPTION_VALUES = 20;
 export const MAX_AREAS = 50;
-export const MAX_LINES = 50;
-export const MAX_QTY = 99;
+export const MAX_COUPONS = 200;
+export const MAX_BANNERS = 6;
+export { MAX_LINES, MAX_QTY };
 export const PHOTO_MAX_CHARS = 2_100_000; // ~1.5 MB
 export const LOGO_MAX_CHARS = 700_000; // ~500 KB
 export const COVER_MAX_CHARS = 2_500_000; // ~1.8 MB
+export const SMALL_IMAGE_MAX_CHARS = 400_000; // صورة قسم / قيمة خاصية
 
 export const ORDER_STATUSES = ["NEW", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
+export const PRODUCT_STATUSES = ["PUBLISHED", "HIDDEN", "DRAFT"] as const;
 
 const HEX = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Pick a color like #111827");
 const money = z.number().finite().min(0, "Prices can't be negative").max(10_000_000);
@@ -29,62 +33,30 @@ const optText = (max: number) =>
     .nullable()
     .optional()
     .transform((v) => (v === undefined ? undefined : v ? v : null));
+const optDate = z
+  .string()
+  .datetime({ offset: true, message: "Pick a valid date" })
+  .nullable()
+  .optional()
+  .transform((v) => (v === undefined ? undefined : v ? new Date(v) : null));
+const ids = (max: number) => z.array(z.string().uuid()).max(max).transform((a) => [...new Set(a)]);
 
-// ---------- الاختيارات (مقاس / لون / حجم) ----------
+// ---------- الاختيارات القديمة (options) - بنقراها بس للطلبات/السلة القديمة ----------
 export interface ProductOption {
   name: string;
   values: string[];
 }
-
 export const optionsSchema = z
-  .array(
-    z.object({
-      name: z.string().trim().min(1, "Give each option a name (e.g. Size)").max(40),
-      values: z.array(z.string().trim().min(1).max(40)).min(1, "Each option needs at least one choice").max(MAX_OPTION_VALUES, `Up to ${MAX_OPTION_VALUES} choices per option`),
-    })
-  )
-  .max(MAX_OPTIONS, `Up to ${MAX_OPTIONS} options per product`)
-  .superRefine((opts, ctx) => {
-    const names = new Set<string>();
-    opts.forEach((o, i) => {
-      const key = o.name.toLowerCase();
-      if (names.has(key)) ctx.addIssue({ code: "custom", path: [i, "name"], message: `The option "${o.name}" is there twice` });
-      names.add(key);
-    });
-  })
-  // نشيل الاختيارات المكررة جوه نفس الخيار
-  .transform((opts) => opts.map((o) => ({ name: o.name, values: [...new Set(o.values)] })));
-
-// اللي متخزن في الداتابيز ممكن يكون أي حاجة (Json) - بنقراه بأمان
+  .array(z.object({ name: z.string().trim().min(1).max(40), values: z.array(z.string().trim().min(1).max(40)).min(1).max(MAX_OPTION_VALUES) }))
+  .max(3);
 export function readOptions(raw: unknown): ProductOption[] {
   const parsed = optionsSchema.safeParse(raw ?? []);
   return parsed.success ? parsed.data : [];
 }
 
-// الاختيارات اللي العميل بعتها لازم تطابق خيارات المنتج بالظبط: كل خيار له قيمة من القايمة، ومفيش حاجة زيادة
-export function matchOptions(productName: string, options: ProductOption[], chosen: Record<string, unknown> | null | undefined): Record<string, string> {
-  const given = chosen ?? {};
-  const out: Record<string, string> = {};
-  for (const key of Object.keys(given)) {
-    if (!options.some((o) => o.name === key)) throw new AppError(400, "BAD_OPTIONS", `"${key}" isn't an option of ${productName}.`);
-  }
-  for (const o of options) {
-    const v = given[o.name];
-    if (typeof v !== "string" || !v) throw new AppError(400, "BAD_OPTIONS", `Please choose ${o.name} for ${productName}.`);
-    if (!o.values.includes(v)) throw new AppError(400, "BAD_OPTIONS", `"${v}" isn't available for ${o.name} of ${productName}.`);
-    out[o.name] = v;
-  }
-  return out;
-}
-
 // ---------- التوصيل ----------
-export interface DeliveryArea {
-  name: string;
-  fee: number;
-}
-
 export const areasSchema = z
-  .array(z.object({ name: z.string().trim().min(1, "Give each area a name").max(60), fee: money }))
+  .array(z.object({ name: z.string().trim().min(1, "Give each area a name").max(60), fee: money, freeOver: money.nullable().optional() }))
   .max(MAX_AREAS, `Up to ${MAX_AREAS} delivery areas`)
   .superRefine((areas, ctx) => {
     const seen = new Set<string>();
@@ -97,107 +69,7 @@ export const areasSchema = z
 
 export function readAreas(raw: unknown): DeliveryArea[] {
   const parsed = areasSchema.safeParse(raw ?? []);
-  return parsed.success ? parsed.data : [];
-}
-
-export interface DeliveryConfig {
-  deliveryEnabled: boolean;
-  deliveryFee: number;
-  freeDeliveryOver: number | null;
-  areas: DeliveryArea[];
-  pickupEnabled: boolean;
-}
-
-// سعر التوصيل: حسب المنطقة لو التاجر عامل مناطق، غير كده السعر الثابت، ومجاني فوق مبلغ معين
-export function deliveryFeeFor(cfg: DeliveryConfig, fulfillment: "DELIVERY" | "PICKUP", area: string | null | undefined, subtotal: number): { fee: number; area: string | null } {
-  if (fulfillment === "PICKUP") {
-    if (!cfg.pickupEnabled) throw new AppError(400, "NO_PICKUP", "This shop doesn't offer pickup. Please choose delivery.");
-    return { fee: 0, area: null };
-  }
-  if (!cfg.deliveryEnabled) throw new AppError(400, "NO_DELIVERY", "This shop doesn't deliver. Please choose pickup.");
-  let fee = cfg.deliveryFee;
-  let areaName: string | null = null;
-  if (cfg.areas.length > 0) {
-    const found = cfg.areas.find((a) => a.name.toLowerCase() === (area ?? "").trim().toLowerCase());
-    if (!found) throw new AppError(400, "BAD_AREA", "Please choose your delivery area.");
-    fee = found.fee;
-    areaName = found.name;
-  } else if (area && area.trim()) {
-    areaName = area.trim().slice(0, 60);
-  }
-  if (cfg.freeDeliveryOver != null && subtotal >= cfg.freeDeliveryOver) fee = 0;
-  return { fee: round6(fee), area: areaName };
-}
-
-// ---------- حساب السلة ----------
-export interface ProductForPricing {
-  id: string;
-  name: string;
-  price: number;
-  stock: number | null;
-  active: boolean;
-  options: ProductOption[];
-  coverPhotoId: string | null;
-}
-
-export interface CartLineInput {
-  productId: string;
-  qty: number;
-  options?: Record<string, unknown> | null;
-}
-
-export interface PricedLine {
-  productId: string;
-  name: string;
-  options: Record<string, string>;
-  price: number;
-  qty: number;
-  photoId: string | null;
-}
-
-export const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
-
-export function soldOutMessage(name: string, left: number) {
-  return left <= 0 ? `Sorry, ${name} is sold out.` : `Only ${left} left of ${name}. Please lower the quantity.`;
-}
-
-// بيحسب كل حاجة من بيانات الداتابيز بس (السعر اللي جاي من العميل بيتجاهل خالص)
-export function priceCart(lines: CartLineInput[], products: ProductForPricing[], cfg: DeliveryConfig, fulfillment: "DELIVERY" | "PICKUP", area?: string | null) {
-  if (lines.length === 0) throw new AppError(400, "EMPTY_CART", "Your cart is empty.");
-  if (lines.length > MAX_LINES) throw new AppError(400, "TOO_MANY_LINES", `Up to ${MAX_LINES} different items per order.`);
-  const byId = new Map(products.map((p) => [p.id, p]));
-  const priced: PricedLine[] = [];
-  const need = new Map<string, number>();
-  for (const line of lines) {
-    const p = byId.get(line.productId);
-    if (!p || !p.active) throw new AppError(400, "UNAVAILABLE", "One of the items in your cart is no longer available. Please remove it and try again.");
-    if (!Number.isInteger(line.qty) || line.qty < 1 || line.qty > MAX_QTY) throw new AppError(400, "BAD_QTY", `Quantity must be between 1 and ${MAX_QTY}.`);
-    const options = matchOptions(p.name, p.options, line.options);
-    // نفس المنتج بنفس الاختيارات مرتين في السلة = سطر واحد
-    const same = priced.find((x) => x.productId === p.id && JSON.stringify(x.options) === JSON.stringify(options));
-    if (same) same.qty += line.qty;
-    else priced.push({ productId: p.id, name: p.name, options, price: p.price, qty: line.qty, photoId: p.coverPhotoId });
-    need.set(p.id, (need.get(p.id) ?? 0) + line.qty);
-  }
-  for (const [id, qty] of need) {
-    const p = byId.get(id)!;
-    if (p.stock != null && p.stock < qty) throw new AppError(409, "OUT_OF_STOCK", soldOutMessage(p.name, p.stock));
-  }
-  const subtotal = round6(priced.reduce((s, l) => s + l.price * l.qty, 0));
-  const delivery = deliveryFeeFor(cfg, fulfillment, area, subtotal);
-  return { lines: priced, need, subtotal, deliveryFee: delivery.fee, area: delivery.area, total: round6(subtotal + delivery.fee) };
-}
-
-// الإلغاء بيرجّع المخزون: كمية كل منتج في الطلب
-export function stockToReturn(items: unknown): Map<string, number> {
-  const out = new Map<string, number>();
-  if (!Array.isArray(items)) return out;
-  for (const it of items) {
-    const id = typeof it?.productId === "string" ? it.productId : null;
-    const qty = Number(it?.qty);
-    if (id && Number.isInteger(qty) && qty > 0) out.set(id, (out.get(id) ?? 0) + qty);
-  }
-  return out;
+  return parsed.success ? parsed.data.map((a) => ({ name: a.name, fee: a.fee, freeOver: a.freeOver ?? null })) : [];
 }
 
 // تغيير حالة الطلب: الملغي مايرجعش
@@ -227,34 +99,159 @@ export const settingsInput = z
     pickupEnabled: z.boolean().optional(),
     pickupAddress: optText(300),
     merchantEmail: z.string().trim().max(200).email("Check the email").nullable().optional().or(z.literal("").transform(() => null)),
+    taxEnabled: z.boolean().optional(),
+    taxRate: z.number().finite().min(0).max(50, "VAT can't be more than 50%").optional(),
+    pricesIncludeTax: z.boolean().optional(),
+    taxLabel: optText(30),
+    taxOnShipping: z.boolean().optional(),
   })
   .strict();
 
-export const categoryInput = z.object({ name: z.string().trim().min(1, "Give the category a name").max(60) });
+// ---------- الأقسام ----------
+export const categoryInput = z
+  .object({
+    name: z.string().trim().min(1, "Give the category a name").max(60),
+    parentId: z.string().uuid().nullable().optional(),
+    description: optText(1000),
+    imageDataUrl: imageDataUrl(SMALL_IMAGE_MAX_CHARS, "The category photo").nullable().optional(),
+    slug: z.string().trim().max(80).optional(),
+  })
+  .strict();
+export const categoryPatch = categoryInput.partial().strict();
 export const idOrderInput = z.object({ ids: z.array(z.string().uuid()).max(MAX_PRODUCTS) });
 
+// ---------- الخصائص العامة ----------
+export const ATTR_DISPLAYS = ["button", "color", "image"] as const;
+export const attributeInput = z
+  .object({
+    name: z.string().trim().min(1, "Give the attribute a name (e.g. Color)").max(40),
+    display: z.enum(ATTR_DISPLAYS).optional(),
+  })
+  .strict();
+export const attributePatch = attributeInput.partial().strict();
+export const termInput = z
+  .object({
+    name: z.string().trim().min(1, "Give the value a name").max(40),
+    color: HEX.nullable().optional(),
+    imageDataUrl: imageDataUrl(SMALL_IMAGE_MAX_CHARS, "The photo").nullable().optional(),
+  })
+  .strict();
+export const termPatch = termInput.partial().strict();
+export const tagInput = z.object({ name: z.string().trim().min(1, "Give the tag a name").max(40) }).strict();
+
+// ---------- المنتجات ----------
 const productBase = z.object({
   name: z.string().trim().min(1, "Give the product a name").max(120),
-  description: optText(4000),
+  slug: z.string().trim().max(80).optional(),
+  type: z.enum(["simple", "variable"]).optional(),
+  shortDescription: optText(600),
+  description: optText(8000),
+  // قديم: قسم واحد (لسه مقبول)
   categoryId: z.string().uuid().nullable().optional(),
+  categoryIds: ids(20).optional(),
+  tagIds: ids(30).optional(),
   price: money,
+  salePrice: money.nullable().optional(),
+  saleStart: optDate,
+  saleEnd: optDate,
+  // قديم: "السعر القديم" = السعر العادي، والسعر = سعر التخفيض (لسه مقبول من اللوحة القديمة)
   comparePrice: money.nullable().optional(),
   sku: optText(60),
-  stock: z.number().int().min(0).max(1_000_000).nullable().optional(),
-  options: optionsSchema.optional(),
+  stock: z.number().int().min(-1_000_000).max(1_000_000).nullable().optional(),
+  lowStockAt: z.number().int().min(0).max(100_000).nullable().optional(),
+  backorders: z.boolean().optional(),
+  attributes: productAttrsSchema.optional(),
+  weightKg: z.number().finite().min(0).max(100_000).nullable().optional(),
+  lengthCm: z.number().finite().min(0).max(100_000).nullable().optional(),
+  widthCm: z.number().finite().min(0).max(100_000).nullable().optional(),
+  heightCm: z.number().finite().min(0).max(100_000).nullable().optional(),
+  relatedIds: ids(12).optional(),
+  upsellIds: ids(12).optional(),
+  purchaseNote: optText(1000),
+  status: z.enum(PRODUCT_STATUSES).optional(),
+  // قديم: active true/false = منشور/مسودة
   active: z.boolean().optional(),
   featured: z.boolean().optional(),
 });
 
-const comparePriceRule = (p: { price?: number; comparePrice?: number | null }, ctx: z.RefinementCtx) => {
-  if (p.comparePrice != null && p.price != null && !(p.comparePrice > p.price))
-    ctx.addIssue({ code: "custom", path: ["comparePrice"], message: "The old price must be higher than the price (or leave it empty)" });
+const saleRules = (p: { price?: number; salePrice?: number | null; saleStart?: Date | null; saleEnd?: Date | null }, ctx: z.RefinementCtx) => {
+  if (p.salePrice != null && p.price != null && !(p.salePrice < p.price))
+    ctx.addIssue({ code: "custom", path: ["salePrice"], message: "The sale price must be lower than the regular price (or leave it empty)" });
+  if (p.saleStart && p.saleEnd && !(p.saleEnd > p.saleStart)) ctx.addIssue({ code: "custom", path: ["saleEnd"], message: "The sale must end after it starts" });
 };
-export const productInput = productBase.superRefine(comparePriceRule);
-export const productPatch = productBase.partial().superRefine(comparePriceRule);
+export const productInput = productBase.superRefine(saleRules);
+export const productPatch = productBase.partial().superRefine(saleRules);
+export type ProductInput = z.infer<typeof productBase>;
+
+// ---------- الاختيارات ----------
+const variationFields = z.object({
+  attrs: z.record(z.string().max(40), z.string().max(60)).optional(),
+  price: money.nullable().optional(),
+  salePrice: money.nullable().optional(),
+  saleStart: optDate,
+  saleEnd: optDate,
+  sku: optText(60),
+  stock: z.number().int().min(-1_000_000).max(1_000_000).nullable().optional(),
+  photoId: z.string().uuid().nullable().optional(),
+  enabled: z.boolean().optional(),
+});
+export const variationInput = variationFields.extend({ attrs: z.record(z.string().max(40), z.string().max(60)) }).strict();
+export const variationPatch = variationFields.strict();
+export const variationsBulkInput = z
+  .object({
+    ids: z.array(z.string().uuid()).min(1).max(200),
+    price: money.nullable().optional(),
+    salePrice: money.nullable().optional(),
+    stock: z.number().int().min(-1_000_000).max(1_000_000).nullable().optional(),
+    // زوّد/قلّل المخزون بالرقم ده
+    stockAdd: z.number().int().min(-1_000_000).max(1_000_000).optional(),
+    enabled: z.boolean().optional(),
+  })
+  .strict();
 
 export const photoInput = z.object({ dataUrl: imageDataUrl(PHOTO_MAX_CHARS, "The photo") });
 
+// ---------- الكوبونات ----------
+const couponBase = z.object({
+  code: z
+    .string()
+    .trim()
+    .min(2, "The code is too short")
+    .max(30)
+    .regex(/^[\p{L}\p{N}_-]+$/u, "Use letters, numbers, - or _ only (no spaces)"),
+  kind: z.enum(COUPON_KINDS),
+  amount: z.number().finite().positive("Enter the discount").max(10_000_000),
+  minSpend: money.nullable().optional(),
+  maxUses: z.number().int().min(1).max(1_000_000).nullable().optional(),
+  maxPerCustomer: z.number().int().min(1).max(1000).nullable().optional(),
+  expiresAt: optDate,
+  productIds: ids(200).optional(),
+  categoryIds: ids(100).optional(),
+  freeShipping: z.boolean().optional(),
+  active: z.boolean().optional(),
+  note: optText(200),
+});
+const pctRule = (c: { kind?: string; amount?: number }, ctx: z.RefinementCtx) => {
+  if (c.kind === "PERCENT" && c.amount != null && c.amount > 100) ctx.addIssue({ code: "custom", path: ["amount"], message: "A percent discount can't be more than 100%" });
+};
+export const couponInput = couponBase.strict().superRefine(pctRule);
+export const couponPatch = couponBase.partial().strict().superRefine(pctRule);
+
+// ---------- السلايدر ----------
+const bannerLink = z
+  .string()
+  .trim()
+  .max(500)
+  .refine((v) => !v || /^https:\/\//i.test(v) || /^\/[\w\-/?=&%.]*$/.test(v), "Use a link that starts with https:// or a page of your shop")
+  .nullable()
+  .optional()
+  .transform((v) => (v === undefined ? undefined : v || null));
+export const bannerInput = z
+  .object({ dataUrl: imageDataUrl(COVER_MAX_CHARS, "The slide photo"), title: optText(80), subtitle: optText(160), buttonText: optText(30), link: bannerLink })
+  .strict();
+export const bannerPatch = z.object({ title: optText(80), subtitle: optText(160), buttonText: optText(30), link: bannerLink }).strict();
+
+// ---------- الطلبات ----------
 export const orderPatch = z
   .object({
     status: z.enum(ORDER_STATUSES).optional(),
@@ -267,26 +264,36 @@ export const orderPatch = z
       .optional()
       .transform((v) => (v === undefined ? undefined : v || null)),
     note: optText(1000),
+    merchantNote: optText(2000),
   })
   .strict();
 
 // ---------- طلب العميل ----------
-export const checkoutInput = z.object({
-  items: z
-    .array(
-      z.object({
-        productId: z.string().uuid(),
-        qty: z.number().int().min(1).max(MAX_QTY),
-        options: z.record(z.string().max(40), z.string().max(40)).optional().nullable(),
-      })
-    )
-    .min(1, "Your cart is empty")
-    .max(MAX_LINES),
+const cartItems = z
+  .array(
+    z.object({
+      productId: z.string().uuid(),
+      variationId: z.string().uuid().optional().nullable(),
+      qty: z.number().int().min(1).max(MAX_QTY),
+      options: z.record(z.string().max(40), z.string().max(60)).optional().nullable(),
+    })
+  )
+  .min(1, "Your cart is empty")
+  .max(MAX_LINES);
+
+export const quoteInput = z.object({
+  items: cartItems,
+  fulfillment: z.enum(["DELIVERY", "PICKUP"]),
+  area: z.string().trim().max(60).optional().nullable(),
+  couponCode: z.string().trim().max(30).optional().nullable(),
+  customerPhone: z.string().trim().max(30).optional().nullable(),
+});
+export type QuoteInput = z.infer<typeof quoteInput>;
+
+export const checkoutInput = quoteInput.extend({
   customerName: z.string().trim().min(1).max(100),
   customerPhone: z.string().trim().min(6).max(30),
   customerEmail: z.string().trim().max(200).email().optional().nullable().or(z.literal("").transform(() => null)),
-  fulfillment: z.enum(["DELIVERY", "PICKUP"]),
-  area: z.string().trim().max(60).optional().nullable(),
   address: z.string().trim().max(500).optional().nullable(),
   note: z.string().trim().max(1000).optional().nullable(),
   paymentMethodId: z.string().max(64).optional().nullable(),
