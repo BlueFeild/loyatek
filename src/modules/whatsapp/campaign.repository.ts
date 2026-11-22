@@ -63,6 +63,8 @@ export interface CampaignStore {
   // جدولة: DRAFT / READY / FAILED / SCHEDULED ← SCHEDULED بميعاد. false = بتتبعت أو اتبعتت
   schedule(tenantId: string, id: string, at: Date): Promise<boolean>;
   unschedule(tenantId: string, id: string): Promise<boolean>;
+  // حملة مجدولة بتستنى (موافقة ميتا): ميعاد جديد + ملاحظة
+  postpone(id: string, at: Date, note: string): Promise<void>;
   dueScheduled(now: Date, limit: number): Promise<{ id: string; tenantId: string }[]>;
   // حملة مجدولة ماقدرتش تتبعت في ميعادها (القالب اترفض مثلًا) ← FAILED مع السبب
   markFailed(id: string, error: string): Promise<void>;
@@ -128,6 +130,10 @@ export class PrismaCampaignRepository implements CampaignStore {
   async schedule(tenantId: string, id: string, at: Date) {
     const r = await this.db.whatsappCampaign.updateMany({ where: { id, tenantId, status: { in: [...SCHEDULABLE] } }, data: { status: "SCHEDULED", scheduledAt: at, lastError: null } });
     return r.count === 1;
+  }
+
+  async postpone(id: string, at: Date, note: string) {
+    await this.db.whatsappCampaign.updateMany({ where: { id, status: "SCHEDULED" }, data: { scheduledAt: at, lastError: note } });
   }
 
   async unschedule(tenantId: string, id: string) {

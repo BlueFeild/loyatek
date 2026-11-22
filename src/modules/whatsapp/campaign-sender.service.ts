@@ -10,7 +10,11 @@ export const CAMPAIGN_LIMITS = {
   minScheduleAheadMs: 60_000, // الجدولة لازم تكون بعد دقيقة على الأقل
   maxScheduleAheadMs: 90 * 24 * 3600_000, // ولحد 90 يوم
   dueBatch: 20, // كام حملة مجدولة نبدأها في كل لفّة
+  approvalRecheckMs: 5 * 60_000, // "ابعتها أول ما ميتا توافق": نسأل ميتا تاني كل 5 دقايق
 };
+
+// رسالة "مستنيين موافقة ميتا" (الشاشة بتعرض الحملة المجدولة دي كـ "مستنية الموافقة")
+export const WAITING_APPROVAL_NOTE = "WAITING_FOR_META_APPROVAL";
 
 type Recipient = { phone: string; name: string };
 
@@ -59,15 +63,19 @@ export class CampaignSender {
   }
 
   // جدولة: نفس فحوصات الإرسال دلوقتي (عشان التاجر يعرف المشكلة قبل الميعاد مش بعده)
-  async schedule(tenantId: string, campaignId: string, at: Date, now = new Date()) {
+  // whenApproved = "ابعتها لوحدها أول ما ميتا توافق": القالب ممكن يكون لسه PENDING، والحملة بتستنى
+  async schedule(tenantId: string, campaignId: string, at: Date, now = new Date(), opts: { whenApproved?: boolean } = {}) {
+    if (opts.whenApproved && at.getTime() < now.getTime() + this.limits.minScheduleAheadMs) at = new Date(now.getTime() + this.limits.minScheduleAheadMs + 1000);
     const ahead = at.getTime() - now.getTime();
     if (!Number.isFinite(ahead) || ahead < this.limits.minScheduleAheadMs) throw new ValidationError("Pick a time at least 1 minute from now.");
     if (ahead > this.limits.maxScheduleAheadMs) throw new ValidationError("Campaigns can be scheduled up to 90 days ahead.");
-    const { recipients, skipped } = await this.check(tenantId, campaignId);
+    const { recipients, skipped, tpl } = await this.check(tenantId, campaignId, Boolean(opts.whenApproved));
     if (!(await this.store.schedule(tenantId, campaignId, at))) {
       throw new AppError(409, "CAMPAIGN_BUSY", "This campaign is being sent or was already sent — it can't be scheduled.");
     }
-    return { ok: true as const, status: "SCHEDULED" as const, scheduledAt: at.toISOString(), total: recipients.length, skipped };
+    const waiting = Boolean(tpl && tpl.status !== "APPROVED");
+    if (waiting) await this.store.postpone(campaignId, at, WAITING_APPROVAL_NOTE);
+    return { ok: true as const, status: "SCHEDULED" as const, scheduledAt: at.toISOString(), total: recipients.length, skipped, waitingForApproval: waiting };
   }
 
   async unschedule(tenantId: string, campaignId: string) {
@@ -87,6 +95,11 @@ export class CampaignSender {
         started++;
       } catch (err) {
         if (err instanceof AppError && err.code === "CAMPAIGN_BUSY") continue; // حد بدأها في نفس اللحظة
+        // الرسالة لسه عند ميتا: نستنى ونسأل تاني بعد شوية (لو اترفضت ← FAILED تحت)
+        if (err instanceof AppError && err.code === "TEMPLATE_PENDING") {
+          await this.store.postpone(d.id, new Date(now.getTime() + this.limits.approvalRecheckMs), WAITING_APPROVAL_NOTE);
+          continue;
+        }
         failed++;
         await this.store.markFailed(d.id, err instanceof Error ? err.message : "Couldn't start the scheduled campaign");
       }
@@ -95,7 +108,7 @@ export class CampaignSender {
   }
 
   // الفحوصات + الجمهور النهائي (من غير اللي ألغوا الاشتراك ومن غير تكرار)
-  private async check(tenantId: string, campaignId: string): Promise<Checked> {
+  private async check(tenantId: string, campaignId: string, allowPending = false): Promise<Checked> {
     const conn = await this.store.connection(tenantId);
     if (!conn) throw new ValidationError("Connect a real Meta WhatsApp Business API account in Settings before sending campaigns.");
     const campaign = await this.store.findForSend(tenantId, campaignId);
@@ -112,7 +125,7 @@ export class CampaignSender {
     const skipped = listed.length - recipients.length;
     if (recipients.length === 0) throw new ValidationError("Everyone on this list has unsubscribed (replied STOP) — there's nobody left to send to.");
     if (campaign.kind === "VOICE" && !campaign.audioBase64) throw new ValidationError("This voice campaign has no recording attached.");
-    const tpl = campaign.kind === "TEXT" ? await this.approvedTemplate(conn, campaign) : null;
+    const tpl = campaign.kind === "TEXT" ? await this.approvedTemplate(conn, campaign, allowPending) : null;
     const vars = tpl ? templateVarCount(tpl.bodyText) : 0;
     // {{1}} بيتملا باسم العميل - أكتر من فراغ واحد مش مدعوم في الحملات
     if (vars > 1) throw new ValidationError(`This template has ${vars} blanks — campaigns can fill only {{1}} (the customer's name). Use a template with at most one blank.`);
@@ -130,7 +143,7 @@ export class CampaignSender {
   }
 
   // قالب الحملة لازم يكون معتمد. لو لسه PENDING عندنا نسأل Meta الأول (يمكن اتوافق عليه)
-  private async approvedTemplate(conn: MetaConnection, campaign: CampaignForSend): Promise<CampaignTemplate | null> {
+  private async approvedTemplate(conn: MetaConnection, campaign: CampaignForSend, allowPending = false): Promise<CampaignTemplate | null> {
     let tpl = campaign.template;
     if (!tpl) return null; // من غير قالب ← hello_world
     if (tpl.status === "PENDING" && tpl.metaTemplateId) {
@@ -138,6 +151,10 @@ export class CampaignSender {
       if (check.ok && (check.status === "APPROVED" || check.status === "REJECTED")) {
         tpl = await this.store.setTemplateStatus(tpl.id, check.status, check.rejectionReason ?? null);
       }
+    }
+    if (tpl.status === "PENDING") {
+      if (allowPending) return tpl;
+      throw new AppError(400, "TEMPLATE_PENDING", `The message "${tpl.name}" isn't approved by Meta yet — it can go out as soon as Meta approves it.`);
     }
     if (tpl.status !== "APPROVED") {
       throw new ValidationError(`This campaign's template "${tpl.name}" isn't approved by Meta yet (status: ${tpl.status}). Wait for approval or send without a custom template.`);

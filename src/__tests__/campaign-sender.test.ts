@@ -33,6 +33,12 @@ class MemoryCampaigns implements CampaignStore {
     this.scheduledAt.set(id, at);
     return true;
   }
+  notes = new Map<string, string>();
+  async postpone(id: string, at: Date, note: string) {
+    if (this.campaigns.get(id)?.status !== "SCHEDULED") return;
+    this.scheduledAt.set(id, at);
+    this.notes.set(id, note);
+  }
   async unschedule(tenantId: string, id: string) {
     const c = this.campaigns.get(id);
     if (!c || c.tenantId !== tenantId || c.status !== "SCHEDULED") return false;
@@ -287,5 +293,29 @@ describe("CampaignSender", () => {
     expect(store.campaigns.get('c3')!.status).toBe('FAILED');
     expect(store.failures.get('c3')).toMatch(/Connect/);
     expect(gateway.sends).toHaveLength(3);
+  });
+  it("send when Meta approves: scheduled while PENDING, waits (re-checks every 5 min), sends once approved, fails if rejected", async () => {
+    const { store, gateway, sender } = setup();
+    const now = new Date("2026-11-22T10:00:00Z");
+    store.add({ id: "w1", recipients: people(2), template: tpl({ status: "PENDING", headerImageDataUrl: null }) });
+    const r = await sender.schedule("t1", "w1", now, now, { whenApproved: true });
+    expect(r).toMatchObject({ status: "SCHEDULED", waitingForApproval: true, total: 2 });
+    expect(store.notes.get("w1")).toBe("WAITING_FOR_META_APPROVAL");
+    const t1 = new Date(now.getTime() + 2 * 60_000);
+    expect(await sender.runDue(t1)).toEqual({ started: 0, failed: 0 });
+    expect(store.campaigns.get("w1")!.status).toBe("SCHEDULED");
+    expect(store.scheduledAt.get("w1")!.getTime()).toBe(t1.getTime() + 5 * 60_000);
+    gateway.templateStatusAnswer = "APPROVED";
+    expect(await sender.runDue(new Date(t1.getTime() + 5 * 60_000))).toEqual({ started: 1, failed: 0 });
+    await sender.whenIdle();
+    expect(store.campaigns.get("w1")).toMatchObject({ status: "SENT", sentCount: 2 });
+
+    const { store: s2, gateway: g2, sender: snd2 } = setup();
+    s2.add({ id: "w2", recipients: people(1), template: tpl({ status: "PENDING", headerImageDataUrl: null }) });
+    await snd2.schedule("t1", "w2", now, now, { whenApproved: true });
+    g2.templateStatusAnswer = "REJECTED";
+    expect(await snd2.runDue(new Date(now.getTime() + 10 * 60_000))).toEqual({ started: 0, failed: 1 });
+    expect(s2.campaigns.get("w2")!.status).toBe("FAILED");
+    expect(g2.sends).toHaveLength(0);
   });
 });

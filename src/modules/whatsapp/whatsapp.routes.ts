@@ -50,6 +50,7 @@ import { flowRouter } from "./flow.routes";
 import { sequenceRouter } from "./sequence.routes";
 import { inboxToolsRouter } from "./inbox-tools.routes";
 import { whatsappNumbersRouter } from "./whatsapp-numbers.routes";
+import { offersRouter } from "./offers";
 import { accountHealthRouter } from "./account-health.routes";
 import { PrismaContactBookRepository } from "./contact-book.repository";
 import { normalizePhone, normalizeTags } from "./contact-book.service";
@@ -69,6 +70,7 @@ whatsappRouter.use("/flows", flowRouter);
 whatsappRouter.use("/sequences", sequenceRouter);
 whatsappRouter.use("/inbox-tools", inboxToolsRouter);
 whatsappRouter.use("/numbers", whatsappNumbersRouter);
+whatsappRouter.use("/offers", offersRouter);
 // صحة الحساب (اسم العرض / الجودة / حد المحادثات / توثيق البيزنس) - /api/whatsapp/health
 whatsappRouter.use("/health", accountHealthRouter);
 
@@ -809,12 +811,14 @@ whatsappRouter.patch("/campaigns/:id/audience", requireRole("OWNER", "ADMIN", "M
   res.json({ ok: true, audienceTags: tags, audienceMatch: match, recipientCount: count });
 });
 
-const scheduleSchema = z.object({ scheduledAt: z.string().datetime({ offset: true }) });
+// whenApproved = "ابعتها لوحدها أول ما ميتا توافق" (من غير ميعاد = أول ما توافق)
+const scheduleSchema = z.object({ scheduledAt: z.string().datetime({ offset: true }).optional(), whenApproved: z.boolean().optional() });
 
 whatsappRouter.post("/campaigns/:id/schedule", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   const parsed = scheduleSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Pick a date and time." });
-  res.json(await container.campaignSender.schedule(req.auth!.tenantId, req.params.id, new Date(parsed.data.scheduledAt)));
+  if (!parsed.success || (!parsed.data.scheduledAt && !parsed.data.whenApproved)) return res.status(400).json({ error: "Pick a date and time." });
+  const at = parsed.data.scheduledAt ? new Date(parsed.data.scheduledAt) : new Date();
+  res.json(await container.campaignSender.schedule(req.auth!.tenantId, req.params.id, at, new Date(), { whenApproved: parsed.data.whenApproved }));
 });
 
 whatsappRouter.post("/campaigns/:id/unschedule", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
