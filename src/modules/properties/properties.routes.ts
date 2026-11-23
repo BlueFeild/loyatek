@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from "../../middleware/auth";
 import { requireModule } from "../../middleware/module-access";
 import { AppError } from "../../core/errors";
 import { PropertiesService, type ImageBytes } from "./properties.service";
+import { clientIp } from "../../utils/visitor-country";
 import {
   createListingSchema,
   inquiryStatusSchema,
@@ -134,7 +135,7 @@ publicPropertiesRouter.get("/:slug/cover", async (req, res) => {
   sendImage(req, res, await service.publicBrandImage(req.params.slug, "cover"));
 });
 publicPropertiesRouter.post("/:slug/inquiries", async (req, res) => {
-  if (tooManyInquiries(req.ip || "?")) return res.status(429).json({ error: "Too many messages — please wait a few minutes.", code: "RATE_LIMITED" });
+  if (tooManyInquiries(clientIp(req))) return res.status(429).json({ error: "Too many messages — please wait a few minutes.", code: "RATE_LIMITED" });
   const input = parse(publicInquirySchema, req.body);
   // فخ الروبوتات: الخانة دي مخفية عن الناس، لو اتملت نرد "تمام" ومانحفظش حاجة
   if (input.website && input.website.trim()) return res.status(201).json({ ok: true });

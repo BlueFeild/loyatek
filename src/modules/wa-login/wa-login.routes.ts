@@ -6,6 +6,7 @@ import { requireModule } from "../../middleware/module-access";
 import { isModuleLive } from "../../utils/platform-config";
 import { container } from "../../core/container";
 import { getOrCreateWhatsappSettings } from "../whatsapp/whatsapp.service";
+import { clientIp as visitorIp } from "../../utils/visitor-country";
 import { loginTemplateStatus, submitLoginTemplate } from "./wa-login.gateway";
 
 // ---------- التاجر (جوه السيستم) ----------
@@ -60,8 +61,9 @@ waLoginRouter.post("/test", requireRole("OWNER", "ADMIN", "MANAGER"), async (req
 export const publicWaLoginRouter = Router({ mergeParams: true });
 
 function clientIp(req: Request): string | null {
-  const fwd = String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim();
-  return (fwd || req.ip || "").slice(0, 64) || null;
+  // clientIp = X-Real-IP / آخر X-Forwarded-For (اللي بروكسي Railway ضافه). أول X-Forwarded-For كان
+  // بيكتبه الزائر نفسه، فكان بيغيّره كل طلب ويعدّي الحد (رسائل كود مدفوعة بلا حد)
+  return visitorIp(req).slice(0, 64) || null;
 }
 
 const ownOrigins = () =>

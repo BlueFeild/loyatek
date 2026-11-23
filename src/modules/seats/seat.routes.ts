@@ -15,6 +15,7 @@ import { promoInput } from "./seat-pricing";
 import { datesInput, sellInput, settingsInput } from "./tickets-admin.service";
 import { bookingNeedsWaLogin } from "../wa-login/wa-login.routes";
 import { WaLoginService } from "../wa-login/wa-login.service";
+import { clientIp } from "../../utils/visitor-country";
 import { ValidationError } from "../../core/errors";
 
 // الراوترات بس: تتأكد من البيانات (zod) وتنادي الخدمة - المنطق في seat-booking.service.ts
@@ -159,7 +160,7 @@ publicSeatsRouter.get("/:slug/events/:id", async (req, res) => {
 publicSeatsRouter.post("/:slug/events/:id/hold", async (req, res) => {
   const tenant = await tenantBySlug(req.params.slug);
   if (!tenant) return res.status(404).json({ error: "Page not found" });
-  if (tooManyHolds(req.ip || "?")) return res.status(429).json({ error: "Too many tries — please wait a few minutes." });
+  if (tooManyHolds(clientIp(req))) return res.status(429).json({ error: "Too many tries — please wait a few minutes." });
   const input = body(
     z.object({
       seatIds: z.array(z.string().max(12)).max(50).default([]),
@@ -177,7 +178,7 @@ publicSeatsRouter.post("/:slug/events/:id/hold", async (req, res) => {
 publicSeatsRouter.post("/:slug/events/:id/waitlist", async (req, res) => {
   const tenant = await tenantBySlug(req.params.slug);
   if (!tenant) return res.status(404).json({ error: "Page not found" });
-  if (tooManyHolds(req.ip || "?")) return res.status(429).json({ error: "Too many tries — please wait a few minutes." });
+  if (tooManyHolds(clientIp(req))) return res.status(429).json({ error: "Too many tries — please wait a few minutes." });
   const input = body(z.object({ name: z.string().trim().min(2).max(80), phone: z.string().trim().min(6).max(30), email: z.union([z.literal(""), z.string().trim().email().max(200)]).optional(), seats: z.number().int().min(1).max(50).default(1) }), req);
   res.status(201).json(await svc().joinWaitlist(tenant.id, req.params.id, input));
 });
@@ -186,7 +187,7 @@ publicSeatsRouter.post("/:slug/events/:id/waitlist", async (req, res) => {
 publicSeatsRouter.post("/:slug/orders/:id/promo", async (req, res) => {
   const tenant = await tenantBySlug(req.params.slug);
   if (!tenant) return res.status(404).json({ error: "Page not found" });
-  if (tooManyHolds(req.ip || "?")) return res.status(429).json({ error: "Too many tries — please wait a few minutes." });
+  if (tooManyHolds(clientIp(req))) return res.status(429).json({ error: "Too many tries — please wait a few minutes." });
   const input = body(z.object({ holdToken: z.string().max(80), code: z.string().trim().min(1).max(24) }), req);
   res.json(await svc().previewPromo(tenant.id, req.params.id, input.holdToken, input.code));
 });

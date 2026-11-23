@@ -176,26 +176,32 @@ vendorBillsRouter.patch("/:id", requireRole("OWNER", "ADMIN", "MANAGER"), async 
   const parsed = updateBillSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid change" });
   const tenantId = req.auth!.tenantId;
-  const bill = await prisma.vendorBill.findFirst({ where: { id: req.params.id, tenantId } });
-  if (!bill) return res.status(404).json({ error: "Bill not found" });
+  const found = await prisma.vendorBill.findFirst({ where: { id: req.params.id, tenantId }, select: { id: true, branchId: true } });
+  if (!found) return res.status(404).json({ error: "Bill not found" });
   const d = parsed.data;
-  let branchId = bill.branchId;
+  let branchId = found.branchId;
   try {
     if (d.branchId !== undefined) branchId = await ownBranchId(tenantId, d.branchId);
   } catch (err: any) {
     return res.status(400).json({ error: err.message });
   }
-  const next = {
-    vendorName: d.vendorName ?? bill.vendorName,
-    billNumber: d.billNumber !== undefined ? d.billNumber || null : bill.billNumber,
-    amount: d.amount ?? Number(bill.amount),
-    issueDate: toDate(d.issueDate) ?? bill.issueDate,
-    branchId,
-  };
-  const wantPaid = d.status ? d.status === "PAID" : bill.status === "PAID";
-  const paidAt = wantPaid ? toDate(d.paidAt) ?? (bill.status === "PAID" && bill.paidAt ? bill.paidAt : new Date()) : null;
 
   const updated = await prisma.$transaction(async (tx: any) => {
+    // قفل الصف وقراءته من جديد: تعديلين في نفس اللحظة كانوا بيمسحوا/يعملوا القيود مرتين (قيود يتيمة)
+    await tx.$queryRaw`SELECT id FROM vendor_bills WHERE id = ${found.id} FOR UPDATE`;
+    const bill = await tx.vendorBill.findFirst({ where: { id: found.id, tenantId } });
+    if (!bill) throw new Error("Bill not found");
+    if (d.branchId === undefined) branchId = bill.branchId;
+    const next = {
+      vendorName: d.vendorName ?? bill.vendorName,
+      billNumber: d.billNumber !== undefined ? d.billNumber || null : bill.billNumber,
+      amount: d.amount ?? Number(bill.amount),
+      issueDate: toDate(d.issueDate) ?? bill.issueDate,
+      branchId,
+    };
+    const wantPaid = d.status ? d.status === "PAID" : bill.status === "PAID";
+    const paidAt = wantPaid ? toDate(d.paidAt) ?? (bill.status === "PAID" && bill.paidAt ? bill.paidAt : new Date()) : null;
+
     // قيد الفاتورة بيتعاد بالأرقام الجديدة (أبسط وأضمن من تعديل السطور)
     const billChanged = next.amount !== Number(bill.amount) || next.issueDate.getTime() !== bill.issueDate.getTime() || next.branchId !== bill.branchId || next.vendorName !== bill.vendorName || next.billNumber !== bill.billNumber;
     let journalEntryId = bill.journalEntryId;

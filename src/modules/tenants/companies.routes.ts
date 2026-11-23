@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../../config/db";
 import { requireAuth } from "../../middleware/auth";
-import { signAccessToken } from "../../utils/jwt";
+import { isManageSession, signAccessToken } from "../../utils/jwt";
 import { z } from "zod";
 import { createLinkedCompany } from "./company-creation.service";
 import { ALL_MODULES } from "../../utils/modules";
@@ -47,6 +47,8 @@ companiesRouter.get("/my-companies", async (req, res) => {
 // الموجودة أصلًا، عشان نفضل محافظين على قاعدة إن التوكن دايمًا يوزره
 // وتينانته من نفس الشركة فعليًا
 companiesRouter.post("/:tenantId/switch", async (req, res) => {
+  // وكالة/سوبر أدمن داخلين شركة عميل ما ينفعش يتنقلوا منها لشركات المالك التانية
+  if (isManageSession(req.auth!)) return res.status(403).json({ error: "Not available while managing a client's account" });
   const membership = await prisma.companyMembership.findUnique({
     where: { ownerUserId_tenantId: { ownerUserId: req.auth!.userId, tenantId: req.params.tenantId } },
     include: { memberUser: true, tenant: { select: { name: true } } },

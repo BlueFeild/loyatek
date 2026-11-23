@@ -160,18 +160,8 @@ publicBookingRouter.get("/:slug/bookings/:id/payment-status", async (req, res) =
   res.json(booking);
 });
 
-// العميل بيدوّر على حجوزاته برقم تليفونه من غير حساب - نفس فكرة My Bookings Portal
-publicBookingRouter.get("/:slug/my-bookings", async (req, res) => {
-  const tenant = await findTenantBySlug(req.params.slug);
-  if (!tenant) return res.status(404).json({ error: "Booking page not found" });
-
-  const phone = req.query.phone as string | undefined;
-  if (!phone) return res.status(400).json({ error: "phone is required" });
-
-  const bookings = await prisma.booking.findMany({
-    where: { tenantId: tenant.id, ...phoneMatch(phone) },
-    include: { resource: true },
-    orderBy: { date: "desc" },
-  });
-  res.json(bookings);
+// كان فيه "حجوزاتي برقم التليفون" من غير أي تحقق: أي حد يكتب آخر 8 أرقام من رقم عميل
+// كان بيشوف اسمه وإيميله وملاحظاته وروابط الدفع. محدش في الواجهة بيستخدمه → اتقفل (تدقيق أمني 2026-11-23)
+publicBookingRouter.get("/:slug/my-bookings", (_req, res) => {
+  res.status(410).json({ error: "This lookup is no longer available" });
 });

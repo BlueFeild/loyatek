@@ -51,11 +51,17 @@ inventoryRouter.post("/", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, 
   res.status(201).json(item);
 });
 
-const movementSchema = z.object({
-  type: z.enum(["IN", "OUT", "ADJUSTMENT", "WASTAGE"]),
-  quantity: z.number().int(),
-  reason: z.string().optional(),
-});
+export const movementSchema = z
+  .object({
+    type: z.enum(["IN", "OUT", "ADJUSTMENT", "WASTAGE"]),
+    quantity: z.number().int().min(-1_000_000).max(1_000_000),
+    reason: z.string().max(500).optional(),
+  })
+  // IN/OUT/WASTAGE لازم موجبة (OUT بكمية سالبة كانت بتزوّد المخزون)؛ ADJUSTMENT موجبة أو سالبة بس مش صفر
+  .refine((d) => (d.type === "ADJUSTMENT" ? d.quantity !== 0 : d.quantity > 0), {
+    message: "quantity must be a positive whole number (ADJUSTMENT: any non-zero number)",
+    path: ["quantity"],
+  });
 
 // تسجيل حركة مخزون حقيقية (دخول/خروج/تسوية/تلف) - بتحدث الكمية فعليًا
 // وتسجل الحركة في history حقيقي، مش رقم بيتغير بس زي الديمو
@@ -77,25 +83,29 @@ inventoryRouter.post("/:itemId/movements", requireRole("OWNER", "ADMIN", "MANAGE
       ? -parsed.data.quantity
       : parsed.data.quantity; // ADJUSTMENT ممكن يكون موجب أو سالب
 
-  const newQuantity = item.quantity + delta;
-  if (newQuantity < 0) {
-    return res.status(400).json({ error: "Movement would result in negative stock" });
-  }
-
-  const [updatedItem, movement] = await prisma.$transaction([
-    prisma.inventoryItem.update({
-      where: { id: item.id },
-      data: { quantity: newQuantity },
-    }),
-    prisma.inventoryMovement.create({
+  // تحديث ذري: الخصم بيحصل بس لو الرصيد يكفي وقت الكتابة نفسها (قبل كده طلبين في نفس
+  // اللحظة كانوا بيقروا نفس الرصيد ويكتبوا فوق بعض، فالمخزون بيتصرف أكتر من الموجود)
+  const result = await prisma.$transaction(async (tx) => {
+    const changed = await tx.inventoryItem.updateMany({
+      where: { id: item.id, tenantId: req.auth!.tenantId, ...(delta < 0 ? { quantity: { gte: -delta } } : {}) },
+      data: { quantity: { increment: delta } },
+    });
+    if (changed.count === 0) return null;
+    const movement = await tx.inventoryMovement.create({
       data: {
         itemId: item.id,
         type: parsed.data.type,
         quantity: parsed.data.quantity,
         reason: parsed.data.reason,
       },
-    }),
-  ]);
+    });
+    const updatedItem = await tx.inventoryItem.findUniqueOrThrow({ where: { id: item.id } });
+    return { updatedItem, movement };
+  });
+  if (!result) {
+    return res.status(400).json({ error: "Movement would result in negative stock" });
+  }
+  const { updatedItem, movement } = result;
 
   // تنبيه نقص مخزون حقيقي (نقطة البداية لربطها بواتساب لاحقًا في الـ Automation module)
   const lowStock = updatedItem.quantity <= updatedItem.reorderAt;

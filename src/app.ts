@@ -67,6 +67,8 @@ import { visitorCountry } from "./utils/visitor-country";
 
 export const app = express();
 
+app.disable("x-powered-by");
+
 // CORS مقيّد لدومينات معروفة بس - مش أي موقع في العالم. لو محتاجة
 // تضيفي دومين جديد (زي دومين مخصّص لعميل)، ضيفيه في متغير البيئة
 // ALLOWED_ORIGINS (مفصول بفاصلة) بدل ما تفتحيه للجميع

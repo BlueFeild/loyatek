@@ -47,6 +47,12 @@ export function bypassesAccountChecks(p: Pick<AccessTokenPayload, "isSuperAdmin"
   return p.impersonationKind !== "switch";
 }
 
+// جلسة "إدارة نيابةً" (سوبر أدمن / وكالة داخلين شركة عميل) - مش صاحب الحساب نفسه.
+// الجلسة دي ممنوع تغيّر بيانات الدخول (إيميل/باسورد/ملكية) أو تتنقل لشركات تانية للمالك
+export function isManageSession(p: Pick<AccessTokenPayload, "impersonatedBy" | "impersonationKind">): boolean {
+  return Boolean(p.impersonatedBy) && p.impersonationKind !== "switch";
+}
+
 // Access token قصير العمر - يتبعت مع كل request
 export function signAccessToken(payload: AccessTokenPayload): string {
   return jwt.sign(payload, ACCESS_SECRET, { expiresIn: "15m" });

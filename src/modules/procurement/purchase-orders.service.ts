@@ -1,4 +1,5 @@
 import { prisma } from "../../config/db";
+import type { Prisma } from "@prisma/client";
 import { assertTenantOwns } from "../../utils/tenant-owned";
 
 interface CreatePOInput {
@@ -67,31 +68,27 @@ export async function receivePurchaseOrder(tenantId: string, purchaseOrderId: st
   // أوامر قديمة (قبل التحقق) ممكن يكون فيها صنف من شركة تانية - منزوّدش مخزون حد تاني
   await assertTenantOwns(tenantId, { itemIds: po.items.map((i: { itemId: string }) => i.itemId) });
 
-  const operations = po.items.flatMap((item: { itemId: string; quantity: number }) => [
-    prisma.inventoryItem.update({
-      where: { id: item.itemId },
-      data: { quantity: { increment: item.quantity } },
-    }),
-    prisma.inventoryMovement.create({
-      data: {
-        itemId: item.itemId,
-        type: "IN",
-        quantity: item.quantity,
-        reason: `Purchase order ${po.id} received`,
-      },
-    }),
-  ]);
-
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + 30);
 
-  const updatePoStatus = prisma.purchaseOrder.update({
-    where: { id: po.id },
-    data: { status: "RECEIVED", receivedAt: new Date(), dueDate },
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // claim ذري: الاستلام المتزامن لنفس الأمر كان بيزوّد المخزون أكتر من مرة
+    const claimed = await tx.purchaseOrder.updateMany({
+      where: { id: po.id, tenantId, status: { notIn: ["RECEIVED", "CANCELLED"] } },
+      data: { status: "RECEIVED", receivedAt: new Date(), dueDate },
+    });
+    if (claimed.count === 0) throw new Error("Purchase order already received");
+    for (const item of po.items as { itemId: string; quantity: number }[]) {
+      await tx.inventoryItem.updateMany({
+        where: { id: item.itemId, tenantId },
+        data: { quantity: { increment: item.quantity } },
+      });
+      await tx.inventoryMovement.create({
+        data: { itemId: item.itemId, type: "IN", quantity: item.quantity, reason: `Purchase order ${po.id} received` },
+      });
+    }
+    return tx.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } });
   });
-
-  const results = await prisma.$transaction([...operations, updatePoStatus]);
-  return results[results.length - 1];
 }
 
 // تحديد أمر شراء كمدفوع - جزء من جدولة المستحقات (Accounts Payable)

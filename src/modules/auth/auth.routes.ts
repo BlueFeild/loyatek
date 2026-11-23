@@ -4,11 +4,33 @@ import { OAuth2Client } from "google-auth-library";
 import bcrypt from "bcryptjs";
 import { prisma } from "../../config/db";
 import { createPasswordLink, hashToken, sendResetEmail } from "./account-links";
+import { SlidingWindowLimiter, envNumber } from "../../utils/rate-limit";
+import { clientIp } from "../../utils/visitor-country";
 import { registerTenant, login, refreshAccessToken, loginWithGoogle, registerTenantWithGoogle } from "./auth.service";
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 export const authRouter = Router();
+
+// حماية من التخمين (تدقيق أمني 2026-11-23): قبل كده مكانش فيه أي حد على الدخول/التسجيل.
+// - كل طلبات /api/auth من نفس الـ IP: AUTH_IP_LIMIT_PER_15MIN (افتراضي 60)
+// - محاولات الدخول الغلط لنفس الإيميل: AUTH_EMAIL_FAILS_PER_15MIN (افتراضي 10) - بتتصفّر بعد دخول صح
+const WINDOW = 15 * 60_000;
+const ipLimiter = new SlidingWindowLimiter(envNumber("AUTH_IP_LIMIT_PER_15MIN", 60), WINDOW);
+const emailFailLimiter = new SlidingWindowLimiter(envNumber("AUTH_EMAIL_FAILS_PER_15MIN", 10), WINDOW);
+const refreshLimiter = new SlidingWindowLimiter(envNumber("AUTH_REFRESH_LIMIT_PER_15MIN", 300), WINDOW);
+const TOO_MANY = { error: "Too many attempts — please wait a few minutes and try again.", code: "RATE_LIMITED" };
+
+authRouter.use((req, res, next) => {
+  // تجديد التوكن بيحصل تلقائي من كل تاب مفتوح - ليه حد أوسع لوحده
+  const key = (req.path === "/refresh" ? "refresh:" : "auth:") + clientIp(req);
+  const limited = req.path === "/refresh" ? refreshLimiter.hit(key) : ipLimiter.hit(key);
+  if (limited) {
+    res.setHeader("Retry-After", "900");
+    return res.status(429).json(TOO_MANY);
+  }
+  next();
+});
 
 const registerSchema = z.object({
   companyName: z.string().min(2),
@@ -39,10 +61,17 @@ authRouter.post("/login", async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
+  const emailKey = parsed.data.email.trim().toLowerCase();
+  if (emailFailLimiter.isLimited(emailKey)) {
+    res.setHeader("Retry-After", "900");
+    return res.status(429).json(TOO_MANY);
+  }
   try {
     const result = await login(parsed.data);
+    emailFailLimiter.reset(emailKey);
     res.json(result);
   } catch (err: any) {
+    emailFailLimiter.hit(emailKey);
     res.status(401).json({ error: err.message });
   }
 });
@@ -68,6 +97,8 @@ async function verifyGoogleToken(idToken: string) {
   const ticket = await googleClient.verifyIdToken({ idToken, audience: process.env.GOOGLE_CLIENT_ID });
   const payload = ticket.getPayload();
   if (!payload?.email || !payload.sub) throw new Error("Invalid Google token");
+  // إيميل جوجل لازم يكون متأكد منه، وإلا حد ممكن يدخل على حساب بإيميل مش بتاعه
+  if (payload.email_verified !== true) throw new Error("Your Google email isn't verified yet — verify it with Google first.");
   return { googleId: payload.sub, email: payload.email, name: payload.name ?? payload.email };
 }
 

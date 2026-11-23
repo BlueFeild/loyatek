@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { assertTenantOwns } from "../../utils/tenant-owned";
+import { emailTaken } from "../auth/account-links";
 import { container } from "../../core/container";
 
 export const usersRouter = Router();
@@ -54,6 +55,14 @@ usersRouter.post("/", requireRole("OWNER", "ADMIN"), async (req, res) => {
     return res.status(400).json({ error: err.message });
   }
 
+  // نفس قواعد صفحة الفريق: الـ OWNER بس يضيف ADMIN، والإيميل لازم يكون مش مستخدم في أي شركة
+  // (قبل كده ADMIN كان بيعمل ADMIN، وإيميل شخص من شركة تانية كان ممكن يتعمل هنا فيلخبط دخوله)
+  if (parsed.data.role === "ADMIN" && req.auth!.role !== "OWNER") {
+    return res.status(403).json({ error: "Only the owner can add admins" });
+  }
+  const email = parsed.data.email.trim().toLowerCase();
+  if (await emailTaken(email)) return res.status(409).json({ error: "This email already has a BlueField account" });
+
   const passwordHash = await bcrypt.hash(parsed.data.password, 10);
 
   try {
@@ -61,7 +70,7 @@ usersRouter.post("/", requireRole("OWNER", "ADMIN"), async (req, res) => {
       data: {
         tenantId: req.auth!.tenantId,
         name: parsed.data.name,
-        email: parsed.data.email,
+        email,
         passwordHash,
         role: parsed.data.role,
         branchId: parsed.data.branchId,

@@ -35,6 +35,7 @@ import { CSV_MAX_CHARS } from "./store-csv.logic";
 import { StoreRepository } from "./store.repository";
 import { StoreCatalogRepository } from "./store-catalog.repository";
 import { StoreService, tooManyOrders } from "./store.service";
+import { clientIp } from "../../utils/visitor-country";
 import { StoreCsvService } from "./store-csv.service";
 
 // المتجر الإلكتروني: الراوترات بتتأكد من البيانات (zod) وتنادي الخدمة بس - المنطق في store.service.ts / store-catalog.service.ts
@@ -228,7 +229,7 @@ publicStoreRouter.get("/:slug/products/:id", async (req, res) => {
 });
 publicStoreRouter.post("/:slug/quote", async (req, res) => res.json(await svc.quote(req.params.slug, body(quoteInput, req))));
 publicStoreRouter.post("/:slug/orders", async (req, res) => {
-  if (tooManyOrders(req.ip || "?")) return res.status(429).json({ error: "Too many orders from this device — please wait a few minutes.", code: "RATE_LIMITED" });
+  if (tooManyOrders(clientIp(req))) return res.status(429).json({ error: "Too many orders from this device — please wait a few minutes.", code: "RATE_LIMITED" });
   const input = body(checkoutInput, req);
   const frontendBase = process.env.FRONTEND_BASE_URL || "http://localhost:5173";
   res.status(201).json(await svc.placeOrder(req.params.slug, input, frontendBase));

@@ -79,7 +79,11 @@ export async function login(input: LoginInput) {
   // دايمًا في حساب "الهوم" بتاعه بالإيميل/الباسورد، مش في أي شركة
   // إضافية عنده نفس الإيميل بالظبط (السويتش بينهم بيتم من واجهة منفصلة)
   // الإيميل مش حساس لحروف كبيرة/صغيرة (Info@ = info@)
-  const user = await prisma.user.findFirst({ where: { email: { equals: input.email.trim(), mode: "insensitive" }, isActive: true, isLinkedCompany: false } });
+  const user = await prisma.user.findFirst({
+    where: { email: { equals: input.email.trim(), mode: "insensitive" }, isActive: true, isLinkedCompany: false },
+    // لو فيه حسابين بنفس الإيميل (بيانات قديمة) الأقدم هو اللي يدخل - مش حساب حد عمله بعدين
+    orderBy: { createdAt: "asc" },
+  });
   if (!user) throw new Error("Invalid credentials");
 
   if (!user.passwordHash) {
@@ -156,7 +160,11 @@ export async function loginWithGoogle(googleId: string, email: string, name: str
   let user = await prisma.user.findFirst({ where: { googleId } });
 
   if (!user) {
-    user = await prisma.user.findFirst({ where: { email, isActive: true, isLinkedCompany: false } });
+    // أقدم حساب حقيقي بنفس الإيميل (حتى لو فيه تكرار قديم) - ومش حساسة لحالة الحروف
+    user = await prisma.user.findFirst({
+      where: { email: { equals: email.trim(), mode: "insensitive" }, isActive: true, isLinkedCompany: false },
+      orderBy: { createdAt: "asc" },
+    });
     if (user) {
       // نفس الإيميل موجود بحساب عادي - نربطه بجوجل عشان يستخدم الاتنين
       user = await prisma.user.update({ where: { id: user.id }, data: { googleId } });

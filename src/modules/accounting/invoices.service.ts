@@ -70,23 +70,22 @@ export async function issueInvoice(tenantId: string, invoiceId: string) {
     throw new Error("Set the company VAT number first (PATCH /api/tenants/vat-number) before issuing invoices");
   }
 
-  const [arAccount, revenueAccount, vatAccount] = await Promise.all([
-    prisma.account.upsert({
-      where: { tenantId_code: { tenantId, code: "1100" } },
-      update: {},
-      create: { tenantId, code: "1100", name: "Accounts Receivable", type: "ASSET" },
-    }),
-    prisma.account.upsert({
-      where: { tenantId_code: { tenantId, code: "4000" } },
-      update: {},
-      create: { tenantId, code: "4000", name: "Sales Revenue", type: "REVENUE" },
-    }),
-    prisma.account.upsert({
-      where: { tenantId_code: { tenantId, code: "2100" } },
-      update: {},
-      create: { tenantId, code: "2100", name: "VAT Payable", type: "LIABILITY" },
-    }),
-  ]);
+  // createMany + skipDuplicates بدل upsert: طلبين في نفس اللحظة كانوا بيعملوا نفس الحساب مرتين (P2002)
+  await prisma.account.createMany({
+    data: [
+      { tenantId, code: "1100", name: "Accounts Receivable", type: "ASSET" },
+      { tenantId, code: "4000", name: "Sales Revenue", type: "REVENUE" },
+      { tenantId, code: "2100", name: "VAT Payable", type: "LIABILITY" },
+    ],
+    skipDuplicates: true,
+  });
+  const accounts = await prisma.account.findMany({ where: { tenantId, code: { in: ["1100", "4000", "2100"] } } });
+  const byCode = (code: string) => {
+    const a = accounts.find((x) => x.code === code);
+    if (!a) throw new Error("Accounting setup failed, please try again");
+    return a;
+  };
+  const [arAccount, revenueAccount, vatAccount] = [byCode("1100"), byCode("4000"), byCode("2100")];
 
   const subtotal = Number(invoice.subtotal);
   const vatAmount = Number(invoice.vatAmount);
@@ -104,6 +103,12 @@ export async function issueInvoice(tenantId: string, invoiceId: string) {
   });
 
   const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // claim ذري: بس طلب واحد يقدر ينقل الفاتورة من DRAFT (قبل كده الإصدار المتزامن كان بيعمل قيود مكررة)
+    const claimed = await tx.invoice.updateMany({
+      where: { id: invoice.id, tenantId, status: "DRAFT" },
+      data: { status: "ISSUED", issuedAt },
+    });
+    if (claimed.count === 0) throw new Error("Invoice is already issued");
     const journalEntry = await tx.journalEntry.create({
       data: {
         tenantId,

@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from "../../middleware/auth";
 import { requireModule } from "../../middleware/module-access";
 import { AppError } from "../../core/errors";
 import { WebsiteService, type ImageBytes } from "./website.service";
+import { clientIp } from "../../utils/visitor-country";
 import { contentSchema, inquiryStatusSchema, photoSchema, publicInquirySchema, settingsSchema } from "./website.schemas";
 
 // الموقع التعريفي (module "website") - الراوترات بس: تحقق من المدخلات وبعدين الخدمة
@@ -108,7 +109,7 @@ publicWebsiteRouter.get("/:slug/cover", async (req, res) => {
   sendImage(req, res, await service.publicBrandImage(req.params.slug, "cover"));
 });
 publicWebsiteRouter.post("/:slug/inquiries", async (req, res) => {
-  if (tooManyMessages(req.ip || "?")) return res.status(429).json({ error: "Too many messages — please wait a few minutes.", code: "RATE_LIMITED" });
+  if (tooManyMessages(clientIp(req))) return res.status(429).json({ error: "Too many messages — please wait a few minutes.", code: "RATE_LIMITED" });
   const input = parse(publicInquirySchema, req.body);
   // فخ الروبوتات: الخانة دي مخفية عن الناس، لو اتملت نرد "تمام" ومانحفظش حاجة
   if (input.website && input.website.trim()) return res.status(201).json({ ok: true });
@@ -117,7 +118,7 @@ publicWebsiteRouter.post("/:slug/inquiries", async (req, res) => {
 });
 // زيارة: المتصفح بيعدّها مرة في اليوم بس؛ السيرفر بيزوّد العداد
 publicWebsiteRouter.post("/:slug/visit", async (req, res) => {
-  if (tooManyVisits(req.ip || "?")) return res.status(204).end();
+  if (tooManyVisits(clientIp(req))) return res.status(204).end();
   await service.addVisit(req.params.slug);
   res.status(204).end();
 });
