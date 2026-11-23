@@ -4,12 +4,13 @@ import { imageDataUrl } from "../booking/page-design";
 // الموقع التعريفي: التحقق من المدخلات + ترتيب الأقسام (منطق خالص بيتختبر لوحده)
 
 // لازم تفضل نفس القائمة اللي في الفرونت (frontend/src/pages/website/websiteTypes.ts)
-export const WEBSITE_TEMPLATES = ["bluefield", "mint", "blush", "sky", "sand", "lavender", "ocean", "mono"] as const;
+// الأولانيين (lumiere…horizon) = قوالب كاملة بتصميم مختلف (زي Envato)؛ الباقي = الشكل القديم بألوان مختلفة
+export const WEBSITE_TEMPLATES = ["lumiere", "pulse", "noir", "bloom", "grid", "horizon", "bluefield", "mint", "blush", "sky", "sand", "lavender", "ocean", "mono"] as const;
 export const WEBSITE_FONTS = ["modern", "elegant", "rounded"] as const;
 export const WEBSITE_LANGUAGES = ["en", "ar"] as const;
 
 // الأقسام بالترتيب الافتراضي. hero دايمًا أول واحد ودايمًا ظاهر
-export const SECTION_IDS = ["hero", "about", "services", "gallery", "team", "stats", "testimonials", "faq", "hours", "contact"] as const;
+export const SECTION_IDS = ["hero", "about", "services", "gallery", "team", "stats", "testimonials", "pricing", "faq", "hours", "cta", "contact"] as const;
 export type SectionId = (typeof SECTION_IDS)[number];
 // اللي بيبقى ظاهر في موقع جديد (الباقي التاجر يفتحه لما يملاه)
 const DEFAULT_ON: SectionId[] = ["hero", "about", "services", "gallery", "contact"];
@@ -23,6 +24,8 @@ export const LIMITS = {
   stats: 4,
   testimonials: 12,
   faq: 20,
+  pricing: 4,
+  planFeatures: 10,
   // كل الصور المرفوعة للشركة (المعرض + الفريق + الخدمات + من نحن)
   photosTotal: 90,
 } as const;
@@ -147,6 +150,41 @@ const contentSchemaRaw = z
       })
       .strict()
       .default({}),
+    // الباقات: لحد 4 باقات، كل واحدة سعرها بالدولار (null = "اسأل عن السعر") + مميزات
+    pricing: z
+      .object({
+        heading: text(80).default(""),
+        intro: text(300).default(""),
+        plans: z
+          .array(
+            z
+              .object({
+                id: itemId,
+                name: text(60).refine((v) => v.length > 0, "Each package needs a name"),
+                price: z.number().min(0, "Prices can't be negative").max(1e9).nullable().default(null),
+                period: text(30).default(""),
+                features: z.array(text(80)).max(LIMITS.planFeatures, `Up to ${LIMITS.planFeatures} lines per package`).default([]),
+                highlight: z.boolean().default(false),
+                buttonLabel: text(30).default(""),
+              })
+              .strict()
+          )
+          .max(LIMITS.pricing, `Up to ${LIMITS.pricing} packages`)
+          .default([]),
+      })
+      .strict()
+      .default({}),
+    // شريط "يلا احجز/كلّمنا" قبل التواصل
+    cta: z
+      .object({
+        title: text(120).default(""),
+        text: text(300).default(""),
+        buttonKind: z.enum(HERO_BUTTON_KINDS).default("whatsapp"),
+        buttonLabel: text(30).default(""),
+        url: httpsUrl(),
+      })
+      .strict()
+      .default({}),
     faq: z
       .object({
         heading: text(80).default(""),
@@ -228,6 +266,7 @@ export const contentSchema = contentSchemaRaw.transform((c) => {
     stats: { items: fill(c.stats.items, "n") },
     testimonials: { ...c.testimonials, items: fill(c.testimonials.items, "r") },
     faq: { ...c.faq, items: fill(c.faq.items, "q") },
+    pricing: { ...c.pricing, plans: fill(c.pricing.plans, "p").map((p) => ({ ...p, features: p.features.filter(Boolean) })) },
   };
 });
 

@@ -112,3 +112,22 @@ describe("website settings + public form", () => {
     expect(d).toEqual(["2026-11-19", "2026-11-18", "2026-11-17"]);
   });
 });
+
+describe("website packages + call to action (2026-11-23)", () => {
+  it("keeps packages with ids, drops empty feature lines, validates the button and old content gets both sections off", async () => {
+    const { contentSchema, readContent, WEBSITE_TEMPLATES } = await import("../modules/website/website.schemas");
+    const c = contentSchema.parse({
+      pricing: { heading: "Packages", plans: [{ name: "Basic", price: 100, features: ["A", "", "B"] }, { name: "Gold", price: null, highlight: true }] },
+      cta: { title: "Ready?", buttonKind: "book" },
+    });
+    expect(c.pricing.plans.map((p) => p.id.length > 0)).toEqual([true, true]);
+    expect(c.pricing.plans[0].features).toEqual(["A", "B"]);
+    expect(c.cta.buttonKind).toBe("book");
+    expect(() => contentSchema.parse({ cta: { url: "http://x.com" } })).toThrow();
+    expect(() => contentSchema.parse({ pricing: { plans: Array.from({ length: 5 }, (_, i) => ({ name: "P" + i })) } })).toThrow();
+    const old = readContent({ sections: [{ id: "hero", on: true }, { id: "about", on: true }] });
+    expect(old.sections.find((s) => s.id === "pricing")?.on).toBe(false);
+    expect(old.sections.find((s) => s.id === "cta")?.on).toBe(false);
+    expect(WEBSITE_TEMPLATES).toContain("noir");
+  });
+});
