@@ -12,7 +12,8 @@ salesRouter.use(requireAuth, requireModule("erp"));
 salesRouter.get("/", async (req, res) => {
   const sales = await prisma.sale.findMany({
     where: { tenantId: req.auth!.tenantId },
-    include: { employee: true, item: true },
+    // من الموظف الاسم والمنصب بس (مش المرتب) - تدقيق ERP-06
+    include: { employee: { select: { id: true, name: true, position: true, branchId: true } }, item: true },
     orderBy: { createdAt: "desc" },
   });
   res.json(sales);

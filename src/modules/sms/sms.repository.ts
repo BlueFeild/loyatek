@@ -88,6 +88,8 @@ export interface SmsStore {
   unschedule(tenantId: string, id: string): Promise<boolean>;
   dueCampaigns(now: Date, take: number): Promise<{ id: string; tenantId: string }[]>;
   staleSending(before: Date): Promise<CampaignRow[]>;
+  // claim ذري: بس instance واحد يقفل الحملة المعلّقة ويرجّع الرصيد
+  claimStale(id: string, before: Date): Promise<boolean>;
 
   audienceByTags(tenantId: string, tags: string[], match: "any" | "all"): Promise<{ recipients: Recipient[]; optedOut: number }>;
   optedOutPhones(tenantId: string, phones: string[]): Promise<Set<string>>;
@@ -283,6 +285,11 @@ export class PrismaSmsStore implements SmsStore {
 
   dueCampaigns(now: Date, take: number) {
     return prisma.smsCampaign.findMany({ where: { status: "SCHEDULED", scheduledAt: { lte: now } }, orderBy: { scheduledAt: "asc" }, take, select: { id: true, tenantId: true } });
+  }
+
+  async claimStale(id: string, before: Date) {
+    const r = await prisma.smsCampaign.updateMany({ where: { id, status: "SENDING", sendingAt: { lt: before } }, data: { status: "FAILED" } });
+    return r.count === 1;
   }
 
   staleSending(before: Date) {

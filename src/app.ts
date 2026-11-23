@@ -64,10 +64,13 @@ import { adminMetaRatesRouter, publicMetaRatesRouter } from "./modules/whatsapp/
 import { AppError } from "./core/errors";
 import { getPlatformConfig, getRegionalPricing } from "./utils/platform-config";
 import { visitorCountry } from "./utils/visitor-country";
+import { hideInternalErrors, securityHeaders } from "./middleware/security-headers";
 
 export const app = express();
 
 app.disable("x-powered-by");
+app.use(securityHeaders);
+app.use(hideInternalErrors);
 
 // CORS مقيّد لدومينات معروفة بس - مش أي موقع في العالم. لو محتاجة
 // تضيفي دومين جديد (زي دومين مخصّص لعميل)، ضيفيه في متغير البيئة

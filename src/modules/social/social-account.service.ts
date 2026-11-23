@@ -130,13 +130,26 @@ export class SocialAccountService {
     }
     if (!state?.t || state.e < this.now().getTime()) return back({ tiktok_error: "The TikTok link expired — press Connect TikTok again." });
     if (query.error || !query.code) return back({ tiktok_error: query.error === "access_denied" ? "TikTok connection was cancelled." : `TikTok: ${query.error_description || query.error || "no code returned"}` });
+    // مابنحفظش الحساب هنا: الربط بيكمل من لوحة التحكم وصاحبها داخل بحسابه (tiktokComplete).
+    // قبل كده أي حد يبعت لينك الربط بتاعه لتاجر تاني، حساب تيك توك بتاع التاني كان بيتربط بشركة المهاجم (تدقيق MSG-02)
+    return back({ tiktok_code: query.code, tiktok_state: String(query.state) });
+  }
+
+  // الخطوة الأخيرة: لازم نفس الشركة ونفس الشخص اللي بدأ الربط يكونوا داخلين دلوقتي
+  async tiktokComplete(tenantId: string, userId: string | null, code: string, rawState: string) {
+    let state: { t: string; u: string | null; e: number };
     try {
-      const account = await this.requireTikTok().exchangeCode(query.code, this.tiktokRedirectUri());
-      await this.save(state.t, state.u, [account]);
-      return back({ tiktok: "connected" });
-    } catch (err) {
-      return back({ tiktok_error: err instanceof Error ? err.message : "Connecting TikTok failed" });
+      state = JSON.parse(decryptToken(Buffer.from(rawState, "base64url").toString("utf8")));
+    } catch {
+      throw new ValidationError("This TikTok link isn't valid — press Connect TikTok again.");
     }
+    if (!state?.t || state.e < this.now().getTime()) throw new ValidationError("The TikTok link expired — press Connect TikTok again.");
+    if (state.t !== tenantId || (state.u ?? null) !== (userId ?? null)) {
+      throw new AppError(403, "TIKTOK_WRONG_ACCOUNT", "This TikTok connection was started from another account — press Connect TikTok again from here.");
+    }
+    const account = await this.requireTikTok().exchangeCode(code, this.tiktokRedirectUri());
+    await this.save(tenantId, userId, [account]);
+    return { accounts: await this.store.listAccounts(tenantId), connected: 1 };
   }
 
   // بيانات الحساب اللي تيك توك بيطلب نعرضها قبل النشر (مين يقدر يشوف، التعليقات...)

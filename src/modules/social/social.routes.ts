@@ -1,3 +1,4 @@
+import { z } from "zod";
 import express, { Router } from "express";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { requireModule } from "../../middleware/module-access";
@@ -237,6 +238,13 @@ publicSocialWebhookRouter.post("/", async (req: express.Request & { rawBody?: Bu
 // لينك دخول تيك توك (التاجر بيتنقل له، وتيك توك بيرجعه على الـ callback العام)
 socialRouter.get("/tiktok/connect-url", canConnect, (req, res) => {
   res.json(socialAccountService.tiktokConnectUrl(req.auth!.tenantId, req.auth!.userId));
+});
+
+const tiktokCompleteSchema = z.object({ code: z.string().min(1).max(2000), state: z.string().min(10).max(4000) });
+socialRouter.post("/tiktok/complete", canConnect, async (req, res) => {
+  const parsed = tiktokCompleteSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Missing the TikTok code — press Connect TikTok again." });
+  res.json(await socialAccountService.tiktokComplete(req.auth!.tenantId, req.auth!.userId, parsed.data.code, parsed.data.state));
 });
 
 socialRouter.get("/tiktok/creator-info", async (req, res) => {

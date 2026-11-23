@@ -7,6 +7,10 @@ import { getTenantPaymentMethods } from "../checkout/myfatoorah";
 import { publicPaymentMethods } from "../payment-settings/payment-methods";
 import { getRates, isCurrencyCode, rateFor } from "../../utils/money";
 import { zodMessage } from "../../utils/validation";
+import { SlidingWindowLimiter, envNumber } from "../../utils/rate-limit";
+import { clientIp } from "../../utils/visitor-country";
+
+const menuOrderLimiter = new SlidingWindowLimiter(envNumber("MENU_ORDERS_PER_10MIN", 20), 10 * 60_000);
 import { publicMenuItem } from "./menu-pricing";
 
 // راوتر عام بالكامل - مفيهوش requireAuth خالص، لأن العميل اللي بيسكان
@@ -60,13 +64,18 @@ const createOrderSchema = z.object({
   readyTime: z.number().int().optional(),
   customerName: z.string().min(1),
   customerPhone: z.string().min(1),
-  items: z.array(z.object({ menuItemId: z.string().uuid(), quantity: z.number().int().positive() })).min(1),
+  // حد معقول للطلب الواحد (قبل كده الكمية كانت مفتوحة) - تدقيق COM-07
+  items: z.array(z.object({ menuItemId: z.string().uuid(), quantity: z.number().int().positive().max(99) })).min(1).max(60),
   paymentMethodId: z.string().max(64).optional(),
 });
 
 // العميل الحقيقي بيبعت الطلب من هنا - بدون أي توكن، السعر بيتاخد من
 // قاعدة البيانات فعليًا نفس منطق النسخة اللي محتاجة تسجيل دخول
 publicCatalogRouter.post("/:slug/orders", async (req, res) => {
+  // كل طلب بيبعت رسايل واتساب مدفوعة - حد لكل جهاز (تدقيق COM-07)
+  if (menuOrderLimiter.hit(clientIp(req))) {
+    return res.status(429).json({ error: "Too many orders from this device — please wait a few minutes.", code: "RATE_LIMITED" });
+  }
   const tenant = await findTenantBySlug(req.params.slug);
   if (!tenant) return res.status(404).json({ error: "Menu not found" });
 

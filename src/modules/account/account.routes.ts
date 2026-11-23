@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
-import { isManageSession } from "../../utils/jwt";
+import { isManageSession, refreshTokenKey } from "../../utils/jwt";
 import { createPasswordLink, emailTaken, sendEmailChangedNotice, sendOwnerInviteEmail } from "../auth/account-links";
 
 // حسابي: أي يوزر يغيّر إيميل الدخول أو الباسورد بتاعه، وصاحب الشركة (OWNER)
@@ -23,6 +23,13 @@ accountRouter.use((req, res, next) => {
 
 async function me(req: { auth?: { userId: string; tenantId: string } }) {
   return prisma.user.findFirst({ where: { id: req.auth!.userId, tenantId: req.auth!.tenantId } });
+}
+
+// بعد تغيير الباسورد/الإيميل: كل الأجهزة التانية بتخرج (تدقيق أمني AUTH-10).
+// الجهاز الحالي بيبعت الـ refresh token بتاعه في keepRefreshToken فبيفضل داخل
+async function signOutOtherDevices(userId: string, keep: unknown) {
+  const keepKey = typeof keep === "string" && keep ? refreshTokenKey(keep) : null;
+  await prisma.refreshToken.deleteMany({ where: { userId, ...(keepKey ? { token: { not: keepKey } } : {}) } });
 }
 
 async function passwordOk(user: { passwordHash: string | null }, password: string | undefined) {
@@ -51,6 +58,7 @@ accountRouter.patch("/email", async (req, res) => {
   const old = user.email;
   // الإيميل الجديد مش مربوط بجوجل القديم
   await prisma.user.update({ where: { id: user.id }, data: { email: newEmail, googleId: null } });
+  await signOutOtherDevices(user.id, req.body?.keepRefreshToken);
   await sendEmailChangedNotice(old, user.name, newEmail).catch(() => {});
   res.json({ ok: true, email: newEmail });
 });
@@ -64,6 +72,7 @@ accountRouter.post("/password", async (req, res) => {
   if (!user) return res.status(404).json({ error: "User not found" });
   if (!(await passwordOk(user, parsed.data.currentPassword))) return res.status(400).json({ error: "Your current password is wrong" });
   await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await bcrypt.hash(parsed.data.newPassword, 10) } });
+  await signOutOtherDevices(user.id, req.body?.keepRefreshToken);
   res.json({ ok: true });
 });
 

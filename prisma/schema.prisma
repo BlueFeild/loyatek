@@ -930,9 +930,10 @@ model Booking {
   myFatoorahPaymentUrl String?           @db.Text
   createdAt            DateTime          @default(now())
 
-  // يمنع فعليًا حجز نفس المورد في نفس اليوم ونفس الساعة مرتين -
-  // على مستوى قاعدة البيانات، مش مجرد فحص في الكود
-  @@unique([resourceId, date, hour])
+  // منع حجز نفس المورد في نفس اليوم والساعة مرتين = unique index جزئي في قاعدة البيانات
+  // (migration 20261203000000_booking_slot_active_unique) بيتجاهل الحجوزات الملغية، عشان الميعاد
+  // الملغي يرجع متاح. Prisma 5 مابيكتبش partial index في الـ schema، فهو موجود في الـ SQL بس.
+  @@index([resourceId, date, hour])
   @@index([tenantId, branchId])
   @@map("bookings")
 }

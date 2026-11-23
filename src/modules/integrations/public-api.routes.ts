@@ -8,7 +8,7 @@ import { tenantGraceDays } from "../../utils/platform-config";
 import { zodMessage } from "../../utils/validation";
 import { postInputSchema } from "../social/social.schemas";
 import { SOCIAL_LIMITS, SOCIAL_MEDIA_TYPES } from "../social/social-types";
-import { assertSafeUrl } from "./webhook-signing";
+import { assertSafeUrl, pinnedRequest } from "./webhook-signing";
 
 // الـ API العام للبرامج الخارجية (Make / Zapier / سيستم التاجر): Authorization: Bearer bf_live_...
 // كل طلب بشركة صاحب المفتاح بس، وكل جزء محتاج اشتراكه (زي اللوحة بالظبط)
@@ -78,13 +78,17 @@ publicApiRouter.get("/social/posts", needModule("social"), async (req, res) => {
 // الصورة/الفيديو من لينك (Make / Zapier بيدّوا لينك الملف)
 async function downloadMedia(url: string): Promise<{ mimeType: string; data: Buffer }> {
   const safe = await assertSafeUrl(url);
-  const res = await fetch(safe, { redirect: "error", signal: AbortSignal.timeout(60_000) });
-  if (!res.ok) throw new Error(`Couldn't download the file (${res.status})`);
-  const mimeType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  const res = await pinnedRequest(safe, { timeoutMs: 60_000 });
+  if (res.status < 200 || res.status >= 300) {
+    (res.body as unknown as { destroy?: () => void }).destroy?.();
+    throw new Error(`Couldn't download the file (${res.status})`);
+  }
+  const header = (n: string) => String(res.headers[n] ?? "");
+  const mimeType = header("content-type").split(";")[0].trim().toLowerCase();
   const kind = SOCIAL_MEDIA_TYPES[mimeType];
   if (!kind) throw new Error("The file must be a JPG or PNG photo, or an MP4 / MOV video");
   const max = kind === "image" ? SOCIAL_LIMITS.imageMaxBytes : SOCIAL_LIMITS.videoMaxBytes;
-  const declared = Number(res.headers.get("content-length") ?? 0);
+  const declared = Number(header("content-length") || 0);
   if (declared > max) throw new Error(`The file is too large (max ${Math.round(max / 1024 / 1024)} MB)`);
   const chunks: Buffer[] = [];
   let size = 0;

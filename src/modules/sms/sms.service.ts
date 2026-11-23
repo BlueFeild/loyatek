@@ -218,8 +218,11 @@ export class SmsService {
   async runDue(now = new Date()) {
     let started = 0;
     let failed = 0;
-    for (const c of await this.store.staleSending(new Date(now.getTime() - this.limits.staleAfterMs))) {
+    const staleBefore = new Date(now.getTime() - this.limits.staleAfterMs);
+    for (const c of await this.store.staleSending(staleBefore)) {
       if (this.running.has(c.id)) continue;
+      // لو فيه أكتر من instance، الرصيد كان بيرجع مرتين (تدقيق JOB-01) - دلوقتي اللي ياخد الحملة الأول بس
+      if (!(await this.store.claimStale(c.id, staleBefore))) continue;
       const used = await this.store.sentSegmentsForCampaign(c.id);
       const refund = Math.max(0, c.segmentsUsed - used);
       if (refund > 0) await this.store.adjust(c.tenantId, refund, { reason: "REFUND", refId: c.id, note: "Campaign stopped — unsent SMS returned" });

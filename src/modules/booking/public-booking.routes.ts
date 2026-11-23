@@ -14,6 +14,12 @@ import { calendarDateKey, parseCalendarDate, todayKeyInTimezone } from "../../ut
 import { getRates, isCurrencyCode, rateFor } from "../../utils/money";
 import { discountedServicePrices, publicServicePricing } from "./service-pricing";
 import { zodMessage } from "../../utils/validation";
+import { openHoursForDay } from "./opening-hours";
+import { SlidingWindowLimiter, envNumber } from "../../utils/rate-limit";
+import { clientIp } from "../../utils/visitor-country";
+
+// حد للحجوزات العامة لكل جهاز (تدقيق COM-02): قبل كده أي حد كان يقدر يحجز كل المواعيد بسكريبت
+const bookingLimiter = new SlidingWindowLimiter(envNumber("PUBLIC_BOOKINGS_PER_10MIN", 10), 10 * 60_000);
 
 // راوتر عام بالكامل - العميل بيحجز موعد من غير حساب ولا تسجيل دخول،
 // بالظبط زي منطق الكتالوج العام، والعزل بين الشركات بيتم عن طريق الـ slug
@@ -96,6 +102,9 @@ publicBookingRouter.post("/:slug/bookings", async (req, res) => {
 
   const parsed = createBookingSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
+  if (bookingLimiter.hit(clientIp(req))) {
+    return res.status(429).json({ error: "Too many bookings from this device — please wait a few minutes.", code: "RATE_LIMITED" });
+  }
 
   // التاجر طالب تأكيد رقم الواتساب: لازم توكن سليم لنفس الرقم
   if (await bookingNeedsWaLogin(tenant)) {
@@ -110,6 +119,10 @@ publicBookingRouter.post("/:slug/bookings", async (req, res) => {
   const bookingSettings = await getOrCreateSettings(tenant.id);
   if (day && calendarDateKey(day) < todayKeyInTimezone(bookingSettings.timezone)) {
     return res.status(400).json({ error: "This day has already passed — please pick another day." });
+  }
+  // الساعة لازم تكون من ساعات الشغل (قبل كده ينفع تحجز 3 الفجر من صفحة الحجز العامة)
+  if (day && !openHoursForDay(bookingSettings, calendarDateKey(day)).includes(parsed.data.hour)) {
+    return res.status(400).json({ error: "This time isn't available — please pick one of the times shown." });
   }
 
   try {

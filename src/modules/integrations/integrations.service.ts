@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { NotFoundError, ValidationError } from "../../core/errors";
 import { decryptToken, encryptToken } from "../social/token-crypto";
 import type { IntegrationsStore, WebhookRow } from "./integrations.repository";
-import { WEBHOOK_EVENTS, assertSafeUrl, signatureHeader, type WebhookEvent } from "./webhook-signing";
+import { WEBHOOK_EVENTS, assertSafeUrl, pinnedRequest, signatureHeader, type WebhookEvent } from "./webhook-signing";
 
 export const INTEGRATION_LIMITS = {
   maxKeys: 10,
@@ -19,7 +19,9 @@ export const hashApiKey = (key: string) => crypto.createHash("sha256").update(ke
 export type HttpPost = (url: string, init: { headers: Record<string, string>; body: string; timeoutMs: number }) => Promise<{ status: number }>;
 
 const realPost: HttpPost = async (url, init) => {
-  const res = await fetch(url, { method: "POST", headers: init.headers, body: init.body, redirect: "manual", signal: AbortSignal.timeout(init.timeoutMs) });
+  // الاتصال نفسه بيتأكد إن العنوان مش داخلي (مش بس الفحص اللي قبله) - تدقيق SEC-004
+  const res = await pinnedRequest(url, { method: "POST", headers: init.headers, body: init.body, timeoutMs: init.timeoutMs });
+  (res.body as unknown as { resume?: () => void }).resume?.();
   return { status: res.status };
 };
 

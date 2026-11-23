@@ -103,12 +103,17 @@ walletRouter.post("/customers", requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"
   }
 });
 
-const adjustSchema = z.object({ delta: z.number().int() });
+const adjustSchema = z.object({ delta: z.number().int().min(-1000).max(1000).refine((n) => n !== 0, "delta can't be 0") });
 
 walletRouter.post("/customers/:id/adjust", requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async (req, res) => {
   const parsed = adjustSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
+  // التعديل اليدوي ممنوع لو صاحب الشغل قافله من الإعدادات (قبل كده كان مقفول في الواجهة بس) - تدقيق COM-06
+  const walletSettings = await getOrCreateWalletSettings(req.auth!.tenantId);
+  if (!walletSettings.allowOverrides) {
+    return res.status(403).json({ error: "Manual changes are turned off for this loyalty card — turn them on in the card settings first." });
+  }
   try {
     const actor = await resolveActor(req.auth!.userId);
     const customer = await adjustCustomerBalance(req.auth!.tenantId, req.params.id, parsed.data.delta, actor);

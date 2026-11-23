@@ -11,6 +11,9 @@ export const employeesRouter = Router();
 employeesRouter.use(requireAuth, requireModule("erp"));
 
 // قائمة الموظفين + بيانات الحضور والهدف/الفعلي المحسوبة فعليًا لكل واحد
+const PAY_ROLES = ["OWNER", "ADMIN", "MANAGER"] as const;
+const canSeePay = (role: string) => (PAY_ROLES as readonly string[]).includes(role);
+
 employeesRouter.get("/", async (req, res) => {
   const employees = await prisma.employee.findMany({
     where: { tenantId: req.auth!.tenantId },
@@ -23,6 +26,10 @@ employeesRouter.get("/", async (req, res) => {
       ...(await enrichEmployee(req.auth!.tenantId, e)),
     }))
   );
+  // المرتبات والعمولات للإدارة بس - الـ STAFF بيشوف الأسماء والمناصب (تدقيق ERP-06)
+  if (!canSeePay(req.auth!.role)) {
+    return res.json(enriched.map(({ baseSalary, commissionRate, monthlyTarget, target, ...rest }: any) => rest));
+  }
   res.json(enriched);
 });
 
@@ -58,7 +65,7 @@ employeesRouter.post("/", requireRole("OWNER", "ADMIN"), async (req, res) => {
 
 // حساب مكافأة نهاية الخدمة الحقيقي لموظف معيّن - بيتحسب لحظيًا من
 // تاريخ التعيين والراتب الأساسي الفعليين، مش رقم مُدخل يدوي
-employeesRouter.get("/:id/gratuity", async (req, res) => {
+employeesRouter.get("/:id/gratuity", requireRole(...PAY_ROLES), async (req, res) => {
   const result = await computeGratuity(req.auth!.tenantId, req.params.id);
   if (!result) return res.status(404).json({ error: "Employee not found" });
   res.json(result);
@@ -97,7 +104,7 @@ employeesRouter.patch("/:id", requireRole("OWNER", "ADMIN"), async (req, res) =>
 });
 
 // تقرير عمولة موظف معيّن - مبني على المبيعات الفعلية المسجلة له، مش رقم مقدّر
-employeesRouter.get("/:id/commissions", async (req, res) => {
+employeesRouter.get("/:id/commissions", requireRole(...PAY_ROLES), async (req, res) => {
   const employee = await prisma.employee.findFirst({
     where: { id: req.params.id, tenantId: req.auth!.tenantId },
   });
@@ -122,7 +129,7 @@ employeesRouter.get("/:id/commissions", async (req, res) => {
 });
 
 // كشف راتب مبسّط - راتب أساسي + عمولة الشهر الحالي، محسوبين من بيانات حقيقية
-employeesRouter.get("/:id/payslip", async (req, res) => {
+employeesRouter.get("/:id/payslip", requireRole(...PAY_ROLES), async (req, res) => {
   const employee = await prisma.employee.findFirst({
     where: { id: req.params.id, tenantId: req.auth!.tenantId },
   });

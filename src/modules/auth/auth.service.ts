@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import { newTrialExpiry } from "../../utils/platform-config";
 import { container } from "../../core/container";
 import { prisma } from "../../config/db";
-import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../../utils/jwt";
+import { refreshTokenKey, signAccessToken, signRefreshToken, verifyRefreshToken } from "../../utils/jwt";
 import { generateUniqueSlug } from "../../utils/slug";
 import { trackPlatformEvent } from "../analytics/analytics.service";
 import { deniedForTenant } from "../../utils/account-access";
@@ -105,8 +105,11 @@ export async function login(input: LoginInput) {
 export async function refreshAccessToken(refreshToken: string) {
   const payload = verifyRefreshToken(refreshToken);
 
-  const stored = await prisma.refreshToken.findUnique({ where: { token: refreshToken } });
-  if (!stored || stored.expiresAt < new Date()) {
+  // بالبصمة؛ والتوكن الخام لسه مقبول للصفوف القديمة لحد ما الـ migration يحوّلها
+  const stored =
+    (await prisma.refreshToken.findUnique({ where: { token: refreshTokenKey(refreshToken) } })) ??
+    (await prisma.refreshToken.findUnique({ where: { token: refreshToken } }));
+  if (!stored || stored.expiresAt < new Date() || stored.userId !== payload.userId) {
     throw new Error("Refresh token invalid or expired");
   }
 
@@ -128,12 +131,14 @@ export async function refreshAccessToken(refreshToken: string) {
 
   // إبطال القديم وتسجيل الجديد في نفس اللحظة - مش نداءين منفصلين
   // ممكن يسيبوا نافذة زمنية فيها التوكنين شغالين مع بعض
-  await prisma.$transaction([
-    prisma.refreshToken.delete({ where: { token: refreshToken } }),
-    prisma.refreshToken.create({
-      data: { userId: user.id, token: newRefreshToken, expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
-    }),
-  ]);
+  // deleteMany + فحص العدد: تجديدين بنفس التوكن في نفس اللحظة → واحد بس ينجح (التاني 401 مش 500)
+  await prisma.$transaction(async (tx) => {
+    const used = await tx.refreshToken.deleteMany({ where: { id: stored.id } });
+    if (used.count === 0) throw new Error("Refresh token invalid or expired");
+    await tx.refreshToken.create({
+      data: { userId: user.id, token: refreshTokenKey(newRefreshToken), expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
+    });
+  });
 
   return { accessToken, refreshToken: newRefreshToken };
 }
@@ -145,7 +150,7 @@ async function issueTokens(userId: string, tenantId: string, role: string, branc
   await prisma.refreshToken.create({
     data: {
       userId,
-      token: refreshToken,
+      token: refreshTokenKey(refreshToken),
       expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 يوم
     },
   });

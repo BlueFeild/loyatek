@@ -93,29 +93,10 @@ publicWalletRouter.post("/:slug/join", async (req, res) => {
   }
 });
 
-// العميل بيدوّر على رصيده برقم تليفونه من غير حساب
-publicWalletRouter.get("/:slug/lookup", async (req, res) => {
-  const tenant = await findTenantBySlug(req.params.slug);
-  if (!tenant) return res.status(404).json({ error: "Loyalty program not found" });
-
-  const phone = req.query.phone as string | undefined;
-  if (!phone) return res.status(400).json({ error: "phone is required" });
-
-  const customer = await prisma.walletCustomer.findFirst({
-    where: { tenantId: tenant.id, ...walletPhoneMatch(phone) },
-  });
-  if (!customer) return res.status(404).json({ error: "No membership found for this number" });
-
-  // الـ lookup عام (بالتليفون من غير حساب) - فمينفعش يرجّع memberCode
-  // أبدًا، لأن أي حد يعرف رقم حد تاني كان هيقدر يسحب كوده ويستلم هديته
-  res.json({
-    id: customer.id,
-    name: customer.name,
-    phone: customer.phone,
-    balance: customer.balance,
-    tier: customer.tier,
-    lastVisitAt: customer.lastVisitAt,
-  });
+// كان فيه بحث عام برقم التليفون بيرجّع اسم العميل ورصيده لأي حد (تدقيق COM-08).
+// محدش في الواجهة بيستخدمه → اتقفل؛ العميل بيشوف كارته من لينك الكارت نفسه
+publicWalletRouter.get("/:slug/lookup", (_req, res) => {
+  res.status(410).json({ error: "This lookup is no longer available" });
 });
 
 // لوجو الشركة كصورة عامة - Google Wallet بيجيبها من الرابط ده. لو

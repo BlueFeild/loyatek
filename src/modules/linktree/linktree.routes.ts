@@ -79,9 +79,19 @@ const iconImageSchema = z
   .regex(/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/, "Icon must be a PNG, JPG, WEBP or GIF image")
   .nullable();
 
+// روابط آمنة بس: http/https/mailto/tel/sms. قبل كده "javascript:..." كان بيتقبل ويتعرض على الصفحة
+// العامة (نفس دومين لوحة التحكم) = XSS - تدقيق COM-05
+const SAFE_LINK = /^(https?:\/\/|mailto:|tel:|sms:)/i;
+const linkUrlSchema = z
+  .string()
+  .trim()
+  .max(2000)
+  .url()
+  .refine((u) => SAFE_LINK.test(u), "Links must start with https://, mailto:, tel: or sms:");
+
 const createLinkSchema = z.object({
   label: z.string().min(1),
-  url: z.string().url(),
+  url: linkUrlSchema,
   icon: iconKeySchema.optional(),
   iconDataUrl: iconImageSchema.optional(),
 });
@@ -196,7 +206,7 @@ async function saveUploadedFile(req: Request, res: Response, meta: { label: stri
 
 const updateLinkSchema = z.object({
   label: z.string().min(1).optional(),
-  url: z.string().url().optional(),
+  url: linkUrlSchema.optional(),
   sortOrder: z.number().int().optional(),
   icon: iconKeySchema.optional(),
   iconDataUrl: iconImageSchema.optional(),

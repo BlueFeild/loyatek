@@ -127,7 +127,7 @@ describe("SocialAccountService — TikTok connect", () => {
   const NOW = new Date("2026-10-28T12:00:00Z");
   function setup(now = NOW) {
     const saved: { tenantId: string; list: DiscoveredAccount[] }[] = [];
-    const store: any = { upsertAccounts: async (tenantId: string, _u: string | null, list: DiscoveredAccount[]) => void saved.push({ tenantId, list }) };
+    const store: any = { upsertAccounts: async (tenantId: string, _u: string | null, list: DiscoveredAccount[]) => void saved.push({ tenantId, list }), listAccounts: async () => [] };
     const connector: TikTokConnector = {
       enabled: true,
       authorizeUrl: (state, redirect) => `https://tiktok.test/auth?state=${state}&redirect=${encodeURIComponent(redirect)}`,
@@ -141,12 +141,20 @@ describe("SocialAccountService — TikTok connect", () => {
   }
   const stateOf = (url: string) => new URL(url).searchParams.get("state")!;
 
-  it("connect URL → callback saves the account for that company with encrypted tokens", async () => {
+  it("connect URL → callback hands the code to the app → the same signed-in company completes it", async () => {
     const { svc, saved, connector } = setup();
     const { url } = svc.tiktokConnectUrl("t1", "u1");
     expect(url).toContain(encodeURIComponent("https://api.test/api/public/social/tiktok/callback"));
-    const back = await svc.tiktokCallback({ code: "c1", state: stateOf(url) });
-    expect(back).toBe("https://app.test/social?tool=publish&tiktok=connected");
+    const state = stateOf(url);
+    const back = new URL(await svc.tiktokCallback({ code: "c1", state }));
+    expect(back.origin + back.pathname).toBe("https://app.test/social");
+    expect(back.searchParams.get("tiktok_code")).toBe("c1");
+    expect(saved).toHaveLength(0);
+    // شركة تانية (أو شخص تاني) داخل وفتح اللينك ده → مرفوض ومفيش حاجة اتحفظت
+    await expect(svc.tiktokComplete("t2", "u9", "c1", state)).rejects.toMatchObject({ status: 403 });
+    await expect(svc.tiktokComplete("t1", "u2", "c1", state)).rejects.toMatchObject({ status: 403 });
+    expect(saved).toHaveLength(0);
+    await svc.tiktokComplete("t1", "u1", "c1", state);
     expect(connector.exchangeCode).toHaveBeenCalledWith("c1", "https://api.test/api/public/social/tiktok/callback");
     expect(saved[0].tenantId).toBe("t1");
     expect(decryptToken(saved[0].list[0].accessToken)).toBe("act");

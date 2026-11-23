@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import jwt from "jsonwebtoken";
 
 // القيم دي معروفة لأي حد شاف الكود ده على GitHub - استخدامها في
@@ -63,6 +63,12 @@ export function signRefreshToken(userId: string): string {
   // jwtid عشوائي: من غيره تسجيلين دخول في نفس الثانية كانوا بيطلعوا نفس التوكن
   // بالظبط وقاعدة البيانات ترفضه (unique) فالدخول يفشل
   return jwt.sign({ userId }, REFRESH_SECRET, { expiresIn: "30d", jwtid: randomUUID() });
+}
+
+// اللي بيتخزن في قاعدة البيانات = بصمة sha256 للـ refresh token مش التوكن نفسه
+// (لو الداتابيز اتسربت ماحدش يقدر يستخدم التوكنات اللي فيها) - تدقيق أمني SEC-002
+export function refreshTokenKey(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
 export function verifyAccessToken(token: string): AccessTokenPayload {

@@ -1,5 +1,6 @@
 import { Prisma, PrismaClient } from "@prisma/client";
-import type { AdTargeting } from "./ads-types";
+import { AD_LIMITS, type AdTargeting } from "./ads-types";
+import { AppError } from "../../core/errors";
 
 // اللي خدمة الإعلانات محتاجاه من التخزين (Prisma هنا، ونسخة في الذاكرة للاختبارات)
 
@@ -199,9 +200,17 @@ export class PrismaAdsRepository implements AdsStore {
   }
 
   async createCampaign(c: NewAdCampaign) {
-    const row = await this.db.socialAdCampaign.create({
-      data: { ...c, targeting: c.targeting as unknown as Prisma.InputJsonValue, dailyBudget: new Prisma.Decimal(c.dailyBudget) },
-      select: { id: true },
+    // قفل على (الشركة + البوست) والفحص جوه نفس الـ transaction: ضغطتين "Boost" في نفس اللحظة
+    // كانوا بيعدّوا الفحص الاتنين ويعملوا حملتين مدفوعتين (تدقيق MSG-03)
+    const row = await this.db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"ad-boost:" + c.tenantId + ":" + c.postExternalId}))`;
+      const since = new Date(Date.now() - AD_LIMITS.duplicateWindowMs);
+      const busy = await tx.socialAdCampaign.count({ where: { tenantId: c.tenantId, postExternalId: c.postExternalId, status: "CREATING", createdAt: { gte: since } } });
+      if (busy > 0) throw new AppError(409, "BOOST_IN_PROGRESS", "This post is already being boosted — wait a moment and refresh.");
+      return tx.socialAdCampaign.create({
+        data: { ...c, targeting: c.targeting as unknown as Prisma.InputJsonValue, dailyBudget: new Prisma.Decimal(c.dailyBudget) },
+        select: { id: true },
+      });
     });
     return row.id;
   }

@@ -78,6 +78,7 @@ function memStore(opts: { balance?: number; unlimited?: boolean } = {}) {
     unschedule: async () => true,
     dueCampaigns: async (now) => [...st.campaigns.values()].filter((c) => c.status === "SCHEDULED" && c.scheduledAt! <= now).map((c) => ({ id: c.id, tenantId: c.tenantId })),
     staleSending: async () => [],
+    claimStale: async () => true,
     audienceByTags: async (_t, tags, match) => {
       const has = (c: { tags: string[] }) => (match === "all" ? tags.every((t) => c.tags.includes(t)) : tags.some((t) => c.tags.includes(t)));
       return { recipients: st.contacts.filter((c) => has(c) && !c.optedOut), optedOut: st.contacts.filter((c) => has(c) && c.optedOut).length };

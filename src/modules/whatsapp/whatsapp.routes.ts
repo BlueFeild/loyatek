@@ -4,6 +4,7 @@ import { z } from "zod";
 import * as XLSX from "xlsx";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireModule } from "../../middleware/module-access";
 import { assertTenantOwns } from "../../utils/tenant-owned";
 import {
   getOrCreateWhatsappSettings,
@@ -61,6 +62,15 @@ import { BOOKING_TEMPLATE_PURPOSES, ORDER_TEMPLATE_PURPOSES, ensureBookingTempla
 export const whatsappRouter = Router();
 
 whatsappRouter.use(requireAuth);
+
+// واتساب CRM خدمة مدفوعة: قبل كده /api/whatsapp كله كان مفتوح لأي شركة (تدقيق أمني MSG-04).
+// المفتوح من غير اشتراك = ربط الرقم بس + رسايل الحجز/الطلبات (خدمات تانية بتستخدم نفس الربط)
+const WHATSAPP_CONNECTION_PATHS = ["/settings", "/verify", "/test-message", "/register-number", "/embedded-signup", "/disconnect", "/health", "/booking-templates", "/order-templates"];
+const whatsappCrmGate = requireModule("whatsapp");
+whatsappRouter.use((req, res, next) => {
+  if (WHATSAPP_CONNECTION_PATHS.some((p) => req.path === p || req.path.startsWith(p + "/"))) return next();
+  return whatsappCrmGate(req, res, next);
+});
 
 // دفتر جهات الاتصال (تاجز + إلغاء اشتراك) - /api/whatsapp/contact-book
 whatsappRouter.use("/contact-book", contactBookRouter);
