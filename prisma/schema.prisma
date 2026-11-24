@@ -1273,6 +1273,8 @@ model CatalogSettings {
   coverDataUrl       String?  @db.Text
   // نفس pageStyle بتاع صفحة الحجز: اللون الأساسي + الخلفية + ألوان الكروت/الكلام/الزراير
   pageStyle          Json?
+  // عدّاد أرقام الطلبات (#1، #2 ...) - بيزيد ذريًا مع كل طلب
+  orderSeq           Int      @default(0)
   updatedAt          DateTime @updatedAt
 
   @@map("catalog_settings")
@@ -1354,11 +1356,18 @@ model CatalogOrder {
   readyAt              DateTime?
   readyNotify          String?
   readyNotifyError     String?           @db.Text
+  // شاشة المطبخ (2026-11-24): رقم قصير للطلب لكل شركة (#27)، ملاحظة العميل، ومراحل التجهيز
+  // جديد (preparingAt فاضي) ← بيتحضّر (preparingAt) ← جاهز (readyAt) ← اتسلّم (completedAt)
+  orderNumber          Int?
+  note                 String?           @db.Text
+  preparingAt          DateTime?
+  completedAt          DateTime?
   createdAt            DateTime          @default(now())
 
   items OrderItem[]
 
   @@index([tenantId, branchId])
+  @@index([tenantId, createdAt])
   @@map("catalog_orders")
 }
 

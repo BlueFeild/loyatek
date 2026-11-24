@@ -18,7 +18,7 @@ import { publicMenuItem } from "./menu-pricing";
 // طريق الـ slug الفريد لكل شركة بدل التوكن.
 export const publicCatalogRouter = Router();
 
-async function findTenantBySlug(slug: string) {
+export async function findTenantBySlug(slug: string) {
   const tenant = await prisma.tenant.findUnique({ where: { slug }, include: { branches: true } });
   // الرابط العام بيشتغل بس لو الكتالوج مشترك فيه فعليًا وماكانش انتهى
   // (مش وقت التجربة المجانية) - عشان محدش يستخدم حساب تجريبي أو اشتراك
@@ -67,6 +67,7 @@ const createOrderSchema = z.object({
   // حد معقول للطلب الواحد (قبل كده الكمية كانت مفتوحة) - تدقيق COM-07
   items: z.array(z.object({ menuItemId: z.string().uuid(), quantity: z.number().int().positive().max(99) })).min(1).max(60),
   paymentMethodId: z.string().max(64).optional(),
+  note: z.string().trim().max(200).optional(),
 });
 
 // العميل الحقيقي بيبعت الطلب من هنا - بدون أي توكن، السعر بيتاخد من
@@ -84,9 +85,13 @@ publicCatalogRouter.post("/:slug/orders", async (req, res) => {
 
   const parsed = createOrderSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: zodMessage(parsed.error) });
-  if (parsed.data.mode === "DINE_IN" && !parsed.data.tableLabel) {
+  if (parsed.data.mode === "DINE_IN") {
     const cs = await getOrCreateCatalogSettings(tenant.id);
-    if (cs.tableNames.length > 0) return res.status(400).json({ error: "Please choose your table number first." });
+    if (cs.tableNames.length > 0 && !parsed.data.tableLabel) return res.status(400).json({ error: "Please choose your table number first." });
+    // الترابيزة لازم تكون من ترابيزات المحل (مش أي اسم مكتوب)
+    if (parsed.data.tableLabel && cs.tableNames.length > 0 && !cs.tableNames.includes(parsed.data.tableLabel)) {
+      return res.status(400).json({ error: "This table isn't on the list — please scan the QR on your table again." });
+    }
   }
 
   try {

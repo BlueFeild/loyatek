@@ -8,6 +8,7 @@ import { addDemoMenu, removeDemoMenu } from "./demo-menu";
 import { container } from "../../core/container";
 import { DISCOUNT_MAX_PCT, DISCOUNT_MIN_PCT } from "../../utils/discount";
 import { BOOKING_FONTS, BOOKING_TEMPLATES, COVER_MAX_CHARS, imageDataUrl, pageStyleSchema } from "../booking/page-design";
+import { kitchenOrders, setKitchenStage } from "./kitchen";
 
 export const catalogRouter = Router();
 
@@ -229,6 +230,7 @@ const createOrderSchema = z.object({
   customerPhone: z.string().min(1),
   items: z.array(z.object({ menuItemId: z.string().uuid(), quantity: z.number().int().positive() })).min(1),
   paymentMethodId: z.string().max(64).optional(),
+  note: z.string().trim().max(200).optional(),
 });
 
 catalogRouter.post("/orders",async (req, res) => {
@@ -259,6 +261,19 @@ catalogRouter.post("/orders/:id/mark-paid", requireRole("OWNER", "ADMIN", "MANAG
 // الطلب جاهز + رسالة واتساب للعميل
 catalogRouter.post("/orders/:id/ready", requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async (req, res) => {
   res.json(await container.orderReady.markReady(req.auth!.tenantId, req.params.id));
+});
+
+// --- شاشة المطبخ ---
+// الطلبات اللي وصلت المطبخ (جديد / بيتحضّر / جاهز) - أي حد في الفريق يشوفها
+catalogRouter.get("/kitchen", async (req, res) => {
+  res.json({ orders: await kitchenOrders(req.auth!.tenantId), serverTime: new Date().toISOString() });
+});
+
+// بيتحضّر / رجوع لجديد / اتسلّم - "جاهز" هي POST /orders/:id/ready (عشان رسالة الواتساب)
+catalogRouter.post("/orders/:id/stage", requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async (req, res) => {
+  const parsed = z.object({ action: z.enum(["preparing", "new", "complete"]) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Choose preparing, new or complete" });
+  res.json(await setKitchenStage(req.auth!.tenantId, req.params.id, parsed.data.action));
 });
 
 catalogRouter.get("/orders/:id/payment-status", async (req, res) => {
