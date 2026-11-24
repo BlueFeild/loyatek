@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { linktreeDesignFields } from "./linktree-design";
+import { imageDataUrlSchema } from "../../utils/image-data-url";
 
 export const linktreeRouter = Router();
 linktreeRouter.use(requireAuth);
@@ -27,7 +28,7 @@ linktreeRouter.get("/settings", async (req, res) => {
 const updateSettingsSchema = z.object({
   displayName: z.string().min(1).optional(),
   bio: z.string().optional(),
-  avatarDataUrl: z.string().nullable().optional(),
+  avatarDataUrl: imageDataUrlSchema().nullable().optional(),
   // شكل اللوجو في الصفحة (في النص دايمًا) - الفرونت بيقرا القيم بـ readAvatarStyle
   avatarStyle: z
     .object({
@@ -179,29 +180,36 @@ async function saveUploadedFile(req: Request, res: Response, meta: { label: stri
   }
 
   const tenantId = req.auth!.tenantId;
-  const existing = await prisma.linktreeLink.count({ where: { tenantId, kind: "FILE" } });
-  if (existing >= LINKTREE_MAX_FILES) {
-    return res.status(400).json({ error: `You can upload up to ${LINKTREE_MAX_FILES} files. Delete one first.` });
-  }
-  const used = await prisma.linktreeLink.aggregate({ where: { tenantId, kind: "FILE" }, _sum: { fileSize: true } });
-  if ((used._sum.fileSize ?? 0) + buffer.length > LINKTREE_MAX_TOTAL_BYTES) {
-    return res.status(413).json({ error: `Your files would go over ${LINKTREE_MAX_TOTAL_MB} MB in total. Delete a file first.` });
-  }
-
-  const maxOrder = await prisma.linktreeLink.aggregate({ where: { tenantId }, _max: { sortOrder: true } });
-  const link = await prisma.linktreeLink.create({
-    data: {
-      tenantId,
-      label,
-      url: "",
-      kind: "FILE",
-      fileName,
-      fileSize: buffer.length,
-      sortOrder: (maxOrder._max.sortOrder ?? -1) + 1,
-      file: { create: { mimeType, data: buffer } },
+  // العدد والمساحة بيتفحصوا ويتحفظ الملف تحت قفل للشركة (تدقيق COM-12): قبل كده رفعتين في نفس
+  // اللحظة كانوا بيعدّوا الحد مع بعض
+  const result = await prisma.$transaction(
+    async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"linktree-files:" + tenantId}))`;
+      const existing = await tx.linktreeLink.count({ where: { tenantId, kind: "FILE" } });
+      if (existing >= LINKTREE_MAX_FILES) return { status: 400, error: `You can upload up to ${LINKTREE_MAX_FILES} files. Delete one first.` };
+      const used = await tx.linktreeLink.aggregate({ where: { tenantId, kind: "FILE" }, _sum: { fileSize: true } });
+      if ((used._sum.fileSize ?? 0) + buffer.length > LINKTREE_MAX_TOTAL_BYTES) {
+        return { status: 413, error: `Your files would go over ${LINKTREE_MAX_TOTAL_MB} MB in total. Delete a file first.` };
+      }
+      const maxOrder = await tx.linktreeLink.aggregate({ where: { tenantId }, _max: { sortOrder: true } });
+      const link = await tx.linktreeLink.create({
+        data: {
+          tenantId,
+          label,
+          url: "",
+          kind: "FILE",
+          fileName,
+          fileSize: buffer.length,
+          sortOrder: (maxOrder._max.sortOrder ?? -1) + 1,
+          file: { create: { mimeType, data: buffer } },
+        },
+      });
+      return { status: 201, link };
     },
-  });
-  return res.status(201).json(link);
+    { timeout: 120_000, maxWait: 30_000 }
+  );
+  if (result.status !== 201) return res.status(result.status).json({ error: result.error });
+  return res.status(201).json(result.link);
 }
 
 const updateLinkSchema = z.object({

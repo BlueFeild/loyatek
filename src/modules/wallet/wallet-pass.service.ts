@@ -1,6 +1,7 @@
 import type { Request } from "express";
 import { prisma } from "../../config/db";
 import { getOrCreateWalletSettings } from "./wallet.service";
+import { publicApiBaseUrl } from "../../utils/public-url";
 import {
   GoogleRequester,
   GoogleWalletConfig,
@@ -31,11 +32,9 @@ function getRequester(cfg: GoogleWalletConfig): GoogleRequester {
 // عنوان الباك إند العام - Google لازم يقدر يفتح لينك اللوجو من النت.
 // الأفضل تحددي PUBLIC_API_BASE_URL في Railway، ولو مش موجود بنستنتجه
 // من الـ request نفسه
+// (تدقيق COM-13: مابقاش بيثق في الـ Host اللي جاي من الطلب على الإنتاج - utils/public-url.ts)
 export function publicBaseUrl(req: Request) {
-  const configured = process.env.PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, "");
-  if (configured) return configured;
-  const proto = (req.get("x-forwarded-proto") ?? req.protocol).split(",")[0];
-  return `${proto}://${req.get("host")}`;
+  return publicApiBaseUrl(req);
 }
 
 // بيعمل (أو بيحدّث) Class الشركة وObject العميل عند Google، وبيرجّع

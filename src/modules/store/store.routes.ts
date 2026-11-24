@@ -164,7 +164,12 @@ storeRouter.get("/orders", async (req, res) => {
   res.json(await svc.orders(tid(req), status));
 });
 storeRouter.get("/orders/:id", async (req, res) => res.json(await svc.order(tid(req), uuidParam(req.params.id, "Order not found"))));
-storeRouter.patch("/orders/:id", staff, async (req, res) => res.json(await svc.updateOrder(tid(req), uuidParam(req.params.id, "Order not found"), body(orderPatch, req))));
+storeRouter.patch("/orders/:id", staff, async (req, res) => {
+  const patch = body(orderPatch, req);
+  // الإلغاء بيرجّع المخزون وممكن يكون عليه فلوس مدفوعة = الإدارة بس (تدقيق COM-10). الموظف بيحدّث الحالة والتتبع
+  if (patch.status === "CANCELLED" && req.auth!.role === "STAFF") return res.status(403).json({ error: "Only managers can cancel an order" });
+  res.json(await svc.updateOrder(tid(req), uuidParam(req.params.id, "Order not found"), patch));
+});
 storeRouter.post("/orders/:id/paid", staff, async (req, res) => res.json(await svc.markPaid(tid(req), uuidParam(req.params.id, "Order not found"))));
 
 // ================= المتجر العام (من غير تسجيل دخول) =================

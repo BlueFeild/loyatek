@@ -19,6 +19,7 @@ import {
 import { parseCalendarDate } from "../../utils/calendarDate";
 import { isValidTimeZone } from "../../utils/timezone";
 import { holidaysSchema, weeklyHoursSchema } from "./opening-hours";
+import { imageDataUrlSchema } from "../../utils/image-data-url";
 
 export const bookingsRouter = Router();
 
@@ -34,7 +35,7 @@ bookingsRouter.get("/settings", async (req, res) => {
 const updateSettingsSchema = z.object({
   industry: z.string().optional(),
   brandName: z.string().optional(),
-  logoDataUrl: z.string().nullable().optional(),
+  logoDataUrl: imageDataUrlSchema().nullable().optional(),
   services: z.array(z.string()).optional(),
   // سعر كل خدمة بالدولار (الفرونت بيحوّل من عملة الشركة)
   servicePrices: z.record(z.string().max(120), z.number().min(0).max(1_000_000)).optional(),

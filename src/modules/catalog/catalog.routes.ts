@@ -8,6 +8,7 @@ import { addDemoMenu, removeDemoMenu } from "./demo-menu";
 import { container } from "../../core/container";
 import { DISCOUNT_MAX_PCT, DISCOUNT_MIN_PCT } from "../../utils/discount";
 import { BOOKING_FONTS, BOOKING_TEMPLATES, COVER_MAX_CHARS, imageDataUrl, pageStyleSchema } from "../booking/page-design";
+import { imageDataUrlSchema } from "../../utils/image-data-url";
 
 export const catalogRouter = Router();
 
@@ -34,7 +35,7 @@ catalogRouter.get("/settings", async (req, res) => {
 
 const updateSettingsSchema = z.object({
   brandName: z.string().optional(),
-  brandLogoDataUrl: z.string().nullable().optional(),
+  brandLogoDataUrl: imageDataUrlSchema().nullable().optional(),
   menuLayout: z.enum(["list", "grid", "gallery", "story"]).optional(),
   dineInEnabled: z.boolean().optional(),
   pickupEnabled: z.boolean().optional(),
@@ -102,7 +103,7 @@ catalogRouter.post("/categories", requireRole("OWNER", "ADMIN", "MANAGER"), asyn
   res.status(201).json(category);
 });
 
-const updateCategorySchema = z.object({ name: z.string().optional(), coverImageDataUrl: z.string().nullable().optional() });
+const updateCategorySchema = z.object({ name: z.string().optional(), coverImageDataUrl: imageDataUrlSchema().nullable().optional() });
 
 catalogRouter.patch("/categories/:id", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
   const parsed = updateCategorySchema.safeParse(req.body);
@@ -157,7 +158,7 @@ const updateItemSchema = z.object({
   name: z.string().optional(),
   description: z.string().optional(),
   price: z.number().min(0).optional(),
-  photoDataUrl: z.string().nullable().optional(),
+  photoDataUrl: imageDataUrlSchema().nullable().optional(),
   discountPct: discountPctField,
   discountEndsAt: discountEndsAtField,
 });

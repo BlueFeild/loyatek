@@ -58,6 +58,7 @@ import { normalizePhone, normalizeTags } from "./contact-book.service";
 import { RETARGET_GROUPS, RETARGET_LABEL, pickRetarget, summarizeCampaign } from "./campaign-report";
 import { summarizeWhatsapp } from "./analytics";
 import { BOOKING_TEMPLATE_PURPOSES, ORDER_TEMPLATE_PURPOSES, ensureBookingTemplates, ensureOrderTemplates, getApprovedBookingTemplate, type ManagedTemplatePurpose, type TemplateLang } from "./booking-templates";
+import { publicApiBaseUrl } from "../../utils/public-url";
 
 export const whatsappRouter = Router();
 
@@ -87,10 +88,9 @@ whatsappRouter.use("/health", accountHealthRouter);
 // --- Settings (ربط حساب Meta الحقيقي) ---
 
 // لينك الـ webhook العام اللي التاجر بيحطه في تطبيقه على Meta
+// (تدقيق COM-13: مابقاش بيثق في الـ Host اللي جاي من الطلب على الإنتاج - utils/public-url.ts)
 function apiBase(req: Request) {
-  if (process.env.PUBLIC_API_BASE_URL) return process.env.PUBLIC_API_BASE_URL.replace(/\/+$/, "");
-  const proto = (req.header("x-forwarded-proto") || req.protocol).split(",")[0].trim();
-  return `${proto}://${req.get("host")}`;
+  return publicApiBaseUrl(req);
 }
 
 // كل تاجر ليه لينك webhook سري + Verify Token (بيتعملوا أول مرة بس)

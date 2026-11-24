@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { SOCIAL_LIMITS } from "./social-types";
 import { AD_GENDERS, AD_LIMITS, AD_OBJECTIVES } from "./ads-types";
+import { imageDataUrlSchema } from "../../utils/image-data-url";
 
 // شكل البيانات اللي جاية من الشاشة (الـ controller بيتأكد منها قبل الخدمة)
 
@@ -45,7 +46,7 @@ export const rescheduleSchema = z.object({ scheduledAt: z.coerce.date() });
 // إعدادات التقرير الشهري
 export const reportSettingsSchema = z.object({
   brandName: z.string().trim().max(80).nullable().optional(),
-  logoDataUrl: z.string().max(400_000).nullable().optional(),
+  logoDataUrl: imageDataUrlSchema(400_000).nullable().optional(),
   accentColor: z.string().trim().max(7).nullable().optional(),
   hidePlatformName: z.boolean().optional(),
   recipients: z.array(z.string().trim().max(200)).max(10).optional(),

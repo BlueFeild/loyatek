@@ -13,6 +13,7 @@ import {
   scanByCode,
 } from "./wallet-scan.service";
 import { queuePassSync } from "./wallet-pass.service";
+import { imageDataUrlSchema } from "../../utils/image-data-url";
 
 export const walletRouter = Router();
 
@@ -43,12 +44,12 @@ const updateSettingsSchema = z.object({
   allowOverrides: z.boolean().optional(),
   cardLayout: z.enum(["classic", "minimal", "badge", "split"]).optional(),
   themeColor: z.string().optional(),
-  logoDataUrl: z.string().nullable().optional(),
+  logoDataUrl: imageDataUrlSchema().nullable().optional(),
   centerLabel: z.string().optional(),
-  centerIconDataUrl: z.string().nullable().optional(),
+  centerIconDataUrl: imageDataUrlSchema().nullable().optional(),
   // أيقونة أو أكتر مفصولة بمسافة ("☕ ❤") - بتتبادل على الكارت
   stampGlyph: z.string().max(200).optional(),
-  stampIconDataUrl: z.string().nullable().optional(),
+  stampIconDataUrl: imageDataUrlSchema().nullable().optional(),
   // صور الأختام المرفوعة (PNG/JPEG صغيرة بيعملها الفرونت) - حد أقصى 6
   stampIconImages: z
     .array(z.object({ id: z.string().regex(/^[a-z0-9]{1,16}$/i), dataUrl: z.string().regex(/^data:image\/(png|jpeg);base64,/).max(400_000) }))
@@ -58,7 +59,7 @@ const updateSettingsSchema = z.object({
   centerRingColor: z.string().optional(),
   centerInnerGlow: z.boolean().optional(),
   showDecorCircles: z.boolean().optional(),
-  decorCircles: z.array(z.object({ label: z.string(), image: z.string().nullable() })).optional(),
+  decorCircles: z.array(z.object({ label: z.string().max(40), image: imageDataUrlSchema(600_000).nullable() })).max(12).optional(),
   termsText: z.string().optional(),
 });
 
