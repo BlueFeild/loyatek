@@ -10,13 +10,17 @@ import { startSeatReminderScheduler } from "./jobs/seat-reminders";
 import { startWhatsappSequenceScheduler } from "./jobs/whatsapp-sequences";
 import { startSmsScheduler } from "./jobs/sms-scheduler";
 import { startBookingPaymentExpiryScheduler } from "./jobs/booking-payment-expiry";
-import { prisma } from "./config/db";
+import { prisma, sealLegacyWhatsappSecrets } from "./config/db";
 import { isShuttingDown, markShuttingDown } from "./utils/shutdown";
 
 const PORT = process.env.PORT || 4000;
 
 const server = app.listen(PORT, () => {
   console.log(`ERP Kernel backend running on http://localhost:${PORT}`);
+  // توكنات واتساب القديمة (نص عادي) تتشفّر مرة واحدة (تدقيق MSG-08)
+  sealLegacyWhatsappSecrets()
+    .then((n) => n && console.log(`[db] encrypted ${n} stored WhatsApp secrets`))
+    .catch((err) => console.warn(`[db] encrypting stored WhatsApp secrets failed: ${(err as Error).message}`));
   // تذكير واتساب قبل مواعيد الحجز (كل 5 دقايق) - DISABLE_REMINDERS=1 يقفله
   startBookingReminderScheduler(Number(process.env.REMINDER_INTERVAL_MS) || undefined);
   // أسعار الصرف من الإنترنت كل 12 ساعة - DISABLE_RATE_REFRESH=1 يقفلها

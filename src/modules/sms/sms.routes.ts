@@ -26,9 +26,10 @@ smsRouter.get("/settings", async (req, res) => {
   res.json(await smsService.settings(req.auth!.tenantId));
 });
 
-smsRouter.patch("/settings", requireRole("OWNER", "ADMIN"), async (req, res) => {
-  const { senderName } = parse(z.object({ senderName: z.string().max(40).nullable() }), req.body);
-  res.json(await smsService.updateSender(req.auth!.tenantId, senderName));
+// اسم المرسل (اللي بيظهر بدل الرقم) بيتسجّل من BlueField بس (تدقيق MSG-12): الحساب مشترك بين كل
+// الشركات، فلو أي تاجر كتب اسم زي "QNB" أو "MOI" كان ممكن ينتحل جهة تانية. التاجر بيطلبه من الدعم
+smsRouter.patch("/settings", requireRole("OWNER", "ADMIN"), (_req, res) => {
+  res.status(403).json({ error: "Your sender name is registered by BlueField — please contact us to set it.", code: "SENDER_BY_BLUEFIELD" });
 });
 
 const sendSchema = z.object({ to: z.string().min(1).max(40), body: z.string().min(1).max(SMS_BODY_MAX) });
@@ -111,6 +112,13 @@ export const adminSmsRouter = Router();
 adminSmsRouter.use(requireAuth, requireSuperAdmin);
 
 adminSmsRouter.get("/:tenantId", async (req, res) => {
+  res.json(await smsService.adminView(req.params.tenantId));
+});
+
+// السوبر أدمن بيسجّل اسم المرسل للشركة (بعد ما يتأكد إنه اسمها فعلًا) - null = يتشال
+adminSmsRouter.patch("/:tenantId/sender", async (req, res) => {
+  const { senderName } = parse(z.object({ senderName: z.string().max(40).nullable() }), req.body);
+  await smsService.updateSender(req.params.tenantId, senderName);
   res.json(await smsService.adminView(req.params.tenantId));
 });
 

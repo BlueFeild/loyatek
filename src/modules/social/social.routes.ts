@@ -124,7 +124,10 @@ socialRouter.get("/report", async (req, res) => {
 });
 
 socialRouter.get("/report/settings", async (req, res) => {
-  res.json(await socialReportService.settings(req.auth!.tenantId));
+  const settings = await socialReportService.settings(req.auth!.tenantId);
+  // لينك المشاركة العام (أي حد معاه يشوف التقرير) للإدارة بس (تدقيق MSG-09)
+  if (!["OWNER", "ADMIN", "MANAGER"].includes(req.auth!.role)) return res.json({ ...settings, shareToken: null, recipients: [] });
+  res.json(settings);
 });
 
 socialRouter.patch("/report/settings", canConnect, async (req, res) => {

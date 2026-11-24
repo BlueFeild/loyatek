@@ -105,6 +105,8 @@ async function ensureWebhookKeys(tenantId: string) {
 }
 
 // مفيش أي سر بيرجع للفرونت إند (لا الـ token ولا الـ App Secret) - بس حالة الربط
+const canManageConnection = (req: Request) => ["OWNER", "ADMIN"].includes(req.auth?.role ?? "");
+
 function settingsView(s: Awaited<ReturnType<typeof getOrCreateWhatsappSettings>>, req: Request) {
   return {
     isConnected: s.isConnected,
@@ -120,8 +122,9 @@ function settingsView(s: Awaited<ReturnType<typeof getOrCreateWhatsappSettings>>
     verifiedName: s.verifiedName,
     lastVerifiedAt: s.lastVerifiedAt,
     lastVerifyError: s.lastVerifyError,
-    webhookUrl: s.webhookKey ? `${apiBase(req)}/api/public/whatsapp/webhook/${s.webhookKey}` : null,
-    webhookVerifyToken: s.webhookVerifyToken,
+    // رابط الـ webhook وكلمة التحقق بتوعه للمالك/الأدمن بس (تدقيق MSG-09)
+    webhookUrl: s.webhookKey && canManageConnection(req) ? `${apiBase(req)}/api/public/whatsapp/webhook/${s.webhookKey}` : null,
+    webhookVerifyToken: canManageConnection(req) ? s.webhookVerifyToken : null,
     lastWebhookAt: s.lastWebhookAt,
     botEnabled: s.botEnabled,
     botFallbackReply: s.botFallbackReply,
@@ -472,6 +475,9 @@ whatsappRouter.post("/conversations/:phone/template", requireRole("OWNER", "ADMI
   const phone = req.params.phone.replace(/[^\d]/g, "");
   if (phone.length < 7 || phone.length > 15) return res.status(400).json({ error: "Enter the number with country code, e.g. 97455551234" });
   const tenantId = req.auth!.tenantId;
+  // العميل اللي كتب STOP مايتبعتلوش رسالة معتمدة من هنا كمان (تدقيق MSG-10) - زي الحملات
+  const optedOut = await prisma.whatsappContact.findFirst({ where: { tenantId, phone, optedOut: true }, select: { id: true } });
+  if (optedOut) return res.status(409).json({ error: "This customer asked not to get messages (they sent STOP). They can write START to subscribe again.", code: "OPTED_OUT" });
   const sender = await container.whatsappNumbers.senderFor(tenantId, { customerPhone: phone, numberId: typeof req.body?.numberId === "string" ? req.body.numberId : null });
   if (!sender) return res.status(400).json({ error: "Connect WhatsApp first." });
 
