@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db";
 import type { Recipient } from "./sms-text";
+import { openTenantIds } from "../../utils/account-access";
 
 // كل كلام قاعدة البيانات لخدمة الـ SMS هنا بس (الخدمة بتكلّم الواجهة SmsStore)
 export type CreditReason = "GRANT" | "SEND" | "REFUND" | "SUBSCRIPTION" | "TRIAL";
@@ -283,8 +284,11 @@ export class PrismaSmsStore implements SmsStore {
     return r.count > 0;
   }
 
-  dueCampaigns(now: Date, take: number) {
-    return prisma.smsCampaign.findMany({ where: { status: "SCHEDULED", scheduledAt: { lte: now } }, orderBy: { scheduledAt: "asc" }, take, select: { id: true, tenantId: true } });
+  async dueCampaigns(now: Date, take: number) {
+    // شركة موقوفة/مؤرشفة: الحملة بتستنى لحد ما الحساب يرجع (تدقيق MSG-05)
+    const due = await prisma.smsCampaign.findMany({ where: { status: "SCHEDULED", scheduledAt: { lte: now } }, orderBy: { scheduledAt: "asc" }, take: take * 4, select: { id: true, tenantId: true } });
+    const open = await openTenantIds(due.map((d) => d.tenantId));
+    return due.filter((d) => open.has(d.tenantId)).slice(0, take);
   }
 
   async claimStale(id: string, before: Date) {

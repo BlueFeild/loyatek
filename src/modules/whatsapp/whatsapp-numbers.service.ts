@@ -3,6 +3,7 @@ import { NotFoundError, ValidationError } from "../../core/errors";
 import { assertTenantOwns } from "../../utils/tenant-owned";
 import { decryptToken, encryptToken } from "../social/token-crypto";
 import { verifyWhatsappConnection } from "./whatsapp.service";
+import { NUMBER_TAKEN_MESSAGE, phoneNumberTakenElsewhere } from "./number-ownership";
 
 // أكتر من رقم واتساب لنفس الشركة (رقم لكل فرع مثلًا). الرقم الأساسي فاضل زي ما هو في WhatsappSettings،
 // والأرقام الإضافية هنا. القاعدة: الرد بيطلع من نفس الرقم اللي العميل كتب عليه
@@ -134,6 +135,7 @@ export class WhatsappNumbersService {
     if ((await this.db.whatsappNumber.count({ where: { tenantId } })) >= MAX_EXTRA_NUMBERS) throw new ValidationError(`You can add up to ${MAX_EXTRA_NUMBERS} extra numbers.`);
     if (await this.db.whatsappNumber.count({ where: { tenantId, phoneNumberId: input.phoneNumberId } })) throw new ValidationError("This number is already added.");
     if (input.branchId) await this.ownBranch(tenantId, input.branchId);
+    if (await phoneNumberTakenElsewhere(tenantId, input.phoneNumberId, this.db)) throw new ValidationError(NUMBER_TAKEN_MESSAGE);
     const ownToken = input.accessToken?.trim() || null;
     const v = await this.check(tenantId, input.phoneNumberId, input.wabaId, ownToken ?? main?.metaAccessToken ?? null);
     const row = await this.db.whatsappNumber.create({
@@ -157,6 +159,10 @@ export class WhatsappNumbersService {
     const row = await this.db.whatsappNumber.findFirst({ where: { id, tenantId } });
     if (!row) throw new NotFoundError("Number not found");
     const main = await this.main(tenantId);
+    if (await phoneNumberTakenElsewhere(tenantId, row.phoneNumberId, this.db)) {
+      await this.db.whatsappNumber.update({ where: { id }, data: { isConnected: false, lastError: NUMBER_TAKEN_MESSAGE } });
+      return { verified: false, error: NUMBER_TAKEN_MESSAGE };
+    }
     const v = await this.check(tenantId, row.phoneNumberId, row.wabaId, this.tokenOf(row, main?.metaAccessToken));
     await this.db.whatsappNumber.update({
       where: { id },

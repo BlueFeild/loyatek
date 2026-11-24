@@ -101,6 +101,8 @@ export const EDITABLE_STATUSES = ["DRAFT", "SCHEDULED", "FAILED"];
 
 export interface SocialStore {
   upsertAccounts(tenantId: string, userId: string | null, accounts: DiscoveredAccount[]): Promise<void>;
+  // الحسابات دي (صفحة/انستجرام/...) متوصّلة وشغّالة في شركة تانية؟ بيرجّع externalIds بتاعتها (تدقيق MSG-07)
+  activeElsewhere?(tenantId: string, accounts: { platform: string; externalId: string }[]): Promise<string[]>;
   listAccounts(tenantId: string): Promise<AccountView[]>;
   accountsByIds(tenantId: string, ids: string[]): Promise<{ id: string; platform: string; status: string }[]>;
   accountForPublish(id: string): Promise<AccountForPublish | null>;
@@ -169,6 +171,15 @@ function toView(p: any): PostView {
 // الوصول لقاعدة البيانات بس - مفيش منطق هنا. كل حاجة بشركة صاحب الطلب
 export class PrismaSocialRepository implements SocialStore {
   constructor(private readonly db: PrismaClient) {}
+
+  async activeElsewhere(tenantId: string, accounts: { platform: string; externalId: string }[]) {
+    if (!accounts.length) return [];
+    const rows = await this.db.socialAccount.findMany({
+      where: { tenantId: { not: tenantId }, status: "ACTIVE", OR: accounts.map((a) => ({ platform: a.platform as never, externalId: a.externalId })) },
+      select: { externalId: true },
+    });
+    return rows.map((r) => r.externalId);
+  }
 
   async upsertAccounts(tenantId: string, userId: string | null, accounts: DiscoveredAccount[]) {
     await this.db.$transaction(

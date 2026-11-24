@@ -60,12 +60,21 @@ export class SocialAccountService {
     return this.store.listAccounts(tenantId);
   }
 
-  private save(tenantId: string, userId: string | null, found: DiscoveredAccount[]) {
-    return this.store.upsertAccounts(
+  // صفحة/حساب متوصّل في شركة تانية مابيتوصّلش هنا (تدقيق MSG-07): الرسايل والتعليقات بتتوجّه لشركة
+  // واحدة بس، فقبل كده آخر شركة توصّل الصفحة كانت بتسحب رسايل العملاء من الشركة الأولى
+  private async save(tenantId: string, userId: string | null, found: DiscoveredAccount[]) {
+    const taken = new Set(this.store.activeElsewhere ? await this.store.activeElsewhere(tenantId, found) : []);
+    const mine = found.filter((a) => !taken.has(a.externalId));
+    const skipped = found.filter((a) => taken.has(a.externalId));
+    if (!mine.length && skipped.length) {
+      throw new AppError(409, "ACCOUNT_CONNECTED_ELSEWHERE", "This account is already connected to another BlueField company. Disconnect it there first, or contact BlueField.");
+    }
+    await this.store.upsertAccounts(
       tenantId,
       userId,
-      found.map((a) => ({ ...a, accessToken: encryptToken(a.accessToken), refreshToken: a.refreshToken ? encryptToken(a.refreshToken) : null }))
+      mine.map((a) => ({ ...a, accessToken: encryptToken(a.accessToken), refreshToken: a.refreshToken ? encryptToken(a.refreshToken) : null }))
     );
+    return { saved: mine, skipped };
   }
 
   async connectMeta(tenantId: string, userId: string | null, login: { code: string } | { accessToken: string }) {
@@ -74,11 +83,11 @@ export class SocialAccountService {
     if (found.length === 0) {
       throw new AppError(422, "NO_PAGES", "No Facebook Page was shared — press Connect again and tick your Page (and its Instagram account) in the Meta window.");
     }
-    await this.save(tenantId, userId, found);
+    const { saved, skipped } = await this.save(tenantId, userId, found);
     if (connection && this.opts.adsAuth) await this.opts.adsAuth.saveConnection(tenantId, userId, connection.userToken, connection.userTokenExpiresAt);
     // التعليقات والرسايل الجديدة توصل لوحدها (لو فشل، زرار "Check for new" بيجيبها)
     if (this.meta.subscribePage) {
-      for (const p of found.filter((a) => a.platform === "FACEBOOK")) {
+      for (const p of saved.filter((a) => a.platform === "FACEBOOK")) {
         await this.meta.subscribePage(p.externalId, p.accessToken).catch((err) => console.warn(`[social] subscribing page ${p.externalId} to webhooks failed: ${(err as Error).message}`));
       }
     }
@@ -86,9 +95,13 @@ export class SocialAccountService {
     const hasInstagram = found.some((a) => a.platform === "INSTAGRAM");
     return {
       accounts,
-      connected: found.length,
+      connected: saved.length,
       // الصفحة متربطة بس من غير انستجرام بيزنس → نقول للتاجر يربطه من إعدادات الصفحة
-      warning: hasInstagram ? null : "No Instagram business account is linked to these Pages. Link it in Instagram (Settings → Account type → Business) and connect again.",
+      warning: skipped.length
+        ? `Not connected (already connected to another BlueField company): ${skipped.map((a) => a.name).join(", ")}`
+        : hasInstagram
+          ? null
+          : "No Instagram business account is linked to these Pages. Link it in Instagram (Settings → Account type → Business) and connect again.",
     };
   }
 

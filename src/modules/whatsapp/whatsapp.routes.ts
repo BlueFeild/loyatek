@@ -59,6 +59,7 @@ import { RETARGET_GROUPS, RETARGET_LABEL, pickRetarget, summarizeCampaign } from
 import { summarizeWhatsapp } from "./analytics";
 import { BOOKING_TEMPLATE_PURPOSES, ORDER_TEMPLATE_PURPOSES, ensureBookingTemplates, ensureOrderTemplates, getApprovedBookingTemplate, type ManagedTemplatePurpose, type TemplateLang } from "./booking-templates";
 import { publicApiBaseUrl } from "../../utils/public-url";
+import { NUMBER_TAKEN_MESSAGE, phoneNumberTakenElsewhere } from "./number-ownership";
 
 export const whatsappRouter = Router();
 
@@ -132,6 +133,9 @@ async function runVerify(tenantId: string) {
   const s = await getOrCreateWhatsappSettings(tenantId);
   if (!s.metaAccessToken || !s.metaPhoneNumberId) {
     return prisma.whatsappSettings.update({ where: { tenantId }, data: { isConnected: false, lastVerifyError: "Add the access token and phone number ID first." } });
+  }
+  if (await phoneNumberTakenElsewhere(tenantId, s.metaPhoneNumberId)) {
+    return prisma.whatsappSettings.update({ where: { tenantId }, data: { isConnected: false, lastVerifyError: NUMBER_TAKEN_MESSAGE } });
   }
   const v = await verifyWhatsappConnection(s.metaAccessToken, s.metaPhoneNumberId, s.metaWabaId);
   return prisma.whatsappSettings.update({

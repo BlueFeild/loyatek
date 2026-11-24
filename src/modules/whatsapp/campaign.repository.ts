@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { recordWhatsappMessage } from "./whatsapp.service";
+import { openTenantIds } from "../../utils/account-access";
 
 // اللي خدمة إرسال الحملات محتاجاه من التخزين (Prisma أو نسخة في الذاكرة للاختبار)
 
@@ -141,8 +142,11 @@ export class PrismaCampaignRepository implements CampaignStore {
     return r.count === 1;
   }
 
-  dueScheduled(now: Date, limit: number) {
-    return this.db.whatsappCampaign.findMany({ where: { status: "SCHEDULED", scheduledAt: { lte: now } }, orderBy: { scheduledAt: "asc" }, take: limit, select: { id: true, tenantId: true } });
+  // شركة موقوفة/مؤرشفة: حملتها المجدولة بتستنى (ماتتبعتش) لحد ما الحساب يرجع (تدقيق MSG-05)
+  async dueScheduled(now: Date, limit: number) {
+    const due = await this.db.whatsappCampaign.findMany({ where: { status: "SCHEDULED", scheduledAt: { lte: now } }, orderBy: { scheduledAt: "asc" }, take: limit * 4, select: { id: true, tenantId: true } });
+    const open = await openTenantIds(due.map((d: { tenantId: string }) => d.tenantId));
+    return due.filter((d: { tenantId: string }) => open.has(d.tenantId)).slice(0, limit);
   }
 
   async markFailed(id: string, error: string) {

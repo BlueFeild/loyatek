@@ -97,3 +97,12 @@ export async function actorStillAllowed(actorId: string, tenantId: string, kind:
   actorCache.set(key, { at: Date.now(), ok });
   return ok;
 }
+
+// الشركات المفتوحة من اللستة دي (مش موقوفة ولا مؤرشفة) - الـ jobs المجدولة (حملات واتساب/SMS)
+// ماتبعتش باسم شركة اتقفلت (تدقيق MSG-05)
+export async function openTenantIds(ids: string[]): Promise<Set<string>> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return new Set();
+  const tenants = await prisma.tenant.findMany({ where: { id: { in: unique } }, select: { id: true, accountStatus: true, isPlatformOwner: true } });
+  return new Set(tenants.filter((t) => isAccountOpen(t)).map((t) => t.id));
+}
