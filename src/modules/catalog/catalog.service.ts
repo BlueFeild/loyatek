@@ -13,6 +13,7 @@ import { emitEvent } from "../integrations/events";
 import { orderEventData } from "../integrations/event-data";
 import { assertTenantOwns } from "../../utils/tenant-owned";
 import { zeroOnUniqueClash } from "../../utils/prisma-errors";
+import { nextOrderNumber } from "./kitchen";
 
 export async function getOrCreateCatalogSettings(tenantId: string) {
   const existing = await prisma.catalogSettings.findUnique({ where: { tenantId } });
@@ -75,12 +76,14 @@ interface CreateOrderInput {
   items: OrderItemInput[];
   redirectionUrlBase?: string;
   paymentMethodId?: string;
+  // ملاحظة العميل للمطبخ ("من غير بصل") - بتظهر على شاشة المطبخ
+  note?: string;
 }
 
 // إشعار داخلي حقيقي للمطعم إن أوردر جديد وصل - بيظهر فورًا لو الدفع مش
 // مفعّل، أو بس بعد ما الدفع الحقيقي يتأكد لو مفعّل (عشان المطبخ ميبدأش
 // يجهّز أوردر لسه ما اتدفعش)
-async function notifyNewOrder(order: { id: string; customerName: string; customerPhone?: string | null; mode: string; tableLabel: string | null; totalAmount: any; items: { id: string; name?: string; quantity?: number }[] }, tenantId: string) {
+async function notifyNewOrder(order: { id: string; orderNumber?: number | null; note?: string | null; customerName: string; customerPhone?: string | null; mode: string; tableLabel: string | null; totalAmount: any; items: { id: string; name?: string; quantity?: number }[] }, tenantId: string) {
   const modeLabel = order.mode === "DINE_IN" ? (order.tableLabel ? `Table ${order.tableLabel}` : "Dine-in") : "Pickup";
   const settings = await getOrCreateCatalogSettings(tenantId);
   // الإجمالي متخزن بالدولار - بيتعرض بعملة الشركة ("QAR 25.00")
@@ -94,7 +97,7 @@ async function notifyNewOrder(order: { id: string; customerName: string; custome
     link: "/catalog",
   });
 
-  const items = order.items.map((i) => `${i.quantity ?? 1}× ${i.name ?? ""}`).join("\n");
+  const items = order.items.map((i) => `${i.quantity ?? 1}× ${i.name ?? ""}`).join("\n") + (order.note ? "\n📝 " + order.note : "");
 
   // إيميل للتاجر (Merchant email في إعدادات المنيو) - لو Resend متظبط في Railway
   if (isValidEmail(settings.merchantEmail)) {
@@ -112,6 +115,7 @@ async function notifyNewOrder(order: { id: string; customerName: string; custome
     const wa = await getOrCreateWhatsappSettings(tenantId);
     if (!(wa.isConnected && wa.metaAccessToken && wa.metaPhoneNumberId)) return;
     const vars = {
+      number: order.orderNumber ? `#${order.orderNumber}` : "",
       name: order.customerName,
       mode: modeLabel,
       items,
@@ -177,10 +181,13 @@ async function createOrderInner(input: CreateOrderInput) {
     if (!method) throw new Error("Please choose one of the available payment methods.");
   }
 
+  const orderNumber = await nextOrderNumber(input.tenantId);
   const order = await prisma.catalogOrder.create({
     data: {
       tenantId: input.tenantId,
       branchId: input.branchId,
+      orderNumber,
+      note: input.note?.trim().slice(0, 200) || null,
       mode: input.mode,
       tableLabel: input.tableLabel,
       readyTime: input.readyTime,
