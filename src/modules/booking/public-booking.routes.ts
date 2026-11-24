@@ -17,6 +17,7 @@ import { zodMessage } from "../../utils/validation";
 import { openHoursForDay } from "./opening-hours";
 import { SlidingWindowLimiter, envNumber } from "../../utils/rate-limit";
 import { clientIp } from "../../utils/visitor-country";
+import { payerView } from "../../utils/payer-view";
 
 // حد للحجوزات العامة لكل جهاز (تدقيق COM-02): قبل كده أي حد كان يقدر يحجز كل المواعيد بسكريبت
 const bookingLimiter = new SlidingWindowLimiter(envNumber("PUBLIC_BOOKINGS_PER_10MIN", 10), 10 * 60_000);
@@ -164,13 +165,13 @@ publicBookingRouter.get("/:slug/bookings/:id/payment-status", async (req, res) =
   if (booking.paymentStatus === "AWAITING_PAYMENT" && (paymentId || booking.paymentMethodType === "SKIPCASH")) {
     try {
       const updated = await confirmBookingPaymentIfPaid(booking.id, paymentId);
-      return res.json(updated);
+      return res.json(payerView(updated));
     } catch (err: any) {
       return res.status(400).json({ error: err.message });
     }
   }
 
-  res.json(booking);
+  res.json(payerView(booking));
 });
 
 // كان فيه "حجوزاتي برقم التليفون" من غير أي تحقق: أي حد يكتب آخر 8 أرقام من رقم عميل

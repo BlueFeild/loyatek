@@ -17,6 +17,7 @@ import { bookingNeedsWaLogin } from "../wa-login/wa-login.routes";
 import { WaLoginService } from "../wa-login/wa-login.service";
 import { clientIp } from "../../utils/visitor-country";
 import { ValidationError } from "../../core/errors";
+import { payerView } from "../../utils/payer-view";
 
 // الراوترات بس: تتأكد من البيانات (zod) وتنادي الخدمة - المنطق في seat-booking.service.ts
 const svc = () => container.seats;
@@ -78,7 +79,8 @@ seatsRouter.post("/events/:id/sell", door, async (req, res) => {
 });
 seatsRouter.post("/events/:id/dates", editors, async (req, res) => res.status(201).json(await admin().addDates(req.auth!.tenantId, req.params.id, body(datesInput, req))));
 seatsRouter.get("/events/:id/report", async (req, res) => res.json(await admin().report(req.auth!.tenantId, req.params.id)));
-seatsRouter.get("/events/:id/orders.csv", async (req, res) => {
+// قايمة المشترين (أسماء وتليفونات وإيميلات) = الإدارة بس (تدقيق COM-11)
+seatsRouter.get("/events/:id/orders.csv", editors, async (req, res) => {
   const csv = await admin().ordersCsv(req.auth!.tenantId, req.params.id);
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", 'attachment; filename="tickets.csv"');
@@ -218,5 +220,5 @@ publicSeatsRouter.post("/:slug/orders/:id/checkout", async (req, res) => {
 publicSeatsRouter.get("/:slug/orders/:id/payment-status", async (req, res) => {
   const tenant = await tenantBySlug(req.params.slug);
   if (!tenant) return res.status(404).json({ error: "Page not found" });
-  res.json(await svc().confirmPayment(tenant.id, req.params.id, (req.query.paymentId as string | undefined) || undefined));
+  res.json(payerView(await svc().confirmPayment(tenant.id, req.params.id, (req.query.paymentId as string | undefined) || undefined)));
 });

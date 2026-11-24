@@ -17,8 +17,11 @@ paymentSettingsRouter.use(requireAuth);
 paymentSettingsRouter.get("/", async (req, res) => {
   const settings = await getOrCreateTenantPaymentSettings(req.auth!.tenantId);
   const skipcash = await container.skipcash.merchantStatus(req.auth!.tenantId);
-  // ميرجعش المفتاح كامل للفرونت إند - بس آخر 4 حروف عشان يتأكد إنه محفوظ
-  res.json({
+  // ميرجعش المفتاح كامل للفرونت إند - بس آخر 4 حروف عشان يتأكد إنه محفوظ.
+  // الموظف (STAFF) بيشوف أسماء طرق الدفع وبيانات التحويل بس - من غير لينكات الدفع ورابط الـ webhook
+  // وأجزاء المفاتيح (تدقيق COM-11)
+  const manager = ["OWNER", "ADMIN", "MANAGER"].includes(req.auth!.role);
+  const body = {
     // SkipCash: متوصّل ولا لأ + آخر 4 من Key ID + رابط الـ webhook (مفيش أي مفتاح بيرجع)
     skipcash: {
       connected: skipcash.connected,
@@ -34,6 +37,14 @@ paymentSettingsRouter.get("/", async (req, res) => {
     customPaymentUrl: settings.customPaymentUrl,
     hasMyFatoorahKey: Boolean(settings.myFatoorahApiKey),
     methods: resolvePaymentMethods(settings),
+  };
+  if (manager) return res.json(body);
+  res.json({
+    ...body,
+    skipcash: { connected: body.skipcash.connected, isTest: body.skipcash.isTest, keyPreview: null, webhookUrl: null },
+    keyPreview: null,
+    customPaymentUrl: null,
+    methods: body.methods.map(({ url: _url, ...m }) => m),
   });
 });
 

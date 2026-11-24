@@ -12,6 +12,7 @@ import { clientIp } from "../../utils/visitor-country";
 
 const menuOrderLimiter = new SlidingWindowLimiter(envNumber("MENU_ORDERS_PER_10MIN", 20), 10 * 60_000);
 import { publicMenuItem } from "./menu-pricing";
+import { payerView } from "../../utils/payer-view";
 
 // راوتر عام بالكامل - مفيهوش requireAuth خالص، لأن العميل اللي بيسكان
 // الـ QR على الترابيزة معندوش حساب ولا هيسجّل دخول. العزل هنا بيتم عن
@@ -117,11 +118,11 @@ publicCatalogRouter.get("/:slug/orders/:id/payment-status", async (req, res) => 
   if (order.paymentStatus === "AWAITING_PAYMENT" && (paymentId || order.paymentMethodType === "SKIPCASH")) {
     try {
       const updated = await confirmOrderPaymentIfPaid(order.id, paymentId);
-      return res.json(updated);
+      return res.json(payerView(updated as Record<string, unknown>));
     } catch (err: any) {
       return res.status(400).json({ error: err.message });
     }
   }
 
-  res.json(order);
+  res.json(payerView(order));
 });
