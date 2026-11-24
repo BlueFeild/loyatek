@@ -7,6 +7,7 @@ import { container } from "../../core/container";
 import { grantIncludedAiCredits } from "../ai/ai-subscription";
 import { grantIncludedSms } from "../sms/sms-subscription";
 import { getPlatformConfig } from "../../utils/platform-config";
+import { zeroOnUniqueClash } from "../../utils/prisma-errors";
 
 // تفعيل طلب اشتراك: بيتنادى أوتوماتيك أول ما الدفع يتأكد من البوابة (SkipCash / MyFatoorah)، أو
 // يدويًا من السوبر أدمن (طلبات اتدفعت بره البوابة مثلًا). نفس المنطق للاتنين
@@ -88,10 +89,17 @@ export async function syncOrderPayment(orderId: string) {
   if (check.invoiceId && check.invoiceId !== String(order.myFatoorahInvoiceId)) return { status: order.status, gateway: "MyFatoorah answered about a different invoice" };
   if (!check.paid) return { status: order.status, gateway: check.status || "unknown" };
   if (order.status === "PENDING") {
-    await prisma.subscriptionOrder.updateMany({
-      where: { id: order.id, status: "PENDING" },
-      data: { status: "PAID", ...(check.paymentId ? { myFatoorahPaymentId: check.paymentId } : {}) },
-    });
+    // رقم الدفعة unique (تدقيق PAY-01): لو اتستخدم لطلب تاني مانفعّلش
+    const claimed = await zeroOnUniqueClash(
+      prisma.subscriptionOrder.updateMany({
+        where: { id: order.id, status: "PENDING" },
+        data: { status: "PAID", ...(check.paymentId ? { myFatoorahPaymentId: check.paymentId } : {}) },
+      })
+    );
+    if (claimed.count === 0) {
+      const now = await prisma.subscriptionOrder.findUnique({ where: { id: order.id }, select: { status: true } });
+      if (now?.status !== "PAID") return { status: now?.status ?? order.status, gateway: "payment already used for another order" };
+    }
   }
   await activateSubscriptionOrder(order.id);
   return { status: "ACTIVATED", gateway: check.status };

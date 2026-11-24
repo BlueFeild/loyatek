@@ -290,10 +290,25 @@ export async function verifyTenantGatewayPayment(
     const r = await skipcash.check(creds, { paymentId: entity.invoiceId });
     return { paid: r.ok && r.paid, paymentId: entity.invoiceId };
   }
-  if (!paymentIdFromQuery) return { paid: false, paymentId: null };
-  const check = await checkTenantMyFatoorahPaymentStatus(tenantId, paymentIdFromQuery);
-  const ok = check.paid && paymentInvoiceMatch(check.raw, entity.invoiceId) !== "mismatch";
-  return { paid: ok, paymentId: paymentIdFromQuery };
+  // تدقيق PAY-01: رقم الدفع اللي في الرابط بيتقبل بس لو MyFatoorah قالت إنه بتاع فاتورتنا ("match").
+  // لو الرد مافيهوش رقم فاتورة، أو مفيش paymentId خالص (مثلًا من job انتهاء المهلة)، بنسأل برقم الفاتورة نفسها
+  if (paymentIdFromQuery) {
+    const check = await checkTenantMyFatoorahPaymentStatus(tenantId, paymentIdFromQuery);
+    const match = paymentInvoiceMatch(check.raw, entity.invoiceId);
+    if (check.paid && (match === "match" || (match === "unknown" && !entity.invoiceId))) return { paid: true, paymentId: paymentIdFromQuery };
+    if (match === "mismatch") return { paid: false, paymentId: null };
+  }
+  if (!entity.invoiceId) return { paid: false, paymentId: null };
+  const inv = await checkTenantInvoice(tenantId, entity.invoiceId);
+  if (!inv.paid || (inv.invoiceId && inv.invoiceId !== String(entity.invoiceId))) return { paid: false, paymentId: null };
+  return { paid: true, paymentId: inv.paymentId ?? paymentIdFromQuery ?? `invoice-${entity.invoiceId}` };
+}
+
+// للتاجر: فاتورته دي (اللي إحنا عاملينها) اتدفعت؟ بمفتاح التاجر نفسه
+export async function checkTenantInvoice(tenantId: string, invoiceId: string) {
+  const settings = await getOrCreateTenantPaymentSettings(tenantId);
+  if (!settings.myFatoorahApiKey) return { status: "", paid: false, invoiceId: null, paymentId: null, error: "Payment gateway is not connected", raw: null };
+  return getPaymentStatusV2({ apiKey: settings.myFatoorahApiKey, isTest: settings.myFatoorahIsTest }, invoiceId, "InvoiceId");
 }
 
 export { getPlatformSettings };

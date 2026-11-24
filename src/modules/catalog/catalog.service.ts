@@ -12,6 +12,7 @@ import { isValidEmail, sendEmail } from "../../utils/email";
 import { emitEvent } from "../integrations/events";
 import { orderEventData } from "../integrations/event-data";
 import { assertTenantOwns } from "../../utils/tenant-owned";
+import { zeroOnUniqueClash } from "../../utils/prisma-errors";
 
 export async function getOrCreateCatalogSettings(tenantId: string) {
   const existing = await prisma.catalogSettings.findUnique({ where: { tenantId } });
@@ -256,7 +257,7 @@ export async function confirmOrderPaymentIfPaid(orderId: string, paymentIdFromQu
   if (reused) return order;
 
   // قفل: إشعار المطبخ مرة واحدة بس حتى لو الـ webhook ورجوع العميل وصلوا مع بعض
-  const claimed = await prisma.catalogOrder.updateMany({ where: { id: order.id, paymentStatus: "AWAITING_PAYMENT" }, data: { paymentStatus: "PAID", myFatoorahPaymentId: paymentId } });
+  const claimed = await zeroOnUniqueClash(prisma.catalogOrder.updateMany({ where: { id: order.id, paymentStatus: "AWAITING_PAYMENT" }, data: { paymentStatus: "PAID", myFatoorahPaymentId: paymentId } }));
   const updated = await prisma.catalogOrder.findUniqueOrThrow({ where: { id: order.id }, include: { items: true } });
   if (claimed.count === 0) return updated;
 

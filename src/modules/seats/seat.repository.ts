@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { zeroOnUniqueClash } from "../../utils/prisma-errors";
 
 // كل كلام قاعدة البيانات الخاص بحجز الكراسي هنا (Prisma بس) - المنطق في seat-booking.service.ts
 export const ACTIVE_ORDER = ["HELD", "AWAITING_PAYMENT", "CONFIRMED"] as const;
@@ -155,7 +156,8 @@ export class SeatRepository {
 
   // تغيير حالة طلب بشرط حالته الحالية (يمنع إن عمليتين يحصلوا على نفس الطلب)
   async transition(id: string, where: Prisma.SeatOrderWhereInput, data: Prisma.SeatOrderUncheckedUpdateManyInput) {
-    const r = await this.db.seatOrder.updateMany({ where: { id, ...where }, data });
+    // رقم دفعة متكرر (unique) = مايتأكدش (تدقيق PAY-01)
+    const r = await zeroOnUniqueClash(this.db.seatOrder.updateMany({ where: { id, ...where }, data }));
     if (!r.count) return null;
     return this.db.seatOrder.findUnique({ where: { id } });
   }

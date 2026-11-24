@@ -15,6 +15,7 @@ import { computeBookingAmount, hasPricedServices } from "./service-pricing";
 import { emitEvent } from "../integrations/events";
 import { bookingEventData } from "../integrations/event-data";
 import { assertTenantOwns } from "../../utils/tenant-owned";
+import { zeroOnUniqueClash } from "../../utils/prisma-errors";
 
 // إعدادات الحجز لكل شركة - بتتنشئ تلقائيًا بقيم افتراضية أول مرة
 export async function getOrCreateSettings(tenantId: string) {
@@ -311,7 +312,9 @@ async function createBookingInner(input: CreateBookingInput & { redirectionUrlBa
   });
 
   if (!payment.ok) {
-    return { ...booking, whatsappConfirmationSent: false, paymentUrl: null, paymentError: payment.error, paymentInstructions: null };
+    // الدفع مابدأش خالص = الميعاد يرجع متاح على طول (تدقيق COM-02) بدل ما يفضل محجوز للأبد
+    await prisma.booking.updateMany({ where: { id: booking.id, paymentStatus: "AWAITING_PAYMENT" }, data: { status: "CANCELLED" } });
+    return { ...booking, status: "CANCELLED" as const, whatsappConfirmationSent: false, paymentUrl: null, paymentError: payment.error, paymentInstructions: null };
   }
 
   const updated = await prisma.booking.update({
@@ -341,9 +344,22 @@ export async function confirmBookingPaymentIfPaid(bookingId: string, paymentIdFr
   if (reused) return { ...booking, whatsappConfirmationSent: false };
 
   // قفل: لو الـ webhook ورجوع العميل وصلوا في نفس اللحظة، التأكيد (والواتساب) مرة واحدة بس
-  const claimed = await prisma.booking.updateMany({ where: { id: booking.id, paymentStatus: "AWAITING_PAYMENT" }, data: { paymentStatus: "PAID", myFatoorahPaymentId: paymentId } });
+  const claimed = await zeroOnUniqueClash(prisma.booking.updateMany({ where: { id: booking.id, paymentStatus: "AWAITING_PAYMENT" }, data: { paymentStatus: "PAID", myFatoorahPaymentId: paymentId } }));
   const updated = await prisma.booking.findUniqueOrThrow({ where: { id: booking.id }, include: { resource: true } });
   if (claimed.count === 0) return { ...updated, whatsappConfirmationSent: false };
+
+  // العميل دفع لحجز اتلغى (المهلة خلصت أو التاجر لغاه): مانرجّعوش لوحده - التاجر يتبلّغ يكلّمه
+  // يحدد ميعاد تاني أو يرجّع الفلوس، ومفيش رسالة تأكيد للعميل على ميعاد مش محجوز له
+  if (updated.status === "CANCELLED") {
+    await createNotification({
+      tenantId: updated.tenantId,
+      type: "BOOKING_CONFIRMED",
+      title: "Payment received for a cancelled booking",
+      body: `${updated.customerName} (${updated.customerPhone}) paid for a booking that was already cancelled. Please contact them to book a new time or refund.`,
+      link: "/booking?tab=calendar",
+    });
+    return { ...updated, whatsappConfirmationSent: false };
+  }
 
   const whatsappConfirmationSent = await runBookingConfirmationSideEffects(updated, updated.tenantId, updated.resource.name);
   return { ...updated, whatsappConfirmationSent };
@@ -360,6 +376,36 @@ export async function markBookingPaidManually(tenantId: string, bookingId: strin
   if (confirmsOnOrder(booking.paymentMethodType)) return { ...updated, whatsappConfirmationSent: false };
   const whatsappConfirmationSent = await runBookingConfirmationSideEffects(updated, updated.tenantId, updated.resource.name);
   return { ...updated, whatsappConfirmationSent };
+}
+
+// حجوزات الدفع الأونلاين (MyFatoorah / SkipCash) اللي العميل فتح صفحة الدفع وماكمّلش: بعد
+// BOOKING_PAYMENT_HOLD_MINUTES (افتراضي 60 دقيقة) بنسأل البوابة مرة أخيرة، ولو مادفعش الحجز بيتلغي
+// والميعاد يرجع متاح (تدقيق COM-02). التحويل البنكي ولينك الدفع مابيتلغوش لوحدهم - التاجر هو اللي
+// بيأكد الاستلام يدويًا (وممكن التحويل ياخد يوم)، وبيظهروا عنده في "Needs payment"
+const AUTO_GATEWAYS = ["MYFATOORAH", "SKIPCASH"];
+export async function expireUnpaidBookings(now = new Date(), holdMinutes = Number(process.env.BOOKING_PAYMENT_HOLD_MINUTES) || 60) {
+  const before = new Date(now.getTime() - holdMinutes * 60_000);
+  const stale = await prisma.booking.findMany({
+    where: { paymentStatus: "AWAITING_PAYMENT", status: { not: "CANCELLED" }, paymentMethodType: { in: AUTO_GATEWAYS }, createdAt: { lt: before } },
+    select: { id: true, myFatoorahInvoiceId: true },
+    orderBy: { createdAt: "asc" },
+    take: 50,
+  });
+  let expired = 0;
+  let paid = 0;
+  for (const b of stale) {
+    if (b.myFatoorahInvoiceId) {
+      const r = await confirmBookingPaymentIfPaid(b.id).catch(() => null);
+      if (!r) continue; // البوابة مارديتش - نجرّب الدورة الجاية بدل ما نلغي حجز ممكن يكون مدفوع
+      if (r.paymentStatus === "PAID") {
+        paid++;
+        continue;
+      }
+    }
+    const done = await prisma.booking.updateMany({ where: { id: b.id, paymentStatus: "AWAITING_PAYMENT", status: { not: "CANCELLED" } }, data: { status: "CANCELLED" } });
+    expired += done.count;
+  }
+  return { expired, paid };
 }
 
 export async function cancelBooking(tenantId: string, bookingId: string) {
