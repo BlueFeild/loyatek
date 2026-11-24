@@ -12,6 +12,8 @@ export const BOOKING_TEMPLATES = [
 // gold/night (غامقين) اتشالوا من الواجهة بس فاضلين هنا عشان الإعدادات القديمة تتحفظ من غير خطأ
 export const BOOKING_GRADIENTS = ["aurora", "peach", "lagoon", "dusk", "meadow", "candy", "gold", "night"] as const;
 export const BOOKING_FONTS = ["modern", "elegant", "rounded"] as const;
+// تصميمات المنيو (شكل العرض نفسه، مش الألوان) - لازم تفضل نفس القائمة في الفرونت (frontend/src/data/menuDesigns.ts)
+export const MENU_DESIGNS = ["classic", "poster", "bistro", "cards", "rows", "magazine"] as const;
 
 const DATA_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
 
@@ -59,6 +61,8 @@ export const pageStyleSchema = z
     corners: z.enum(["soft", "round", "sharp"]).optional(),
     // المنيو: الضغط على صورة الأكلة يفتحها كبيرة (افتراضي شغّال؛ false = مقفول)
     photoZoom: z.boolean().optional(),
+    // المنيو: التصميم (بوستر / بيسترو / كروت / صفوف / مجلة)، فاضي = الكلاسيك
+    menuDesign: z.enum(MENU_DESIGNS).optional(),
   })
   .strict();
 
