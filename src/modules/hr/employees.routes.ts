@@ -4,7 +4,7 @@ import { prisma } from "../../config/db";
 import { assertTenantOwns } from "../../utils/tenant-owned";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { requireModule } from "../../middleware/module-access";
-import { enrichEmployee, upsertShift, upsertAttendance, getWeekDates, computeGratuity } from "./hr.service";
+import { enrichEmployees, upsertShift, upsertAttendance, getWeekDates, computeGratuity } from "./hr.service";
 
 export const employeesRouter = Router();
 
@@ -20,12 +20,7 @@ employeesRouter.get("/", async (req, res) => {
     orderBy: { createdAt: "desc" },
   });
 
-  const enriched = await Promise.all(
-    employees.map(async (e: { id: string; monthlyTarget: unknown }) => ({
-      ...e,
-      ...(await enrichEmployee(req.auth!.tenantId, e)),
-    }))
-  );
+  const enriched = await enrichEmployees(req.auth!.tenantId, employees);
   // المرتبات والعمولات للإدارة بس - الـ STAFF بيشوف الأسماء والمناصب (تدقيق ERP-06)
   if (!canSeePay(req.auth!.role)) {
     return res.json(enriched.map(({ baseSalary, commissionRate, monthlyTarget, target, ...rest }: any) => rest));

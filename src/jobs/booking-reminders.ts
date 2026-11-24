@@ -3,6 +3,7 @@ import { calendarDateKey, formatCalendarDate } from "../utils/calendarDate";
 import { isValidTimeZone, zonedDateHourToUtc } from "../utils/timezone";
 import { confirmsOnOrder } from "../modules/payment-settings/payment-methods";
 import { getApprovedBookingTemplate, sendBookingTemplate, type TemplateLang } from "../modules/whatsapp/booking-templates";
+import { isShuttingDown } from "../utils/shutdown";
 
 // تذكير واتساب تلقائي قبل الميعاد (افتراضيًا 24 ساعة) بالقالب المعتمد
 // BOOKING_REMINDER. بيشتغل كل 5 دقايق جوه السيرفر. كل حجز بياخد تذكير
@@ -74,6 +75,7 @@ let timer: NodeJS.Timeout | null = null;
 export function startBookingReminderScheduler(intervalMs = 5 * 60 * 1000) {
   if (timer || process.env.DISABLE_REMINDERS === "1") return;
   const tick = () =>
+    !isShuttingDown() &&
     runBookingReminders()
       .then((r) => {
         if (r.sent || r.failed) console.log(`[reminders] sent ${r.sent}, failed ${r.failed}`);

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../config/db";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { requireModule } from "../../middleware/module-access";
-import { recordSale } from "./sales.service";
+import { recordSale, voidSale } from "./sales.service";
 
 export const salesRouter = Router();
 
@@ -33,9 +33,17 @@ salesRouter.post("/", requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async (
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
-    const sale = await recordSale({ tenantId: req.auth!.tenantId, ...parsed.data });
+    const sale = await recordSale({ tenantId: req.auth!.tenantId, ...parsed.data, actor: { userId: req.auth!.userId, role: req.auth!.role } });
     res.status(201).json(sale);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// إلغاء بيع (المدير فما فوق): الكمية ترجع للمخزون والقيد يتشال (تدقيق DATA-004)
+salesRouter.post("/:id/void", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) => {
+  const me = await prisma.user.findFirst({ where: { id: req.auth!.userId }, select: { name: true, email: true } });
+  const done = await voidSale(req.auth!.tenantId, req.params.id, me?.name || me?.email || "a manager");
+  if (!done) return res.status(404).json({ error: "Sale not found (maybe it was already cancelled)" });
+  res.json({ ok: true, ...done });
 });

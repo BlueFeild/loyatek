@@ -1,4 +1,5 @@
 import { container } from "../core/container";
+import { isShuttingDown } from "../utils/shutdown";
 
 // كل دقيقة: حملات واتساب المجدولة اللي جه ميعادها بتبدأ تتبعت. DISABLE_CAMPAIGN_SCHEDULER=1 يوقفه
 let timer: NodeJS.Timeout | null = null;
@@ -7,6 +8,7 @@ export function startCampaignScheduler(intervalMs = 60 * 1000) {
   if (timer || process.env.DISABLE_CAMPAIGN_SCHEDULER === "1") return;
   let busy = false;
   const tick = () => {
+    if (isShuttingDown()) return;
     if (busy) return;
     busy = true;
     container.campaignSender

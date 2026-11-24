@@ -9,10 +9,12 @@ import { startCampaignScheduler } from "./jobs/campaign-scheduler";
 import { startSeatReminderScheduler } from "./jobs/seat-reminders";
 import { startWhatsappSequenceScheduler } from "./jobs/whatsapp-sequences";
 import { startSmsScheduler } from "./jobs/sms-scheduler";
+import { prisma } from "./config/db";
+import { isShuttingDown, markShuttingDown } from "./utils/shutdown";
 
 const PORT = process.env.PORT || 4000;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`ERP Kernel backend running on http://localhost:${PORT}`);
   // تذكير واتساب قبل مواعيد الحجز (كل 5 دقايق) - DISABLE_REMINDERS=1 يقفله
   startBookingReminderScheduler(Number(process.env.REMINDER_INTERVAL_MS) || undefined);
@@ -31,3 +33,27 @@ app.listen(PORT, () => {
   // حملات SMS المجدولة (كل دقيقة) - DISABLE_SMS_SCHEDULER=1 يقفلها
   startSmsScheduler(Number(process.env.SMS_SCHEDULER_INTERVAL_MS) || undefined);
 });
+
+// إيقاف هادي (تدقيق INFRA-003): Railway بيبعت SIGTERM قبل ما يقفل النسخة القديمة.
+// نبطّل طلبات جديدة، نستنى اللي شغال (لحد SHUTDOWN_GRACE_MS، افتراضي 20 ثانية)،
+// الـ jobs ماتبدأش دورة جديدة، وبعدين نقفل قاعدة البيانات ونخرج
+function shutdown(signal: string) {
+  if (isShuttingDown()) return;
+  markShuttingDown();
+  console.log(`[server] ${signal} received — finishing open requests before stopping`);
+  const graceMs = Number(process.env.SHUTDOWN_GRACE_MS) || 20_000;
+  let done = false;
+  const finish = async (reason: string) => {
+    if (done) return;
+    done = true;
+    console.log(`[server] stopping (${reason})`);
+    await prisma.$disconnect().catch(() => undefined);
+    process.exit(0);
+  };
+  server.close(() => void finish("all requests finished"));
+  // الاتصالات الفاضية (keep-alive) تتقفل فورًا عشان close مايستناهاش
+  server.closeIdleConnections?.();
+  setTimeout(() => void finish("grace period ended"), graceMs).unref();
+}
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => shutdown("SIGINT"));

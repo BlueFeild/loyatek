@@ -1,4 +1,5 @@
 import { container } from "../core/container";
+import { isShuttingDown } from "../utils/shutdown";
 
 // كل دقيقة: أي بوست سوشيال جه ميعاده بيتنشر، وأي بوست اتقطع في النص (السيرفر اتعاد
 // تشغيله) بيتعلّم FAILED عشان التاجر يعيده. DISABLE_SOCIAL_PUBLISHER=1 يوقفه
@@ -8,6 +9,7 @@ export function startSocialPublisherScheduler(intervalMs = 60 * 1000) {
   if (timer || process.env.DISABLE_SOCIAL_PUBLISHER === "1") return;
   let busy = false;
   const tick = () => {
+    if (isShuttingDown()) return;
     if (busy) return;
     busy = true;
     container.socialPostService

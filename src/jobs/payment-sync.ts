@@ -1,5 +1,6 @@
 import { prisma } from "../config/db";
 import { syncOrderPayment } from "../modules/checkout/order-activation";
+import { isShuttingDown } from "../utils/shutdown";
 
 // كل دقيقتين: أي طلب اشتراك لسه PENDING/PAID وليه دفعة SkipCash أو فاتورة MyFatoorah (آخر 3
 // أيام) بنسأل عنه MyFatoorah - لو اتدفع بيتفعّل. كده الخدمة بتتفعّل حتى لو
@@ -28,6 +29,7 @@ export async function runPaymentSync() {
 export function startPaymentSyncScheduler(intervalMs = 2 * 60 * 1000) {
   if (timer || process.env.DISABLE_PAYMENT_SYNC === "1") return;
   const tick = () =>
+    !isShuttingDown() &&
     runPaymentSync()
       .then((r) => {
         if (r.activated) console.log(`[payment-sync] activated ${r.activated} paid order(s)`);

@@ -131,3 +131,46 @@ export function getWeekDates(weekStart: Date): Date[] {
     return d;
   });
 }
+
+// نفس enrichEmployee لكن لكل الموظفين بـ 3 استعلامات بس بدل 3 لكل موظف (تدقيق PERF-001:
+// شركة فيها 200 موظف كانت بتعمل 600 استعلام في كل فتحة لصفحة الفريق)
+export async function enrichEmployees<T extends { id: string; monthlyTarget: unknown }>(tenantId: string, employees: T[]) {
+  if (!employees.length) return [] as (T & { actual: number; target: number; attendancePct: number | null })[];
+  const now = new Date();
+  const monthStart = startOfMonth(now);
+  const today = startOfDay(now);
+  const ids = employees.map((e) => e.id);
+  const [sums, shifts, attendance] = await Promise.all([
+    prisma.sale.groupBy({
+      by: ["employeeId"],
+      where: { tenantId, employeeId: { in: ids }, createdAt: { gte: monthStart, lt: startOfNextMonth(now) } },
+      _sum: { totalAmount: true },
+    }),
+    prisma.shift.findMany({
+      where: { tenantId, employeeId: { in: ids }, date: { gte: monthStart, lte: today }, type: { not: "OFF" } },
+      select: { employeeId: true, date: true },
+    }),
+    prisma.attendance.findMany({
+      where: { tenantId, employeeId: { in: ids }, date: { gte: monthStart, lte: today }, status: { in: ["ON_SHIFT", "BREAK"] } },
+      select: { employeeId: true, date: true },
+    }),
+  ]);
+  const actualBy = new Map<string, number>(sums.map((s: any) => [s.employeeId, Number(s._sum.totalAmount ?? 0)]));
+  const present = new Set(attendance.map((a: { employeeId: string; date: Date }) => `${a.employeeId}|${new Date(a.date).toDateString()}`));
+  const shiftsBy = new Map<string, Date[]>();
+  for (const s of shifts as { employeeId: string; date: Date }[]) {
+    const list = shiftsBy.get(s.employeeId) ?? [];
+    list.push(s.date);
+    shiftsBy.set(s.employeeId, list);
+  }
+  return employees.map((e) => {
+    const own = shiftsBy.get(e.id) ?? [];
+    const presentCount = own.filter((d) => present.has(`${e.id}|${new Date(d).toDateString()}`)).length;
+    return {
+      ...e,
+      actual: actualBy.get(e.id) ?? 0,
+      target: Number(e.monthlyTarget),
+      attendancePct: own.length ? Math.round((presentCount / own.length) * 100) : null,
+    };
+  });
+}

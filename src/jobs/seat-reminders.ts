@@ -1,4 +1,5 @@
 import { container } from "../core/container";
+import { isShuttingDown } from "../utils/shutdown";
 
 // تذكير قبل العروض (خدمة التذاكر) كل 5 دقايق - DISABLE_SEAT_REMINDERS=1 يقفله.
 // كل طلب بياخد تذكير واحد بس (reminderSentAt بيتحجز الأول قبل الإرسال)
@@ -8,6 +9,7 @@ export function startSeatReminderScheduler(intervalMs = 5 * 60 * 1000) {
   if (timer || process.env.DISABLE_SEAT_REMINDERS === "1") return;
   let busy = false;
   const tick = () => {
+    if (isShuttingDown()) return;
     if (busy) return;
     busy = true;
     container.seats

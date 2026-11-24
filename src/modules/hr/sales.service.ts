@@ -13,6 +13,8 @@ interface RecordSaleInput {
   itemId: string;
   quantity: number;
   customerId?: string;
+  // لو المستخدم STAFF ومربوط بموظف: لازم يسجّل البيع باسمه هو (تدقيق ERP-07)
+  actor?: { userId: string; role: string };
 }
 
 // أهم عملية في الموديول: تسجيل بيع فعلي. ده بيعمل 3 حاجات سوا
@@ -29,6 +31,8 @@ export async function recordSale(input: RecordSaleInput) {
     where: { id: input.itemId, tenantId: input.tenantId },
   });
   if (!item) throw new Error("Inventory item not found");
+  // المخزون لكل فرع لوحده: الصنف لازم يكون من نفس فرع البيع (تدقيق DATA-004)
+  if (item.branchId !== input.branchId) throw new Error("This item belongs to another branch — pick an item from this branch");
   if (item.quantity < input.quantity) {
     throw new Error(`Insufficient stock: only ${item.quantity} units available`);
   }
@@ -37,6 +41,11 @@ export async function recordSale(input: RecordSaleInput) {
     where: { id: input.employeeId, tenantId: input.tenantId },
   });
   if (!employee) throw new Error("Employee not found");
+  if (employee.terminationDate && employee.terminationDate <= new Date()) throw new Error("This employee no longer works here");
+  if (input.actor?.role === "STAFF") {
+    const own = await prisma.employee.findFirst({ where: { tenantId: input.tenantId, userId: input.actor.userId }, select: { id: true } });
+    if (own && own.id !== employee.id) throw new Error("You can only record sales under your own name");
+  }
 
   const unitPrice = Number(item.sellPrice);
   const totalAmount = unitPrice * input.quantity;
@@ -81,5 +90,23 @@ export async function recordSale(input: RecordSaleInput) {
       },
       include: { employee: true, item: true, customer: true },
     });
+  });
+}
+
+// إلغاء بيع اتسجّل غلط (تدقيق DATA-004 - قبل كده مكانش فيه أي طريقة): الكمية بترجع للمخزون
+// بحركة IN، وقيد البيع بيتشال من الدفاتر، والبيع نفسه بيتمسح. كله في transaction واحدة،
+// والمسح الشرطي بيضمن إن ضغطتين في نفس اللحظة مايرجّعوش الكمية مرتين
+export async function voidSale(tenantId: string, saleId: string, byName: string) {
+  return prisma.$transaction(async (tx: any) => {
+    const sale = await tx.sale.findFirst({ where: { id: saleId, tenantId }, include: { item: { select: { name: true } } } });
+    if (!sale) return null;
+    const del = await tx.sale.deleteMany({ where: { id: sale.id, tenantId } });
+    if (del.count === 0) return null;
+    await tx.inventoryItem.updateMany({ where: { id: sale.itemId, tenantId }, data: { quantity: { increment: sale.quantity } } });
+    await tx.inventoryMovement.create({
+      data: { itemId: sale.itemId, type: "IN", quantity: sale.quantity, reason: `Sale cancelled by ${byName}` },
+    });
+    if (sale.journalEntryId) await tx.journalEntry.deleteMany({ where: { id: sale.journalEntryId, tenantId } });
+    return { id: sale.id, item: sale.item?.name ?? "", quantity: sale.quantity };
   });
 }

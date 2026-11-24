@@ -1,4 +1,5 @@
 import { container } from "../core/container";
+import { isShuttingDown } from "../utils/shutdown";
 
 // كل ساعة: أول ما الشهر يبدأ، بيبعت إيميل تقرير الشهر اللي فات لكل شركة مفعّلة الإيميل الشهري
 // (مرة واحدة للشهر - lastSentPeriod). DISABLE_SOCIAL_REPORTS=1 يوقفه
@@ -8,6 +9,7 @@ export function startSocialReportScheduler(intervalMs = 60 * 60 * 1000) {
   if (timer || process.env.DISABLE_SOCIAL_REPORTS === "1") return;
   let busy = false;
   const tick = () => {
+    if (isShuttingDown()) return;
     if (busy) return;
     busy = true;
     container.socialReportService

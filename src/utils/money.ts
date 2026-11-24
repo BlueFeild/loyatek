@@ -1,4 +1,5 @@
 import { prisma } from "../config/db";
+import { isShuttingDown } from "./shutdown";
 
 // العملة الأساسية للمنصة كلها = الدولار. كل المبالغ بتتخزن بالدولار (دقة 6
 // خانات)، وبتتعرض بعملة الشركة (Tenant.displayCurrency) بسعر صرف صحيح.
@@ -157,6 +158,7 @@ let timer: NodeJS.Timeout | null = null;
 export function startExchangeRateScheduler(intervalMs = 12 * 3600 * 1000) {
   if (timer || process.env.DISABLE_RATE_REFRESH === "1") return;
   const tick = () =>
+    !isShuttingDown() &&
     refreshRatesFromInternet().then((r) => {
       if (!r.ok) console.warn(`[exchange-rates] refresh failed: ${r.error} — keeping last saved rates`);
     });
