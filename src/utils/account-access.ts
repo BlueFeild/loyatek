@@ -65,9 +65,10 @@ export function clearIdentityCache() {
   actorCache.clear();
 }
 
-export async function liveIdentity(userId: string): Promise<LiveIdentity | null> {
+// fresh = تجاهل الكاش (لما التوكن مش متفق مع الكاش - مثلًا اترقّى من ثواني - نقرا الحقيقة على طول)
+export async function liveIdentity(userId: string, opts: { fresh?: boolean } = {}): Promise<LiveIdentity | null> {
   const hit = identityCache.get(userId);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
+  if (!opts.fresh && hit && Date.now() - hit.at < TTL_MS) return hit.value;
   const value = await prisma.user.findUnique({
     where: { id: userId },
     select: { tenantId: true, role: true, branchId: true, isActive: true, isSuperAdmin: true, isAgencyStaff: true },
@@ -82,7 +83,7 @@ export async function actorStillAllowed(actorId: string, tenantId: string, kind:
   const key = `${actorId}:${tenantId}:${kind ?? "legacy"}`;
   const hit = actorCache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.ok;
-  const actor = await liveIdentity(actorId);
+  const actor = await liveIdentity(actorId, { fresh: true });
   let ok = false;
   if (actor && actor.isActive) {
     if (kind === "switch") {

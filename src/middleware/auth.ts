@@ -27,7 +27,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
   // تدقيق AUTH-07: الدور/الفرع/السوبر أدمن من قاعدة البيانات (كاش 10 ثواني) مش من التوكن.
   // مستخدم اتمسح أو اتنقل لشركة تانية = الجلسة خلصت
-  const live = await liveIdentity(payload.userId);
+  let live = await liveIdentity(payload.userId);
+  // التوكن والكاش مختلفين (دور اتغيّر من ثواني): نقرا من قاعدة البيانات دلوقتي بدل ما نستنى الكاش يخلص
+  if (live && (live.role !== payload.role || live.branchId !== payload.branchId || (!payload.impersonatedBy && live.isSuperAdmin !== payload.isSuperAdmin))) {
+    live = await liveIdentity(payload.userId, { fresh: true });
+  }
   if (!live || live.tenantId !== payload.tenantId) {
     return res.status(401).json({ error: "Your session has ended — please sign in again", code: "SESSION_ENDED" });
   }
