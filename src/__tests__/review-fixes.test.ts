@@ -10,6 +10,9 @@ vi.mock("../utils/platform-config", () => ({ tenantGraceDays: async () => 3 }));
 vi.mock("../utils/account-access", () => ({
   checkAccess: async (_userId: string, tenantId: string) =>
     state.suspended.has(tenantId) ? { code: "ACCOUNT_SUSPENDED", message: "This account is paused" } : null,
+  // المستخدم u-A تبع شركة A، u-B تبع B (الهوية بتتقري من قاعدة البيانات - تدقيق AUTH-07)
+  liveIdentity: async (userId: string) => ({ tenantId: userId.slice(2), role: "OWNER", branchId: null, isActive: true, isSuperAdmin: false, isAgencyStaff: false }),
+  actorStillAllowed: async () => true,
 }));
 
 import { requireAuth } from "../middleware/auth";
@@ -27,7 +30,7 @@ function run(mw: (req: any, res: any, next: () => void) => unknown, req: any): P
 }
 
 const base = { userId: "u", role: "OWNER", branchId: null, isSuperAdmin: false };
-const tokenFor = (p: Partial<AccessTokenPayload> & { tenantId: string }) => `Bearer ${signAccessToken({ ...base, ...p })}`;
+const tokenFor = (p: Partial<AccessTokenPayload> & { tenantId: string }) => `Bearer ${signAccessToken({ ...base, userId: `u-${p.tenantId}`, ...p })}`;
 
 beforeEach(() => {
   clearModuleAccessCache();

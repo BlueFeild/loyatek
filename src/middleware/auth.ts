@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { verifyAccessToken, AccessTokenPayload, bypassesAccountChecks } from "../utils/jwt";
-import { checkAccess } from "../utils/account-access";
+import { actorStillAllowed, checkAccess, liveIdentity } from "../utils/account-access";
 
 // إضافة بيانات المستخدم لكل request بعد التحقق من الـ token
 declare global {
@@ -24,6 +24,29 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   } catch {
     return res.status(401).json({ error: "Invalid or expired token" });
   }
+
+  // تدقيق AUTH-07: الدور/الفرع/السوبر أدمن من قاعدة البيانات (كاش 10 ثواني) مش من التوكن.
+  // مستخدم اتمسح أو اتنقل لشركة تانية = الجلسة خلصت
+  const live = await liveIdentity(payload.userId);
+  if (!live || live.tenantId !== payload.tenantId) {
+    return res.status(401).json({ error: "Your session has ended — please sign in again", code: "SESSION_ENDED" });
+  }
+  if (!live.isActive && !payload.impersonatedBy) {
+    return res.status(403).json({ error: "Your user has been disabled. Please contact your company admin.", code: "USER_DISABLED" });
+  }
+  if (payload.impersonatedBy) {
+    // اللي داخل نيابةً لسه سوبر أدمن / وكالة مسؤولة عن الشركة / المالك لسه مربوط بيها؟
+    if (!(await actorStillAllowed(payload.impersonatedBy, payload.tenantId, payload.impersonationKind))) {
+      return res.status(401).json({ error: "Your access to this company has ended — please sign in again", code: "SESSION_ENDED" });
+    }
+  }
+  payload = {
+    ...payload,
+    role: live.role,
+    branchId: live.branchId,
+    // جلسة نيابةً دايمًا بتتصرف كتاجر عادي؛ غير كده السوبر أدمن = اللي في قاعدة البيانات دلوقتي
+    isSuperAdmin: payload.impersonatedBy ? false : live.isSuperAdmin,
+  };
   req.auth = payload; // بيحتوي على tenantId و role و branchId
 
   // شركة موقوفة / مؤرشفة أو مستخدم متوقف: كل الجلسات المفتوحة بتقف خلال ثواني.
