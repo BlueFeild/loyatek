@@ -17,6 +17,7 @@ import { buildInvoicePdf } from "./invoice-pdf.service";
 import { activateSubscriptionOrder, syncOrderPayment } from "../checkout/order-activation";
 import { createPasswordLink, emailTaken, generateTempPassword, sendEmailChangedNotice, sendOwnerInviteEmail, sendWelcomeEmail } from "../auth/account-links";
 import { transferOwnership } from "../account/account.routes";
+import { csvCell } from "../seats/tickets-admin.service";
 
 // كل موظفين الأجنسي (BlueField team) بيتسجلوا كـ Users جوه شركة
 // داخلية واحدة ثابتة (مش شركة عميل حقيقية) - بننشئها أول مرة لو
@@ -414,10 +415,8 @@ superAdminRouter.get("/orders/export.csv", async (req, res) => {
     include: { tenant: { select: { name: true } } },
     orderBy: { createdAt: "desc" },
   });
-  const cell = (v: unknown) => {
-    const t = String(v ?? "");
-    return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
-  };
+  // اسم الشركة بيكتبه العميل: "=HYPERLINK(...)" كان بيشتغل كصيغة في Excel - csvCell بيمنعها (تدقيق SA-01)
+  const cell = (v: unknown) => csvCell(String(v ?? ""));
   const rows = [
     ["Date", "Invoice", "Client", "Type", "Items", "Billing", "Amount", "Currency", "Amount (USD)", "Status", "Payment provider", "Payment #"],
     ...orders.map((o: any) => [
