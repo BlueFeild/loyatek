@@ -387,7 +387,7 @@ export async function expireUnpaidBookings(now = new Date(), holdMinutes = Numbe
   const before = new Date(now.getTime() - holdMinutes * 60_000);
   const stale = await prisma.booking.findMany({
     where: { paymentStatus: "AWAITING_PAYMENT", status: { not: "CANCELLED" }, paymentMethodType: { in: AUTO_GATEWAYS }, createdAt: { lt: before } },
-    select: { id: true, myFatoorahInvoiceId: true },
+    select: { id: true, tenantId: true, paymentMethodType: true, myFatoorahInvoiceId: true },
     orderBy: { createdAt: "asc" },
     take: 50,
   });
@@ -395,10 +395,12 @@ export async function expireUnpaidBookings(now = new Date(), holdMinutes = Numbe
   let paid = 0;
   for (const b of stale) {
     if (b.myFatoorahInvoiceId) {
-      const r = await confirmBookingPaymentIfPaid(b.id).catch(() => null);
-      if (!r) continue; // البوابة مارديتش - نجرّب الدورة الجاية بدل ما نلغي حجز ممكن يكون مدفوع
-      if (r.paymentStatus === "PAID") {
-        paid++;
+      const check = await verifyTenantGatewayPayment(b.tenantId, { paymentMethodType: b.paymentMethodType, invoiceId: b.myFatoorahInvoiceId }).catch(() => null);
+      // البوابة مارديتش - نجرّب الدورة الجاية بدل ما نلغي حجز ممكن يكون مدفوع
+      if (!check || check.unreachable) continue;
+      if (check.paid) {
+        const r = await confirmBookingPaymentIfPaid(b.id).catch(() => null);
+        if (r?.paymentStatus === "PAID") paid++;
         continue;
       }
     }

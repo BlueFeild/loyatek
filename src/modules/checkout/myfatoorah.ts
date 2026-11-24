@@ -132,9 +132,10 @@ async function getPaymentStatusV2(creds: Credentials, key: string, keyType: "Inv
 // الدفعة تخص طلب تاني)
 export async function checkPlatformInvoice(invoiceId: string) {
   const settings = await getPlatformSettings();
-  if (!settings.myFatoorahApiKey) return { status: "", paid: false, invoiceId: null, paymentId: null, error: "Payment gateway is not connected", raw: null };
+  if (!settings.myFatoorahApiKey) return { status: "", paid: false, invoiceId: null, paymentId: null, error: NOT_CONNECTED, raw: null };
   return getPaymentStatusV2({ apiKey: settings.myFatoorahApiKey, isTest: settings.myFatoorahIsTest }, invoiceId, "InvoiceId");
 }
+const NOT_CONNECTED = "Payment gateway is not connected";
 
 // الدفعة دي تخص الفاتورة دي فعلًا؟ (عشان محدش يدفع طلب صغير ويستخدم رقم الدفع
 // ده لتأكيد طلب أكبر). "unknown" = MyFatoorah مارجّعتش رقم فاتورة نقارن بيه
@@ -281,14 +282,14 @@ export async function verifyTenantGatewayPayment(
   tenantId: string,
   entity: { paymentMethodType: string | null; invoiceId: string | null },
   paymentIdFromQuery?: string | null
-): Promise<{ paid: boolean; paymentId: string | null }> {
+): Promise<{ paid: boolean; paymentId: string | null; unreachable?: boolean }> {
   if (entity.paymentMethodType === "SKIPCASH") {
     if (!entity.invoiceId) return { paid: false, paymentId: null };
     const skipcash = await skipcashService();
     const creds = await skipcash.merchantCredentials(tenantId);
     if (!creds) return { paid: false, paymentId: null };
     const r = await skipcash.check(creds, { paymentId: entity.invoiceId });
-    return { paid: r.ok && r.paid, paymentId: entity.invoiceId };
+    return { paid: r.ok && r.paid, paymentId: entity.invoiceId, unreachable: !r.ok };
   }
   // تدقيق PAY-01: رقم الدفع اللي في الرابط بيتقبل بس لو MyFatoorah قالت إنه بتاع فاتورتنا ("match").
   // لو الرد مافيهوش رقم فاتورة، أو مفيش paymentId خالص (مثلًا من job انتهاء المهلة)، بنسأل برقم الفاتورة نفسها
@@ -300,6 +301,9 @@ export async function verifyTenantGatewayPayment(
   }
   if (!entity.invoiceId) return { paid: false, paymentId: null };
   const inv = await checkTenantInvoice(tenantId, entity.invoiceId);
+  // البوابة مارديتش (مش "مدفوعة" ولا "مش مدفوعة") - اللي بينادي يقرر (job انتهاء المهلة بيستنى)
+  // (مفتاح التاجر اتشال = مفيش حاجة نستناها - الحجز يتلغي عادي)
+  if (inv.error && !inv.status && inv.error !== NOT_CONNECTED) return { paid: false, paymentId: null, unreachable: true };
   if (!inv.paid || (inv.invoiceId && inv.invoiceId !== String(entity.invoiceId))) return { paid: false, paymentId: null };
   return { paid: true, paymentId: inv.paymentId ?? paymentIdFromQuery ?? `invoice-${entity.invoiceId}` };
 }
