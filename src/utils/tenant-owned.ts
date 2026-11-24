@@ -42,3 +42,12 @@ export async function assertTenantOwns(tenantId: string, refs: OwnedRefs, db: an
   await check(refs.userIds, (ids) => db.user.count({ where: { tenantId, id: { in: ids } } }), "User");
   await check(refs.whatsappTemplateIds, (ids) => db.whatsappTemplate.count({ where: { tenantId, id: { in: ids } } }), "Template");
 }
+
+// المخزون لكل فرع لوحده: أصناف أمر الشراء / طلب العروض لازم تكون من نفس فرع الأمر (تدقيق ERP-11) -
+// غير كده الاستلام بيزوّد مخزون فرع تاني غير اللي الأمر اتعمل له
+export async function assertItemsInBranch(tenantId: string, branchId: string, itemIds: string[]) {
+  const ids = [...new Set(itemIds)];
+  if (!ids.length) return;
+  const other = await prisma.inventoryItem.count({ where: { tenantId, id: { in: ids }, branchId: { not: branchId } } });
+  if (other > 0) throw new Error("Some items belong to another branch — pick items from this branch");
+}

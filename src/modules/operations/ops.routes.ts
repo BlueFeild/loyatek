@@ -71,6 +71,16 @@ opsRouter.patch("/tasks/:id", async (req, res) => {
 
   const task = await prisma.opsTask.findFirst({ where: { id: req.params.id, tenantId: req.auth!.tenantId } });
   if (!task) return res.status(404).json({ error: "Task not found" });
+  // تدقيق ERP-12: الموظف (STAFF) بيغيّر حالة مهمته هو بس (أو مهمة مش متوزّعة على حد) -
+  // العنوان/المسؤول/الأولوية/الميعاد للإدارة
+  if (req.auth!.role === "STAFF") {
+    const keys = Object.keys(parsed.data).filter((k) => (parsed.data as Record<string, unknown>)[k] !== undefined);
+    if (keys.some((k) => k !== "status")) return res.status(403).json({ error: "Only managers can edit a task's details" });
+    if (task.assigneeId) {
+      const me = await prisma.employee.findFirst({ where: { tenantId: req.auth!.tenantId, userId: req.auth!.userId }, select: { id: true } });
+      if (me?.id !== task.assigneeId) return res.status(403).json({ error: "This task is assigned to someone else" });
+    }
+  }
   try {
     await assertTenantOwns(req.auth!.tenantId, { employeeIds: [parsed.data.assigneeId] });
   } catch (err: any) {

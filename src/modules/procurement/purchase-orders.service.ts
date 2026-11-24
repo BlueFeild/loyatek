@@ -1,6 +1,6 @@
 import { prisma } from "../../config/db";
 import type { Prisma } from "@prisma/client";
-import { assertTenantOwns } from "../../utils/tenant-owned";
+import { assertItemsInBranch, assertTenantOwns } from "../../utils/tenant-owned";
 
 interface CreatePOInput {
   tenantId: string;
@@ -17,6 +17,7 @@ export async function createPurchaseOrder(input: CreatePOInput) {
     supplierIds: [input.supplierId],
     itemIds: input.items.map((i) => i.itemId),
   });
+  await assertItemsInBranch(input.tenantId, input.branchId, input.items.map((i) => i.itemId));
   return prisma.purchaseOrder.create({
     data: {
       tenantId: input.tenantId,

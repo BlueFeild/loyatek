@@ -21,10 +21,23 @@ export async function createJournalEntry(input: CreateJournalEntryInput) {
     throw new Error("A journal entry needs at least two lines (double-entry)");
   }
 
-  const totalDebit = input.lines.reduce((sum, l) => sum + (l.debit ?? 0), 0);
-  const totalCredit = input.lines.reduce((sum, l) => sum + (l.credit ?? 0), 0);
+  // كل سطر = مدين أو دائن بس، بمبلغ أكبر من صفر (تدقيق ERP-09: سطور 0/0 أو مدين ودائن مع بعض
+  // كانت بتتقبل). المبالغ بتتقرّب لـ 6 خانات زي عمود قاعدة البيانات، والمقارنة بالأرقام الصحيحة
+  // عشان جمع الكسور العشرية مايطلّعش فرق وهمي
+  const units = (n: number | undefined) => Math.round((n ?? 0) * 1e6);
+  for (const l of input.lines) {
+    const d = units(l.debit);
+    const c = units(l.credit);
+    if (!Number.isFinite(d) || !Number.isFinite(c) || d < 0 || c < 0) throw new Error("Amounts must be positive numbers");
+    if (d > 0 && c > 0) throw new Error("Each line is either a debit or a credit — not both");
+    if (d === 0 && c === 0) throw new Error("Each line needs an amount");
+  }
+  const debitUnits = input.lines.reduce((sum, l) => sum + units(l.debit), 0);
+  const creditUnits = input.lines.reduce((sum, l) => sum + units(l.credit), 0);
+  const totalDebit = debitUnits / 1e6;
+  const totalCredit = creditUnits / 1e6;
 
-  if (Math.abs(totalDebit - totalCredit) > 0.001) {
+  if (Math.abs(debitUnits - creditUnits) > 1000) {
     throw new Error(
       `Journal entry is not balanced: total debit (${totalDebit}) must equal total credit (${totalCredit})`
     );

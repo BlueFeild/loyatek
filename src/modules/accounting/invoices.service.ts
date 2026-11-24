@@ -3,6 +3,7 @@ import { prisma } from "../../config/db";
 import { generateZatcaQrPayload } from "./zatca-qr";
 import { getTenantMoney, payableAmount } from "../../utils/money";
 import { assertTenantOwns } from "../../utils/tenant-owned";
+import { isUniqueViolation } from "../../utils/prisma-errors";
 
 export const VAT_RATE = 0.05; // 5% - نفس المعيار المستخدم في دول الخليج
 
@@ -21,9 +22,14 @@ interface CreateInvoiceInput {
   notes?: string | null;
 }
 
-async function nextInvoiceNumber(tenantId: string): Promise<string> {
-  const count = await prisma.invoice.count({ where: { tenantId } });
-  return `INV-${String(count + 1).padStart(4, "0")}`;
+// الرقم الجاي = أكبر رقم INV-xxxx موجود + 1 (مش عدد الفواتير: مسح مسودة كان بيكرّر رقم).
+// فاتورتين في نفس اللحظة ممكن ياخدوا نفس الرقم → الـ unique بيرفض التانية فنجرّب الرقم اللي بعده (تدقيق ERP-10)
+async function nextInvoiceNumber(tenantId: string, bump = 0): Promise<string> {
+  const rows = await prisma.$queryRaw<{ n: number | null }[]>`
+    SELECT MAX(CAST(SUBSTRING("invoiceNumber" FROM 5) AS INTEGER)) AS n
+    FROM invoices WHERE "tenantId" = ${tenantId} AND "invoiceNumber" ~ '^INV-[0-9]{1,9}$'`;
+  const last = Number(rows[0]?.n ?? 0);
+  return `INV-${String(last + 1 + bump).padStart(4, "0")}`;
 }
 
 // إنشاء فاتورة مسودة - لسه ما اتصدرتش، مفيش قيد محاسبي ولا QR لسه
@@ -34,21 +40,27 @@ export async function createInvoice(input: CreateInvoiceInput) {
   const vatAmount = Math.round(subtotal * VAT_RATE * 100) / 100;
   const total = subtotal + vatAmount;
 
-  return prisma.invoice.create({
-    data: {
-      tenantId: input.tenantId,
-      branchId: input.branchId,
-      customerId: input.customerId,
-      dueDate: input.dueDate ?? null,
-      notes: input.notes ?? null,
-      invoiceNumber: await nextInvoiceNumber(input.tenantId),
-      subtotal,
-      vatAmount,
-      total,
-      items: { create: input.items },
-    },
-    include: { items: true, customer: true },
-  });
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await prisma.invoice.create({
+        data: {
+          tenantId: input.tenantId,
+          branchId: input.branchId,
+          customerId: input.customerId,
+          dueDate: input.dueDate ?? null,
+          notes: input.notes ?? null,
+          invoiceNumber: await nextInvoiceNumber(input.tenantId, attempt),
+          subtotal,
+          vatAmount,
+          total,
+          items: { create: input.items },
+        },
+        include: { items: true, customer: true },
+      });
+    } catch (err) {
+      if (!isUniqueViolation(err) || attempt >= 8) throw err;
+    }
+  }
 }
 
 // أهم عملية: إصدار الفاتورة فعليًا. ده بيعمل 3 حاجات سوا جوه transaction واحدة:

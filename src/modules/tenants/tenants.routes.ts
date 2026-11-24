@@ -8,6 +8,7 @@ import { generateUniqueSlug } from "../../utils/slug";
 import { ALL_MODULES, getEffectiveModules, isInGrace, isTrialActive, moduleExpiry } from "../../utils/modules";
 import { tenantGraceDays } from "../../utils/platform-config";
 import { CURRENCY_CODES, getRates } from "../../utils/money";
+import { requireModule } from "../../middleware/module-access";
 
 export const tenantsRouter = Router();
 
@@ -107,7 +108,8 @@ tenantsRouter.get("/branches", async (req, res) => {
 // حقيقي مباشر مش متوفر عندنا - كل رقم بيتعرض بعملة فرعه الأصلية)
 // حسابات كل فرع لوحدها: مبيعات، إيرادات ومصروفات من القيود (أرباح وخسائر الفرع)،
 // وفواتير الموردين اللي لسه مش مدفوعة. ?month=2026-10 = الشهر ده بس
-tenantsRouter.get("/branches/summary", async (req, res) => {
+// أرقام مالية = إدارة + اشتراك ERP (تدقيق ERP-13)
+tenantsRouter.get("/branches/summary", requireRole("OWNER", "ADMIN", "MANAGER"), requireModule("erp"), async (req, res) => {
   const tenantId = req.auth!.tenantId;
   const branches = await prisma.branch.findMany({ where: { tenantId } });
   const period = periodFilter(req.query as Record<string, unknown>);

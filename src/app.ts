@@ -62,6 +62,7 @@ import { integrationsRouter } from "./modules/integrations/integrations.routes";
 import { publicApiRouter } from "./modules/integrations/public-api.routes";
 import { adminMetaRatesRouter, publicMetaRatesRouter } from "./modules/whatsapp/meta-rates.routes";
 import { AppError } from "./core/errors";
+import { prismaErrorResponse } from "./utils/prisma-errors";
 import { getPlatformConfig, getRegionalPricing } from "./utils/platform-config";
 import { visitorCountry } from "./utils/visitor-country";
 import { hideInternalErrors, securityHeaders } from "./middleware/security-headers";
@@ -226,6 +227,9 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
   }
   // أخطاء متوقعة من منطق الشغل (core/errors.ts) - رسالتها معمولة للمستخدم
   if (err instanceof AppError) return res.status(err.status).json({ error: err.message, code: err.code, ...(err.details ?? {}) });
+  // أخطاء Prisma المعروفة = غلطة في البيانات اللي اتبعتت، مش عطل في السيرفر (تدقيق ERP-14)
+  const known = prismaErrorResponse(err);
+  if (known) return res.status(known.status).json(known.body);
   console.error(`[error] ${req.method} ${req.originalUrl}:`, err?.stack ?? err);
   res.status(500).json({ error: "Internal server error" });
 });

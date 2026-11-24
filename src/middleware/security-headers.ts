@@ -26,6 +26,11 @@ export function hideInternalErrors(req: Request, res: Response, next: NextFuncti
       const msg = (body as { error: string }).error;
       if (isInternalErrorMessage(msg)) {
         console.error(`[error] ${req.method} ${req.path}: ${msg.slice(0, 2000)}`);
+        // قيمة مكررة (unique) = 409 برسالة مفهومة بدل "حصل خطأ" (تدقيق ERP-14)
+        if (/Unique constraint failed/.test(msg)) {
+          res.status(409);
+          return json({ ...(body as object), error: "This already exists — use a different value (for example another code or SKU)", code: "ALREADY_EXISTS" });
+        }
         return json({ ...(body as object), error: "Something went wrong on our side — please try again." });
       }
     }

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../config/db";
-import { assertTenantOwns } from "../../utils/tenant-owned";
+import { assertItemsInBranch, assertTenantOwns } from "../../utils/tenant-owned";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { requireModule } from "../../middleware/module-access";
 
@@ -43,6 +43,7 @@ rfqRouter.post("/", requireRole("OWNER", "ADMIN", "MANAGER"), async (req, res) =
       itemIds: [parsed.data.itemId],
       supplierIds: parsed.data.quotes.map((q) => q.supplierId),
     });
+    await assertItemsInBranch(req.auth!.tenantId, parsed.data.branchId, [parsed.data.itemId]);
   } catch (err: any) {
     return res.status(400).json({ error: err.message });
   }

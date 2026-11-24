@@ -55,6 +55,8 @@ supportRouter.patch("/tickets/:id", async (req, res) => {
 
   const ticket = await prisma.supportTicket.findFirst({ where: { id: req.params.id, tenantId: req.auth!.tenantId } });
   if (!ticket) return res.status(404).json({ error: "Ticket not found" });
+  // الأولوية للإدارة بس (تدقيق ERP-12) - الموظف يغيّر الحالة
+  if (parsed.data.priority !== undefined && req.auth!.role === "STAFF") return res.status(403).json({ error: "Only managers can change the priority" });
 
   const updated = await prisma.supportTicket.update({
     where: { id: ticket.id },
@@ -64,7 +66,8 @@ supportRouter.patch("/tickets/:id", async (req, res) => {
   res.json(updated);
 });
 
-const addReplySchema = z.object({ authorName: z.string().min(1), message: z.string().min(1) });
+// اسم اللي رد بيتاخد من حسابه (تدقيق ERP-12) - authorName اللي جاي من المتصفح بيتجاهل
+const addReplySchema = z.object({ authorName: z.string().optional(), message: z.string().trim().min(1).max(5000) });
 
 supportRouter.post("/tickets/:id/replies", async (req, res) => {
   const parsed = addReplySchema.safeParse(req.body);
@@ -73,8 +76,9 @@ supportRouter.post("/tickets/:id/replies", async (req, res) => {
   const ticket = await prisma.supportTicket.findFirst({ where: { id: req.params.id, tenantId: req.auth!.tenantId } });
   if (!ticket) return res.status(404).json({ error: "Ticket not found" });
 
+  const me = await prisma.user.findUnique({ where: { id: req.auth!.userId }, select: { name: true, email: true } });
   const reply = await prisma.supportTicketReply.create({
-    data: { ticketId: ticket.id, ...parsed.data },
+    data: { ticketId: ticket.id, authorName: me?.name || me?.email || "Team member", message: parsed.data.message },
   });
   await prisma.supportTicket.update({ where: { id: ticket.id }, data: { status: "IN_PROGRESS" } });
   res.status(201).json(reply);
