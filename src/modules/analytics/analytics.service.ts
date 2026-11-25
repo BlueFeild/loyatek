@@ -17,9 +17,10 @@ export async function trackPlatformEvent(input: {
   }
 }
 
+// كله بتوقيت UTC: قبل كده setHours (توقيت السيرفر) + toISOString (UTC) كانوا بيزحّلوا اليوم لو السيرفر مش UTC
 function startOfDay(d: Date) {
   const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
+  x.setUTCHours(0, 0, 0, 0);
   return x;
 }
 
@@ -34,7 +35,7 @@ function lastNDays(n: number): string[] {
   const today = startOfDay(new Date());
   for (let i = n - 1; i >= 0; i--) {
     const d = new Date(today);
-    d.setDate(d.getDate() - i);
+    d.setUTCDate(d.getUTCDate() - i);
     days.push(dayKey(d));
   }
   return days;
