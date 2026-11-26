@@ -10,6 +10,7 @@ import { startSeatReminderScheduler } from "./jobs/seat-reminders";
 import { startWhatsappSequenceScheduler } from "./jobs/whatsapp-sequences";
 import { startSmsScheduler } from "./jobs/sms-scheduler";
 import { startBookingPaymentExpiryScheduler } from "./jobs/booking-payment-expiry";
+import { startShippingTrackingScheduler } from "./jobs/shipping-tracking";
 import { prisma, sealLegacyWhatsappSecrets } from "./config/db";
 import { isShuttingDown, markShuttingDown } from "./utils/shutdown";
 
@@ -42,6 +43,8 @@ const server = app.listen(PORT, () => {
   startSmsScheduler(Number(process.env.SMS_SCHEDULER_INTERVAL_MS) || undefined);
   // حجوزات الدفع الأونلاين اللي ماتدفعتش في ساعة بتتلغي (الميعاد يرجع متاح)
   startBookingPaymentExpiryScheduler(Number(process.env.BOOKING_PAYMENT_EXPIRY_INTERVAL_MS) || undefined);
+  // تتبّع شحنات المتجر (Aramex / FedEx / DHL) كل ساعتين - DISABLE_SHIPPING_TRACKING=1 يقفله
+  startShippingTrackingScheduler(Number(process.env.SHIPPING_TRACKING_INTERVAL_MS) || undefined);
 });
 
 // إيقاف هادي (تدقيق INFRA-003): Railway بيبعت SIGTERM قبل ما يقفل النسخة القديمة.

@@ -283,7 +283,19 @@ const cartItems = z
 
 export const quoteInput = z.object({
   items: cartItems,
-  fulfillment: z.enum(["DELIVERY", "PICKUP"]),
+  // قديم: توصيل/استلام. الجديد = shippingOptionId (طريقة الشحن اللي العميل اختارها) والسيرفر بيعرف منها
+  fulfillment: z.enum(["DELIVERY", "PICKUP"]).optional().nullable(),
+  shippingOptionId: z.string().trim().max(90).optional().nullable(),
+  country: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z]{2}$/, "Choose your country")
+    .transform((v) => v.toUpperCase())
+    .optional()
+    .nullable()
+    .or(z.literal("").transform(() => null)),
+  city: z.string().trim().max(80).optional().nullable(),
+  postalCode: z.string().trim().max(20).optional().nullable(),
   area: z.string().trim().max(60).optional().nullable(),
   couponCode: z.string().trim().max(30).optional().nullable(),
   customerPhone: z.string().trim().max(30).optional().nullable(),

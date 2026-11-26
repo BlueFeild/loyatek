@@ -2922,6 +2922,11 @@ model StoreSettings {
   taxOnShipping    Boolean  @default(false)
   // شكل المتجر: الخط، الكروت، الأعمدة، شريط الإعلان، أقسام الرئيسية وترتيبها، آراء العملاء
   look             Json?
+  // طرق الشحن (2026-11-26): null = الطريقة القديمة (توصيل بالمناطق + استلام) - modules/store/shipping
+  shippingMethods  Json?
+  // عنوان الشحن (منين الطرد بيطلع) + الكرتونة الافتراضية
+  shippingOrigin   Json?
+  shippingPackage  Json?
   updatedAt        DateTime @updatedAt
 
   @@map("store_settings")
@@ -3174,12 +3179,69 @@ model StoreOrder {
   taxIncluded          Boolean  @default(false)
   taxLabel             String?
   merchantNote         String?  @db.Text
+  // طريقة الشحن اللي العميل اختارها + عنوانه (للشحن مع شركة) - 2026-11-26
+  shippingMethodId     String?
+  shippingMethodLabel  String?
+  shippingCarrier      String?
+  shippingService      String?
+  shippingCountry      String?
+  shippingCity         String?
+  shippingPostalCode   String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
   @@unique([tenantId, number])
   @@index([tenantId, createdAt])
   @@map("store_orders")
+}
+
+// حساب التاجر عند شركة شحن (Aramex / FedEx / DHL) - المفاتيح متشفّرة ومابترجعش للمتصفح أبدًا
+model StoreCarrierAccount {
+  id            String    @id @default(uuid())
+  tenantId      String
+  // ARAMEX | FEDEX | DHL
+  carrier       String
+  // TEST | LIVE
+  mode          String    @default("TEST")
+  // JSON متشفّر (token-crypto)
+  credentials   String    @db.Text
+  // آخر 4 أرقام من رقم الحساب (للعرض)
+  accountHint   String?
+  enabled       Boolean   @default(true)
+  lastCheckedAt DateTime?
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([tenantId, carrier])
+  @@map("store_carrier_accounts")
+}
+
+// شحنة طلب (واحدة لكل طلب): رقم التتبع + البوليصة (PDF) + أحداث التتبع
+model StoreShipment {
+  id             String    @id @default(uuid())
+  tenantId       String
+  orderId        String    @unique
+  carrier        String
+  service        String?
+  mode           String    @default("TEST")
+  // CREATING | CREATED | FAILED
+  status         String    @default("CREATING")
+  trackingNumber String?
+  labelPdf       Bytes?
+  labelUrl       String?   @db.Text
+  // PENDING | IN_TRANSIT | OUT_FOR_DELIVERY | DELIVERED | EXCEPTION | UNKNOWN
+  trackingStatus String?
+  trackingEvents Json?
+  lastTrackedAt  DateTime?
+  deliveredAt    DateTime?
+  error          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([tenantId, createdAt])
+  @@index([status, trackingStatus])
+  @@map("store_shipments")
 }
 
 // ======================================================================

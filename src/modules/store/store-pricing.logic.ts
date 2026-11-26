@@ -290,6 +290,8 @@ export function quoteCart(args: {
   customerUses?: number;
   now: Date;
   fmt: (usd: number) => string;
+  // طرق الشحن الجديدة (modules/store/shipping): بتحسب سعر الشحن بعد الخصم. من غيرها = التوصيل القديم
+  shipping?: (goods: number, freeShipping: boolean) => { fee: number; area: string | null; free: "coupon" | "threshold" | null };
 }): Quote {
   const cart = priceLines(args.lines, args.products, args.now);
   let discount = 0;
@@ -300,7 +302,7 @@ export function quoteCart(args: {
     freeShipping = r.freeShipping;
   }
   const goods = round6(cart.subtotal - discount);
-  const d = deliveryFeeFor(args.delivery, args.fulfillment, args.area, goods, freeShipping);
+  const d = args.shipping ? args.shipping(goods, freeShipping) : deliveryFeeFor(args.delivery, args.fulfillment, args.area, goods, freeShipping);
   const t = taxFor(args.tax, goods, d.fee);
   const total = round6(goods + d.fee + (t.included ? 0 : t.amount));
   return {

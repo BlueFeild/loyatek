@@ -37,11 +37,13 @@ import { StoreCatalogRepository } from "./store-catalog.repository";
 import { StoreService, tooManyOrders } from "./store.service";
 import { clientIp } from "../../utils/visitor-country";
 import { StoreCsvService } from "./store-csv.service";
+import { orderShipmentRouter, shippingRouter } from "./shipping/shipping.routes";
+import { shippingService } from "./shipping/shipping.wiring";
 
 // المتجر الإلكتروني: الراوترات بتتأكد من البيانات (zod) وتنادي الخدمة بس - المنطق في store.service.ts / store-catalog.service.ts
 const repo = new StoreRepository(prisma);
 const catalogRepo = new StoreCatalogRepository(prisma);
-export const storeService = new StoreService(repo, catalogRepo);
+export const storeService = new StoreService(repo, catalogRepo, shippingService);
 const svc = storeService;
 const cat = storeService.catalog;
 const csv = new StoreCsvService(repo, catalogRepo, cat);
@@ -157,6 +159,10 @@ storeRouter.post("/products/:id/variations/bulk", editors, async (req, res) => r
 storeRouter.post("/products/:id/variations", editors, async (req, res) => res.status(201).json(await svc.addVariation(tid(req), uuidParam(req.params.id, "Product not found"), body(variationInput, req))));
 storeRouter.patch("/products/:id/variations/:vid", editors, async (req, res) => res.json(await svc.updateVariation(tid(req), uuidParam(req.params.id, "Product not found"), uuidParam(req.params.vid, "Choice not found"), body(variationPatch, req))));
 storeRouter.delete("/products/:id/variations/:vid", editors, async (req, res) => res.json(await svc.deleteVariation(tid(req), uuidParam(req.params.id, "Product not found"), uuidParam(req.params.vid, "Choice not found"))));
+
+// ---------- الشحن (طرق + شركات Aramex / FedEx / DHL + شحنة كل طلب) ----------
+storeRouter.use("/shipping", shippingRouter);
+storeRouter.use("/orders/:id/shipment", orderShipmentRouter);
 
 // ---------- الطلبات ----------
 storeRouter.get("/orders", async (req, res) => {

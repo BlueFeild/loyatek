@@ -40,7 +40,9 @@ import {
   type VariationRow,
   SORTS,
 } from "./store-catalog.logic";
-import { normalizeCode, phoneKey, quoteCart, stockToReturn, soldOutMessage, type CouponRule, type DeliveryConfig, type ProductForPricing, type Quote, type TaxConfig } from "./store-pricing.logic";
+import { normalizeCode, phoneKey, priceLines, quoteCart, stockToReturn, soldOutMessage, type CouponRule, type DeliveryConfig, type ProductForPricing, type Quote, type TaxConfig } from "./store-pricing.logic";
+import type { ShippingService } from "./shipping/shipping.service";
+import { pickOption, shippingOptions, type OptionsResult, type ShippingOption } from "./shipping/shipping.logic";
 import { lookInput, mergeLook, readLook } from "./store-look.logic";
 import { StoreRepository } from "./store.repository";
 import { StoreCatalogRepository } from "./store-catalog.repository";
@@ -93,6 +95,8 @@ function cardInput(p: ProductRow) {
   return { ...saleOf(p), id: p.id, type: p.type, stock: p.stock, backorders: p.backorders, variations: p.variations.map(variationRow) };
 }
 
+type ShipState = { result: OptionsResult | null; selected: ShippingOption | null; error: string | null; needsAddress: boolean };
+
 // حماية بسيطة من الإزعاج: عدد الطلبات من نفس الـ IP في 10 دقايق
 const orderHits = new Map<string, number[]>();
 export function tooManyOrders(ip: string, limit = Number(process.env.STORE_ORDERS_PER_10MIN) || 20): boolean {
@@ -108,7 +112,9 @@ export class StoreService {
   readonly catalog: StoreCatalogService;
   constructor(
     private readonly repo: StoreRepository,
-    readonly catalogRepo: StoreCatalogRepository
+    readonly catalogRepo: StoreCatalogRepository,
+    // طرق الشحن + شركات الشحن (اختياري: من غيره = التوصيل القديم بس)
+    private readonly shipping?: ShippingService
   ) {
     this.catalog = new StoreCatalogService(catalogRepo);
   }
@@ -492,7 +498,8 @@ export class StoreService {
     const todayStart = zonedDateHourToUtc(todayKey, 0, tz);
     const weekStart = new Date(todayStart.getTime() - 6 * 24 * 3600_000);
     const [orders, stats, slug] = await Promise.all([this.repo.orders(tenantId, status), this.repo.orderStats(tenantId, todayStart, weekStart), this.slug(tenantId)]);
-    return { orders: orders.map((o) => this.orderView(o, slug)), stats };
+    const shipments = this.shipping ? await this.shipping.shipmentsFor(tenantId, orders.map((o) => o.id)) : new Map();
+    return { orders: orders.map((o) => ({ ...this.orderView(o, slug), shipment: shipments.get(o.id) ?? null })), stats };
   }
 
   private orderView(o: OrderRow, slug: string) {
@@ -513,7 +520,8 @@ export class StoreService {
   async order(tenantId: string, id: string) {
     const o = await this.repo.order(tenantId, id);
     if (!o) throw new NotFoundError("Order not found");
-    return this.orderView(o, await this.slug(tenantId));
+    const shipment = this.shipping ? await this.shipping.shipmentView(tenantId, id) : null;
+    return { ...this.orderView(o, await this.slug(tenantId)), shipment };
   }
 
   async updateOrder(tenantId: string, id: string, input: { status?: OrderStatus; trackingUrl?: string | null; note?: string | null; merchantNote?: string | null }) {
@@ -678,6 +686,7 @@ export class StoreService {
       contact: { whatsapp: s.whatsapp, phone: s.phone, email: s.email, instagram: s.instagram, address: s.address },
       delivery: { enabled: s.deliveryEnabled, fee: Number(s.deliveryFee), freeOver: num(s.freeDeliveryOver), areas: readAreas(s.deliveryAreas) },
       pickup: { enabled: s.pickupEnabled, address: s.pickupAddress },
+      shipping: this.shipping ? this.shipping.publicMethods(s) : null,
       tax: { enabled: s.taxEnabled && Number(s.taxRate) > 0, rate: Number(s.taxRate), inclusive: s.pricesIncludeTax, label: s.taxLabel || "VAT" },
       hasCoupons: coupons.some((c) => c.active && (!c.expiresAt || c.expiresAt > now)),
       currency,
@@ -927,29 +936,68 @@ export class StoreService {
       };
     }
     const fmt = (usd: number) => formatUsdAs(usd, money.currency, money.rates);
-    return { products, coupon, settings, money, fmt };
+    const weights = new Map(rows.map((p) => [p.id, num(p.weightKg)]));
+    return { products, coupon, settings, money, fmt, weights };
   }
 
-  private async runQuote(tenantId: string, input: QuoteInput, now: Date) {
+  // lenient = عرض السعر (السلة/الدفع): طريقة شحن مش متاحة مابتوقعش الحساب - بترجع الخيارات + السبب.
+  // الطلب الفعلي (placeOrder) = مش lenient: لازم طريقة متاحة، وسعرها من هنا بس
+  private async runQuote(tenantId: string, input: QuoteInput, now: Date, lenient = false) {
     const ctx = await this.pricingContext(tenantId, input);
     const uses = ctx.coupon && ctx.coupon.maxPerCustomer != null && input.customerPhone ? await this.catalogRepo.customerUses(tenantId, ctx.coupon.id, phoneKey(input.customerPhone)) : 0;
+    const ship: ShipState = { result: null, selected: null, error: null, needsAddress: false };
+    let shippingFee: ((goods: number, couponFree: boolean) => { fee: number; area: string | null; free: "coupon" | "threshold" | null }) | undefined;
+    if (this.shipping) {
+      const { methods } = this.shipping.methodsOf(ctx.settings);
+      const dest = { country: input.country ?? null, city: input.city ?? null, area: input.area ?? null, postalCode: input.postalCode ?? null };
+      // أسعار الشركات محتاجة قيمة البضاعة (للجمارك) قبل الحساب النهائي
+      const declared = priceLines(input.items, ctx.products, now).subtotal;
+      const carrierRates = await this.shipping.carrierRates(tenantId, ctx.settings, methods, { lines: input.items, weights: ctx.weights, dest, declaredUsd: declared });
+      const pub = this.shipping.publicMethods(ctx.settings);
+      ship.needsAddress = pub.needsAddress;
+      const homeCountry = pub.homeCountry;
+      shippingFee = (goods, couponFree) => {
+        const result = shippingOptions(methods, dest, goods, couponFree, carrierRates, homeCountry);
+        ship.result = result;
+        try {
+          const o = pickOption(result, input.shippingOptionId, input.fulfillment ?? null);
+          ship.selected = o;
+          return { fee: o.fee, area: o.area, free: o.free };
+        } catch (e) {
+          if (!lenient || !(e instanceof AppError)) throw e;
+          ship.error = e.message;
+          return { fee: 0, area: null, free: null };
+        }
+      };
+    }
     const quote = quoteCart({
+      shipping: shippingFee,
       lines: input.items,
       products: ctx.products,
       delivery: deliveryConfig(ctx.settings),
       tax: taxConfig(ctx.settings),
-      fulfillment: input.fulfillment,
+      fulfillment: input.fulfillment ?? "DELIVERY",
       area: input.area,
       coupon: ctx.coupon,
       customerUses: uses,
       now,
       fmt: ctx.fmt,
     });
-    return { quote, ctx };
+    return { quote, ctx, ship };
   }
 
-  private quoteView(q: Quote, slug: string) {
+  private quoteView(q: Quote, slug: string, ship?: ShipState) {
     return {
+      shipping: ship?.result
+        ? {
+            options: ship.result.options.map((o) => ({ id: o.id, type: o.type, label: o.label, fee: o.fee, free: o.free, estimate: o.estimate, carrier: o.carrier, needsArea: o.needsArea, fulfillment: o.fulfillment })),
+            unavailable: ship.result.unavailable.map((u) => ({ id: u.methodId, label: u.label, reason: u.reason === "MIN_ORDER" ? "Your order is below the minimum" : u.reason })),
+            selected: ship.selected?.id ?? null,
+            fulfillment: ship.selected?.fulfillment ?? null,
+            error: ship.error,
+            needsAddress: ship.needsAddress,
+          }
+        : null,
       lines: q.lines.map((l) => ({ productId: l.productId, variationId: l.variationId, name: l.name, options: l.options, price: l.price, regularPrice: l.regularPrice, qty: l.qty, photoUrl: l.photoId ? photoUrl(slug, l.photoId) : null })),
       subtotal: q.subtotal,
       discount: q.discount,
@@ -970,12 +1018,12 @@ export class StoreService {
     const tenant = await this.liveTenant(slug);
     const now = new Date();
     try {
-      const { quote } = await this.runQuote(tenant.id, input, now);
-      return { ...this.quoteView(quote, slug), couponError: null as string | null };
+      const { quote, ship } = await this.runQuote(tenant.id, input, now, true);
+      return { ...this.quoteView(quote, slug, ship), couponError: null as string | null };
     } catch (e) {
       if (e instanceof AppError && e.code?.startsWith("COUPON_") && input.couponCode) {
-        const { quote } = await this.runQuote(tenant.id, { ...input, couponCode: null }, now);
-        return { ...this.quoteView(quote, slug), couponError: e.message };
+        const { quote, ship } = await this.runQuote(tenant.id, { ...input, couponCode: null }, now, true);
+        return { ...this.quoteView(quote, slug, ship), couponError: e.message };
       }
       throw e;
     }
@@ -984,10 +1032,17 @@ export class StoreService {
   async placeOrder(slug: string, input: CheckoutInput, frontendBase: string) {
     const tenant = await this.liveTenant(slug);
     const settings = await this.repo.settings(tenant.id);
-    if (!settings.deliveryEnabled && !settings.pickupEnabled) throw new AppError(400, "NOT_TAKING_ORDERS", "This shop isn't taking orders right now.");
-    if (input.fulfillment === "DELIVERY" && !(input.address && input.address.trim().length >= 3)) throw new AppError(400, "NEED_ADDRESS", "Please write your delivery address.");
+    const takingOrders = this.shipping ? this.shipping.methodsOf(settings).methods.some((m) => m.enabled) : settings.deliveryEnabled || settings.pickupEnabled;
+    if (!takingOrders) throw new AppError(400, "NOT_TAKING_ORDERS", "This shop isn't taking orders right now.");
+    // العنوان قبل الحساب (رسالة أوضح من "طريقة الشحن مش متاحة")
+    if (!input.shippingOptionId && input.fulfillment === "DELIVERY" && !(input.address && input.address.trim().length >= 3))
+      throw new AppError(400, "NEED_ADDRESS", "Please write your delivery address.");
     const now = new Date();
-    const { quote, ctx } = await this.runQuote(tenant.id, input, now);
+    const { quote, ctx, ship } = await this.runQuote(tenant.id, input, now);
+    const chosen = ship.selected;
+    const fulfillment = chosen?.fulfillment ?? input.fulfillment ?? "DELIVERY";
+    if (fulfillment === "DELIVERY" && !(input.address && input.address.trim().length >= 3)) throw new AppError(400, "NEED_ADDRESS", "Please write your delivery address.");
+    if (chosen?.type === "CARRIER" && !(input.city && input.city.trim())) throw new AppError(400, "NEED_CITY", "Please write your city.");
 
     // طريقة الدفع (لو التاجر عامل طرق دفع والطلب مش ببلاش)
     const methods = await getTenantPaymentMethods(tenant.id);
@@ -1054,8 +1109,15 @@ export class StoreService {
             customerName: input.customerName,
             customerPhone: input.customerPhone,
             customerEmail: input.customerEmail || null,
-            fulfillment: input.fulfillment,
-            address: input.fulfillment === "DELIVERY" ? input.address?.trim() || null : null,
+            fulfillment,
+            address: fulfillment === "DELIVERY" ? input.address?.trim() || null : null,
+            shippingMethodId: chosen?.methodId ?? null,
+            shippingMethodLabel: chosen?.label ?? null,
+            shippingCarrier: chosen?.carrier ?? null,
+            shippingService: chosen?.service ?? null,
+            shippingCountry: fulfillment === "DELIVERY" ? input.country ?? null : null,
+            shippingCity: fulfillment === "DELIVERY" ? input.city?.trim() || null : null,
+            shippingPostalCode: fulfillment === "DELIVERY" ? input.postalCode?.trim() || null : null,
             area: quote.area,
             items: quote.lines.map(({ categoryIds: _c, ...l }) => l) as unknown as Prisma.InputJsonValue,
             subtotal: quote.subtotal,
@@ -1169,6 +1231,9 @@ export class StoreService {
     }
 
     const s = await this.repo.settings(tenant.id);
+    // الشحنة (رقم التتبع + الأحداث) بتظهر للعميل بعد ما التاجر يعملها فعلًا
+    const shipmentRaw = this.shipping ? await this.shipping.shipmentView(tenant.id, o.id) : null;
+    const shipment = shipmentRaw && shipmentRaw.status === "CREATED" ? shipmentRaw : null;
     let instructions: Record<string, unknown> | null = null;
     if (o.paymentMethodType) {
       const methods = await getTenantPaymentMethods(tenant.id);
@@ -1197,6 +1262,10 @@ export class StoreService {
       address: o.address,
       note: o.note,
       trackingUrl: o.trackingUrl,
+      shippingMethodLabel: o.shippingMethodLabel,
+      shipment: shipment
+        ? { carrierName: shipment.carrierName, trackingNumber: shipment.trackingNumber, trackingUrl: shipment.trackingUrl, status: shipment.trackingStatus, events: shipment.events.slice(0, 20).map((e) => ({ at: e.at, description: e.description, location: e.location ?? null })), deliveredAt: shipment.deliveredAt }
+        : null,
       items: items.map(({ purchaseNote: _p, ...l }) => ({ ...l, photoUrl: l.photoId ? photoUrl(slug, l.photoId) : null })),
       // ملاحظات بعد الشراء (زي WooCommerce "purchase note") - بتظهر للعميل بعد الطلب بس
       purchaseNotes: [...new Map(items.filter((l) => l.purchaseNote).map((l) => [l.productId, { name: l.name, note: l.purchaseNote! }])).values()],
