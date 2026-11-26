@@ -15,7 +15,7 @@ export const BOOKING_FONTS = ["modern", "elegant", "rounded"] as const;
 // تصميمات المنيو (شكل العرض نفسه، مش الألوان) - لازم تفضل نفس القائمة في الفرونت (frontend/src/data/menuDesigns.ts)
 export const MENU_DESIGNS = ["classic", "poster", "bistro", "cards", "rows", "magazine"] as const;
 // تصميمات صفحة الحجز - لازم تفضل نفس القائمة في الفرونت (frontend/src/data/bookingDesigns.ts)
-export const BOOKING_DESIGNS = ["classic", "signature", "clinic", "studio", "soft", "steps"] as const;
+export const BOOKING_DESIGNS = ["classic", "signature", "clinic", "studio", "soft", "steps", "care"] as const;
 
 const DATA_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
 
