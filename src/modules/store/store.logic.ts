@@ -292,7 +292,12 @@ export type QuoteInput = z.infer<typeof quoteInput>;
 
 export const checkoutInput = quoteInput.extend({
   customerName: z.string().trim().min(1).max(100),
-  customerPhone: z.string().trim().min(6).max(30),
+  // رقم حقيقي: 6 أرقام على الأقل (مش حروف) - عشان التاجر يقدر يكلّم العميل وحد الكوبون لكل عميل يشتغل
+  customerPhone: z
+    .string()
+    .trim()
+    .max(30)
+    .refine((v) => v.replace(/\D/g, "").length >= 6, "Please write a valid phone number"),
   customerEmail: z.string().trim().max(200).email().optional().nullable().or(z.literal("").transform(() => null)),
   address: z.string().trim().max(500).optional().nullable(),
   note: z.string().trim().max(1000).optional().nullable(),

@@ -373,3 +373,18 @@ describe("store CSV + look", () => {
     expect(readLook({ font: "comic", columns: 9 }, "clean")).toMatchObject({ font: "modern", columns: 4 });
   });
 });
+
+describe("store QA fixes (2026-11-26)", () => {
+  it("same product twice in the cart can't pass the 99 limit together", () => {
+    const big = { ...mug, stock: null };
+    expect(() => priceLines([{ productId: big.id, qty: 60 }, { productId: big.id, qty: 60 }], [big], NOW)).toThrow(/between 1 and 99/);
+    expect(priceLines([{ productId: big.id, qty: 50 }, { productId: big.id, qty: 49 }], [big], NOW).lines[0].qty).toBe(99);
+  });
+  it("checkout phone needs real digits", async () => {
+    const { checkoutInput } = await import("../modules/store/store.logic");
+    const base = { items: [{ productId: mug.id, qty: 1 }], fulfillment: "PICKUP" as const, customerName: "Sara" };
+    expect(checkoutInput.safeParse({ ...base, customerPhone: "abcdefgh" }).success).toBe(false);
+    expect(checkoutInput.safeParse({ ...base, customerPhone: "+974 ---" }).success).toBe(false);
+    expect(checkoutInput.safeParse({ ...base, customerPhone: "+974 5555 1234" }).success).toBe(true);
+  });
+});

@@ -167,8 +167,11 @@ export function priceLines(lines: CartLineInput[], products: ProductForPricing[]
     const e = effectivePrice(sale, now);
     const src = stockSource(p, v);
     const existing = priced.find((x) => x.productId === p.id && x.variationId === (v?.id ?? null));
-    if (existing) existing.qty += line.qty;
-    else
+    if (existing) {
+      existing.qty += line.qty;
+      // نفس المنتج مكرر في السلة: المجموع برضه لازم يفضل في الحد
+      if (existing.qty > MAX_QTY) throw new AppError(400, "BAD_QTY", `Quantity must be between 1 and ${MAX_QTY}.`);
+    } else
       priced.push({
         productId: p.id,
         variationId: v?.id ?? null,
