@@ -17,6 +17,7 @@ import { emitEvent } from "../integrations/events";
 import { bookingEventData } from "../integrations/event-data";
 import { assertTenantOwns } from "../../utils/tenant-owned";
 import { zeroOnUniqueClash } from "../../utils/prisma-errors";
+import { promoCodes } from "../promo/promo.wiring";
 
 // إعدادات الحجز لكل شركة - بتتنشئ تلقائيًا بقيم افتراضية أول مرة
 export async function getOrCreateSettings(tenantId: string) {
@@ -112,6 +113,8 @@ interface CreateBookingInput {
   services?: string[];
   // إجابات أسئلة الحجز {questionId: optionId} (booking-questions.ts)
   answers?: Record<string, string>;
+  // كود خصم من صفحة الحجز (modules/promo) - الخصم بيتحسب هنا على السيرفر بس
+  promoCode?: string;
 }
 
 function requireCalendarDate(value: string | Date) {
@@ -240,7 +243,10 @@ async function createBookingInner(input: CreateBookingInput & { redirectionUrlBa
   }
   // أسئلة الحجز: إجابة ممكن تزوّد السعر (حجم العربية مثلًا)
   const asked = resolveAnswers(settings.questions, input.answers);
-  const amount = Math.round((pricing.amount + asked.extraUsd) * 1e6) / 1e6;
+  const fullAmount = Math.round((pricing.amount + asked.extraUsd) * 1e6) / 1e6;
+  // كود الخصم: على الإجمالي كله (الخدمات + زيادات الأسئلة). كود غلط/منتهي = 400 برسالة واضحة
+  const promo = input.promoCode?.trim() ? await promoCodes.resolve(input.tenantId, "booking", input.promoCode, fullAmount) : null;
+  const amount = promo ? promo.totalUsd : fullAmount;
   // الدفع مفعّل بمبلغ صفر = مفيش حاجة تتدفع، فبيتعامل كحجز مجاني عادي
   const paymentOn = settings.paymentRequired && amount > 0;
 
@@ -256,25 +262,32 @@ async function createBookingInner(input: CreateBookingInput & { redirectionUrlBa
 
   let booking;
   try {
-    booking = await prisma.booking.create({
-      data: {
-        tenantId: input.tenantId,
-        branchId: input.branchId,
-        resourceId: input.resourceId,
-        customerName: input.customerName,
-        customerPhone: input.customerPhone,
-        customerEmail: isValidEmail(input.customerEmail) ? input.customerEmail.trim() : null,
-        date: dayStart,
-        hour: input.hour,
-        note: input.note,
-        services: pricing.services,
-        ...(asked.answers.length ? { answers: asked.answers } : {}),
-        paymentStatus: paymentOn ? "AWAITING_PAYMENT" : "NOT_REQUIRED",
-        amount: paymentOn ? amount : null,
-        paymentMethodType: method?.type ?? null,
-        paymentMethodLabel: method?.label ?? null,
-      },
-      include: { resource: true },
+    // الحجز + استخدام الكود في transaction واحدة: الميعاد اتاخد أو الكود خلص = ولا حاجة تتحفظ
+    booking = await prisma.$transaction(async (tx) => {
+      const created = await tx.booking.create({
+        data: {
+          tenantId: input.tenantId,
+          branchId: input.branchId,
+          resourceId: input.resourceId,
+          customerName: input.customerName,
+          customerPhone: input.customerPhone,
+          customerEmail: isValidEmail(input.customerEmail) ? input.customerEmail.trim() : null,
+          date: dayStart,
+          hour: input.hour,
+          note: input.note,
+          services: pricing.services,
+          ...(asked.answers.length ? { answers: asked.answers } : {}),
+          paymentStatus: paymentOn ? "AWAITING_PAYMENT" : "NOT_REQUIRED",
+          amount: paymentOn ? amount : null,
+          promoCode: promo?.code ?? null,
+          discountUsd: promo ? promo.discountUsd : null,
+          paymentMethodType: method?.type ?? null,
+          paymentMethodLabel: method?.label ?? null,
+        },
+        include: { resource: true },
+      });
+      if (promo) await promoCodes.redeem(tx, input.tenantId, "booking", promo, created.id);
+      return created;
     });
   } catch (err: unknown) {
     if (typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "P2002") {
@@ -321,6 +334,7 @@ async function createBookingInner(input: CreateBookingInput & { redirectionUrlBa
   if (!payment.ok) {
     // الدفع مابدأش خالص = الميعاد يرجع متاح على طول (تدقيق COM-02) بدل ما يفضل محجوز للأبد
     await prisma.booking.updateMany({ where: { id: booking.id, paymentStatus: "AWAITING_PAYMENT" }, data: { status: "CANCELLED" } });
+    if (booking.promoCode) await promoCodes.release(input.tenantId, "booking", booking.id);
     return { ...booking, status: "CANCELLED" as const, whatsappConfirmationSent: false, paymentUrl: null, paymentError: payment.error, paymentInstructions: null };
   }
 
@@ -413,6 +427,8 @@ export async function expireUnpaidBookings(now = new Date(), holdMinutes = Numbe
     }
     const done = await prisma.booking.updateMany({ where: { id: b.id, paymentStatus: "AWAITING_PAYMENT", status: { not: "CANCELLED" } }, data: { status: "CANCELLED" } });
     expired += done.count;
+    // الكود يرجع للي بعده
+    if (done.count) await promoCodes.release(b.tenantId, "booking", b.id);
   }
   return { expired, paid };
 }
@@ -420,7 +436,10 @@ export async function expireUnpaidBookings(now = new Date(), holdMinutes = Numbe
 export async function cancelBooking(tenantId: string, bookingId: string) {
   const booking = await prisma.booking.findFirst({ where: { id: bookingId, tenantId } });
   if (!booking) throw new Error("Booking not found");
-  return prisma.booking.update({ where: { id: bookingId }, data: { status: "CANCELLED" } });
+  const cancelled = await prisma.booking.update({ where: { id: bookingId }, data: { status: "CANCELLED" } });
+  // استخدام كود الخصم يرجع (مرة واحدة بس حتى لو اتلغى مرتين)
+  if (booking.status !== "CANCELLED") await promoCodes.release(tenantId, "booking", bookingId);
+  return cancelled;
 }
 
 export async function rescheduleBooking(tenantId: string, bookingId: string, newDate: string | Date, newHour: number) {

@@ -11,6 +11,7 @@ import { formatUsdAs, getTenantMoney, payableAmount } from "../../utils/money";
 import { isValidEmail, sendEmail } from "../../utils/email";
 import { emitEvent } from "../integrations/events";
 import { orderEventData } from "../integrations/event-data";
+import { promoCodes } from "../promo/promo.wiring";
 import { assertTenantOwns } from "../../utils/tenant-owned";
 import { zeroOnUniqueClash } from "../../utils/prisma-errors";
 import { nextOrderNumber } from "./kitchen";
@@ -78,6 +79,8 @@ interface CreateOrderInput {
   paymentMethodId?: string;
   // ملاحظة العميل للمطبخ ("من غير بصل") - بتظهر على شاشة المطبخ
   note?: string;
+  // كود خصم من المنيو العام (modules/promo) - الخصم بيتحسب هنا بس
+  promoCode?: string;
 }
 
 // إشعار داخلي حقيقي للمطعم إن أوردر جديد وصل - بيظهر فورًا لو الدفع مش
@@ -169,7 +172,10 @@ async function createOrderInner(input: CreateOrderInput) {
     return { menuItemId: item.id, name: item.name, price: menuItemFinalPrice(item, now), quantity: line.quantity };
   });
 
-  const totalAmount = Math.round(lines.reduce((sum, l) => sum + Number(l.price) * l.quantity, 0) * 1e6) / 1e6;
+  const subtotal = Math.round(lines.reduce((sum, l) => sum + Number(l.price) * l.quantity, 0) * 1e6) / 1e6;
+  // كود الخصم على إجمالي الطلب (بعد خصومات الأصناف). كود غلط/منتهي = 400 برسالة واضحة
+  const promo = input.promoCode?.trim() ? await promoCodes.resolve(input.tenantId, "menu", input.promoCode, subtotal, now) : null;
+  const totalAmount = promo ? promo.totalUsd : subtotal;
   const paymentOn = settings.paymentRequired && totalAmount > 0;
 
   // بنختار طريقة الدفع قبل ما الأوردر يتحفظ - اختيار غلط = رسالة واضحة
@@ -182,24 +188,31 @@ async function createOrderInner(input: CreateOrderInput) {
   }
 
   const orderNumber = await nextOrderNumber(input.tenantId);
-  const order = await prisma.catalogOrder.create({
-    data: {
-      tenantId: input.tenantId,
-      branchId: input.branchId,
-      orderNumber,
-      note: input.note?.trim().slice(0, 200) || null,
-      mode: input.mode,
-      tableLabel: input.tableLabel,
-      readyTime: input.readyTime,
-      customerName: input.customerName,
-      customerPhone: input.customerPhone,
-      totalAmount,
-      paymentStatus: paymentOn ? "AWAITING_PAYMENT" : "NOT_REQUIRED",
-      paymentMethodType: method?.type ?? null,
-      paymentMethodLabel: method?.label ?? null,
-      items: { create: lines },
-    },
-    include: { items: true },
+  // الطلب + استخدام الكود في transaction واحدة (آخر استخدام راح لحد تاني = الطلب مايتحفظش)
+  const order = await prisma.$transaction(async (tx) => {
+    const created = await tx.catalogOrder.create({
+      data: {
+        tenantId: input.tenantId,
+        branchId: input.branchId,
+        orderNumber,
+        note: input.note?.trim().slice(0, 200) || null,
+        mode: input.mode,
+        tableLabel: input.tableLabel,
+        readyTime: input.readyTime,
+        customerName: input.customerName,
+        customerPhone: input.customerPhone,
+        totalAmount,
+        promoCode: promo?.code ?? null,
+        discountUsd: promo ? promo.discountUsd : null,
+        paymentStatus: paymentOn ? "AWAITING_PAYMENT" : "NOT_REQUIRED",
+        paymentMethodType: method?.type ?? null,
+        paymentMethodLabel: method?.label ?? null,
+        items: { create: lines },
+      },
+      include: { items: true },
+    });
+    if (promo) await promoCodes.redeem(tx, input.tenantId, "menu", promo, created.id);
+    return created;
   });
 
   // من غير دفع - نفس السلوك القديم بالظبط، إشعار فوري للمطبخ
@@ -236,6 +249,8 @@ async function createOrderInner(input: CreateOrderInput) {
   });
 
   if (!payment.ok) {
+    // الدفع مابدأش = الطلب مش هيكمّل → استخدام الكود يرجع
+    if (promo) await promoCodes.release(input.tenantId, "menu", order.id);
     return { ...order, paymentUrl: null, paymentError: payment.error, paymentInstructions: null };
   }
 

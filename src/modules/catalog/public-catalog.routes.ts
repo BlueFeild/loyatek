@@ -13,6 +13,7 @@ import { clientIp } from "../../utils/visitor-country";
 const menuOrderLimiter = new SlidingWindowLimiter(envNumber("MENU_ORDERS_PER_10MIN", 20), 10 * 60_000);
 import { publicMenuItem } from "./menu-pricing";
 import { payerView } from "../../utils/payer-view";
+import { promoCodes } from "../promo/promo.wiring";
 
 // راوتر عام بالكامل - مفيهوش requireAuth خالص، لأن العميل اللي بيسكان
 // الـ QR على الترابيزة معندوش حساب ولا هيسجّل دخول. العزل هنا بيتم عن
@@ -41,7 +42,9 @@ publicCatalogRouter.get("/:slug/settings", async (req, res) => {
   // الأسعار متخزنة بالدولار - المنيو بيعرضها بعملة الشركة بالسعر ده
   const rates = await getRates();
   const currency = isCurrencyCode(tenant.displayCurrency) ? tenant.displayCurrency : "USD";
-  res.json({ ...publicSettings, brandNameFromTenant: tenant.name, paymentMethods, currency, rate: rateFor(currency, rates) });
+  // فيه أكواد خصم شغالة؟ → شاشة الطلب تعرض خانة "عندك كود خصم؟"
+  const promoCodesOn = await promoCodes.hasLive(tenant.id, "menu");
+  res.json({ ...publicSettings, brandNameFromTenant: tenant.name, paymentMethods, currency, rate: rateFor(currency, rates), promoCodes: promoCodesOn });
 });
 
 publicCatalogRouter.get("/:slug/categories", async (req, res) => {
@@ -69,6 +72,8 @@ const createOrderSchema = z.object({
   items: z.array(z.object({ menuItemId: z.string().uuid(), quantity: z.number().int().positive().max(99) })).min(1).max(60),
   paymentMethodId: z.string().max(64).optional(),
   note: z.string().trim().max(200).optional(),
+  // كود خصم (اختياري) - بيتحقق منه السيرفر
+  promoCode: z.string().trim().max(40).optional(),
 });
 
 // العميل الحقيقي بيبعت الطلب من هنا - بدون أي توكن، السعر بيتاخد من

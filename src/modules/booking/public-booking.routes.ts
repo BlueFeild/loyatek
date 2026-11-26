@@ -19,6 +19,7 @@ import { openHoursForDay } from "./opening-hours";
 import { SlidingWindowLimiter, envNumber } from "../../utils/rate-limit";
 import { clientIp } from "../../utils/visitor-country";
 import { payerView } from "../../utils/payer-view";
+import { promoCodes } from "../promo/promo.wiring";
 
 // حد للحجوزات العامة لكل جهاز (تدقيق COM-02): قبل كده أي حد كان يقدر يحجز كل المواعيد بسكريبت
 const bookingLimiter = new SlidingWindowLimiter(envNumber("PUBLIC_BOOKINGS_PER_10MIN", 10), 10 * 60_000);
@@ -55,7 +56,9 @@ publicBookingRouter.get("/:slug/settings", async (req, res) => {
   const servicePricing = publicServicePricing(settings, now);
   const serviceDetails = keepKnownServices((settings.serviceDetails ?? {}) as Record<string, unknown>, settings.services);
   const whatsappLogin = { required: await bookingNeedsWaLogin(tenant) };
-  res.json({ ...publicSettings, servicePrices, servicePricing, serviceDetails, paymentMethods, currency, rate: rateFor(currency, rates), whatsappLogin });
+  // فيه أكواد خصم شغالة؟ → الصفحة تعرض خانة "عندك كود خصم؟"
+  const promoCodesOn = await promoCodes.hasLive(tenant.id, "booking", now);
+  res.json({ ...publicSettings, servicePrices, servicePricing, serviceDetails, paymentMethods, currency, rate: rateFor(currency, rates), whatsappLogin, promoCodes: promoCodesOn });
 });
 
 publicBookingRouter.get("/:slug/resources", async (req, res) => {
@@ -94,6 +97,8 @@ const createBookingSchema = z.object({
   answers: answersInputSchema,
   // توكن "الدخول بالواتساب" لو التاجر طالب تأكيد الرقم قبل الحجز
   waLoginToken: z.string().max(2000).optional(),
+  // كود خصم (اختياري) - بيتحقق منه السيرفر
+  promoCode: z.string().trim().max(40).optional(),
 });
 
 publicBookingRouter.post("/:slug/bookings", async (req, res) => {
@@ -143,6 +148,7 @@ publicBookingRouter.post("/:slug/bookings", async (req, res) => {
       customerEmail: parsed.data.customerEmail || undefined,
       services: parsed.data.services,
       answers: parsed.data.answers,
+      promoCode: parsed.data.promoCode || undefined,
       // MyFatoorah v3 بيستخدم رابط رجوع واحد بس، وبيضيف paymentId له
       // تلقائيًا - إحنا اللي بنتأكد من الدفع الحقيقي بعد الرجوع
       redirectionUrlBase: `${frontendBase}/book/${req.params.slug}`,
