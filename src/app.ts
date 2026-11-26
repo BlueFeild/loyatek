@@ -35,6 +35,7 @@ import { platformWhatsappWebhookRouter, publicWhatsappWebhookRouter } from "./mo
 import { adminExchangeRatesRouter, publicExchangeRatesRouter } from "./modules/exchange-rates/exchange-rates.routes";
 import { publicWalletRouter } from "./modules/wallet/public-wallet.routes";
 import { publicContactRouter } from "./modules/contact/public-contact.routes";
+import { publicSiteAssistantRouter } from "./modules/site-assistant/site-assistant.routes";
 import { checkoutRouter } from "./modules/checkout/checkout.routes";
 import { publicCheckoutRouter } from "./modules/checkout/public-checkout.routes";
 import { publicSkipCashWebhookRouter } from "./modules/payments/skipcash-webhook.routes";
@@ -179,6 +180,8 @@ app.get("/api/public/pricing", async (req, res) => {
 app.use("/api/super-admin/exchange-rates", adminExchangeRatesRouter);
 app.use("/api/public/wallet", publicWalletRouter);
 app.use("/api/public/contact", publicContactRouter);
+// "اسأل BlueField" - المساعد الذكي على الموقع العام (من غير نقاط، حد لكل IP)
+app.use("/api/public/site-assistant", publicSiteAssistantRouter);
 app.use("/api/checkout", checkoutRouter);
 app.use("/api/public/checkout", publicCheckoutRouter);
 // SkipCash بتبلّغنا بحالة الدفع هنا (موقّع بالـ Webhook Key): المنصة على "/"، وكل تاجر على "/<token>" بتاعه
