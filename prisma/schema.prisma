@@ -830,6 +830,8 @@ model BookingSettings {
   servicePrices       Json     @default("{}")
   // خصم كل خدمة { "اسم الخدمة": { pct: 1-90, endsAt: ISO | null } }
   serviceDiscounts    Json?
+  // أسئلة قبل الحجز [{id,label,required,options:[{id,label,priceUsd}]}] (booking-questions.ts)
+  questions           Json?
   // إشعار للتاجر نفسه بكل حجز جديد: واتساب على رقمه و/أو إيميل (Resend).
   // waMerchantTemplate بيقبل {name} {phone} {resource} {date} {time} {payment} {services} {business} {reference}
   merchantWhatsapp    String   @default("")
@@ -917,6 +919,8 @@ model Booking {
   hour                 Int // ساعة الميعاد (0-23) - بديل بسيط وحقيقي عن توقيت كامل
   // الخدمات اللي العميل اختارها وقت الحجز
   services             String[]          @default([])
+  // إجابات العميل [{question, answer, priceUsd}]
+  answers              Json?
   status               BookingStatus     @default(CONFIRMED)
   note                 String?
   paymentStatus        PaymentGateStatus @default(NOT_REQUIRED)

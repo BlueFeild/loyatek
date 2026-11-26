@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { answersInputSchema } from "./booking-questions";
 import { bookingNeedsWaLogin } from "../wa-login/wa-login.routes";
 import { WaLoginService } from "../wa-login/wa-login.service";
 import { container } from "../../core/container";
@@ -90,6 +91,7 @@ const createBookingSchema = z.object({
   customerEmail: z.union([z.literal(""), z.string().trim().email().max(200)]).optional(),
   // الخدمات اللي اختارها (السعر بيتحسب على السيرفر)
   services: z.array(z.string().max(120)).max(30).optional(),
+  answers: answersInputSchema,
   // توكن "الدخول بالواتساب" لو التاجر طالب تأكيد الرقم قبل الحجز
   waLoginToken: z.string().max(2000).optional(),
 });
@@ -140,6 +142,7 @@ publicBookingRouter.post("/:slug/bookings", async (req, res) => {
       paymentMethodId: parsed.data.paymentMethodId,
       customerEmail: parsed.data.customerEmail || undefined,
       services: parsed.data.services,
+      answers: parsed.data.answers,
       // MyFatoorah v3 بيستخدم رابط رجوع واحد بس، وبيضيف paymentId له
       // تلقائيًا - إحنا اللي بنتأكد من الدفع الحقيقي بعد الرجوع
       redirectionUrlBase: `${frontendBase}/book/${req.params.slug}`,

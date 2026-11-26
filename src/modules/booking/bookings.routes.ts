@@ -19,6 +19,7 @@ import {
 import { parseCalendarDate } from "../../utils/calendarDate";
 import { isValidTimeZone } from "../../utils/timezone";
 import { holidaysSchema, weeklyHoursSchema } from "./opening-hours";
+import { answersInputSchema, questionsSchema } from "./booking-questions";
 import { imageDataUrlSchema } from "../../utils/image-data-url";
 
 export const bookingsRouter = Router();
@@ -68,6 +69,8 @@ const updateSettingsSchema = z.object({
   reminderEnabled: z.boolean().optional(),
   reminderHoursBefore: z.number().int().min(1).max(72).optional(),
   timezone: z.string().refine(isValidTimeZone, "Unknown time zone").optional(),
+  // أسئلة قبل الحجز (ممكن تزوّد السعر)
+  questions: questionsSchema.optional(),
   // شكل صفحة الحجز (القالب، اللون، الغلاف، صور الخدمات)
   ...pageDesignFields,
 });
@@ -123,6 +126,7 @@ const createBookingSchema = z.object({
   paymentMethodId: z.string().max(64).optional(),
   // الخدمات اللي اختارها (السعر بيتحسب على السيرفر)
   services: z.array(z.string().max(120)).max(30).optional(),
+  answers: answersInputSchema,
 });
 
 bookingsRouter.post("/",requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async (req, res) => {
@@ -142,6 +146,7 @@ bookingsRouter.post("/",requireRole("OWNER", "ADMIN", "MANAGER", "STAFF"), async
       note: parsed.data.note,
       paymentMethodId: parsed.data.paymentMethodId,
       services: parsed.data.services,
+      answers: parsed.data.answers,
       redirectionUrlBase: `${frontendBase}/booking`,
     });
     res.status(201).json(booking);

@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { answersText, resolveAnswers } from "./booking-questions";
 const DbNull = Prisma.DbNull;
 import { prisma } from "../../config/db";
 import { getOrCreateWhatsappSettings, recordWhatsappMessage, sendWhatsappTestMessage, sendWhatsappTextMessage } from "../whatsapp/whatsapp.service";
@@ -67,6 +68,7 @@ interface UpdateSettingsInput {
   heroTitle?: string;
   heroSubtitle?: string;
   serviceDetails?: Record<string, unknown>;
+  questions?: unknown[];
 }
 
 export async function updateSettings(tenantId: string, data: UpdateSettingsInput) {
@@ -108,6 +110,8 @@ interface CreateBookingInput {
   customerEmail?: string;
   // الخدمات اللي العميل اختارها (أسماء من إعدادات الحجز)
   services?: string[];
+  // إجابات أسئلة الحجز {questionId: optionId} (booking-questions.ts)
+  answers?: Record<string, string>;
 }
 
 function requireCalendarDate(value: string | Date) {
@@ -120,7 +124,7 @@ function requireCalendarDate(value: string | Date) {
 // لو الدفع مش مفعّل، أو بس بعد ما الدفع يتأكد فعليًا لو مفعّل - عشان
 // التاجر ميتاكدش من حجز حد لسه ما دفعش
 async function runBookingConfirmationSideEffects(
-  booking: { id: string; resourceId: string; customerName: string; customerPhone: string; customerEmail?: string | null; paymentMethodLabel?: string | null; date: Date; hour: number; services?: string[] },
+  booking: { id: string; resourceId: string; customerName: string; customerPhone: string; customerEmail?: string | null; paymentMethodLabel?: string | null; date: Date; hour: number; services?: string[]; answers?: unknown },
   tenantId: string,
   resourceName: string
 ) {
@@ -138,7 +142,7 @@ async function runBookingConfirmationSideEffects(
     time: `${String(booking.hour).padStart(2, "0")}:00`,
     payment: booking.paymentMethodLabel ?? "—",
     // Meta مابتقبلش متغير فاضي في القالب
-    services: (booking.services ?? []).join(", ") || "Appointment",
+    services: [(booking.services ?? []).join(", "), answersText(booking.answers)].filter(Boolean).join(" · ") || "Appointment",
     business: bookingSettings.brandName,
     reference: shortReference(booking.id),
     provider_phone: providerPhoneDigits ? `+${providerPhoneDigits}` : "—",
@@ -234,7 +238,9 @@ async function createBookingInner(input: CreateBookingInput & { redirectionUrlBa
   if (settings.paymentRequired && hasPricedServices(settings.servicePrices, settings.services) && pricing.services.length === 0) {
     throw new Error("Please choose at least one service.");
   }
-  const amount = pricing.amount;
+  // أسئلة الحجز: إجابة ممكن تزوّد السعر (حجم العربية مثلًا)
+  const asked = resolveAnswers(settings.questions, input.answers);
+  const amount = Math.round((pricing.amount + asked.extraUsd) * 1e6) / 1e6;
   // الدفع مفعّل بمبلغ صفر = مفيش حاجة تتدفع، فبيتعامل كحجز مجاني عادي
   const paymentOn = settings.paymentRequired && amount > 0;
 
@@ -262,6 +268,7 @@ async function createBookingInner(input: CreateBookingInput & { redirectionUrlBa
         hour: input.hour,
         note: input.note,
         services: pricing.services,
+        ...(asked.answers.length ? { answers: asked.answers } : {}),
         paymentStatus: paymentOn ? "AWAITING_PAYMENT" : "NOT_REQUIRED",
         amount: paymentOn ? amount : null,
         paymentMethodType: method?.type ?? null,

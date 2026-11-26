@@ -31,6 +31,8 @@ function imageDataUrlLazy() {
   return imageDataUrl(COVER_MAX_CHARS, "The background photo");
 }
 export const THUMB_MAX_CHARS = 700_000; // ~500 KB
+export const GALLERY_MAX_CHARS = 400_000; // ~300 KB لكل صورة شغل
+export const GALLERY_MAX_TOTAL = 24; // صور الشغل في الصفحة كلها
 
 const HEX = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Pick a color like #14B8A6");
 
@@ -75,12 +77,19 @@ export const serviceDetailSchema = z
     imageDataUrl: imageDataUrl(THUMB_MAX_CHARS, "The service photo").nullable().optional(),
     description: z.string().trim().max(200).optional(),
     durationMin: z.number().int().min(5).max(600).nullable().optional(),
+    // مجموعة الخدمة (شعر / أظافر / بشرة...) - الصفحة بتقسّم الخدمات بيها
+    group: z.string().trim().max(40).optional(),
+    // باكدج / عرض: بيظهر فوق في "الباكدجات والعروض"
+    featured: z.boolean().optional(),
+    // صور الشغل (قبل وبعد / أعمال سابقة) - 4 بالكتير لكل خدمة
+    gallery: z.array(imageDataUrl(GALLERY_MAX_CHARS, "The work photo")).max(4).optional(),
   })
   .strict();
 
 export const serviceDetailsSchema = z
   .record(z.string().max(120), serviceDetailSchema)
-  .refine((v) => Object.keys(v).length <= 60, "Too many services");
+  .refine((v) => Object.keys(v).length <= 60, "Too many services")
+  .refine((v) => Object.values(v).reduce((n, d) => n + (d.gallery?.length ?? 0), 0) <= GALLERY_MAX_TOTAL, `Up to ${GALLERY_MAX_TOTAL} work photos on the page`);
 
 export const pageDesignFields = {
   pageTemplate: z.enum(BOOKING_TEMPLATES).optional(),
