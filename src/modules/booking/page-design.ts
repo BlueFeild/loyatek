@@ -14,6 +14,8 @@ export const BOOKING_GRADIENTS = ["aurora", "peach", "lagoon", "dusk", "meadow",
 export const BOOKING_FONTS = ["modern", "elegant", "rounded"] as const;
 // تصميمات المنيو (شكل العرض نفسه، مش الألوان) - لازم تفضل نفس القائمة في الفرونت (frontend/src/data/menuDesigns.ts)
 export const MENU_DESIGNS = ["classic", "poster", "bistro", "cards", "rows", "magazine"] as const;
+// تصميمات صفحة الحجز - لازم تفضل نفس القائمة في الفرونت (frontend/src/data/bookingDesigns.ts)
+export const BOOKING_DESIGNS = ["classic", "signature", "clinic", "studio", "soft", "steps"] as const;
 
 const DATA_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
 
@@ -63,6 +65,8 @@ export const pageStyleSchema = z
     photoZoom: z.boolean().optional(),
     // المنيو: التصميم (بوستر / بيسترو / كروت / صفوف / مجلة)، فاضي = الكلاسيك
     menuDesign: z.enum(MENU_DESIGNS).optional(),
+    // صفحة الحجز: التصميم (توقيع / عيادة / ستوديو / هادي / خطوة بخطوة)، فاضي = الكلاسيك
+    bookingDesign: z.enum(BOOKING_DESIGNS).optional(),
   })
   .strict();
 
