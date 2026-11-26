@@ -1,7 +1,7 @@
 import { prisma } from "../config/db";
 import { normalizeModules } from "./modules";
 import { EXTRA_COMPANY_BASE_MONTHLY_PRICE, MODULE_PRICES, YEARLY_DISCOUNT, type Pricing } from "../modules/checkout/pricing";
-import { isModuleActive } from "./modules";
+import { isModuleActive, isTrialActive } from "./modules";
 import { AI_MODULE_MONTHLY_CREDITS } from "../modules/ai/ai-pricing";
 import { getRates, isCurrencyCode, payableAmount, rateFor } from "./money";
 
@@ -231,10 +231,12 @@ export async function tenantGraceDays(tenant: { graceDays?: number | null }): Pr
 }
 
 // للصفحات العامة: الموديول شغال (شامل فترة السماح والحساب مش موقوف)؟
+// قرار هبة 2026-11-26: الصفحات العامة بتفتح كمان في التجربة المجانية (عشان التاجر يجرّب صفحته فعلًا)
 export async function isModuleLive(
   tenant: Parameters<typeof isModuleActive>[0] & { graceDays?: number | null },
   moduleId: string
 ): Promise<boolean> {
+  if (isTrialActive(tenant)) return true;
   return isModuleActive(tenant, moduleId, new Date(), await tenantGraceDays(tenant));
 }
 
