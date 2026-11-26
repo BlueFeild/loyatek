@@ -171,6 +171,8 @@ app.get("/api/public/pricing", async (req, res) => {
     regions: config.regions.map((r) => ({ country: r.country, name: r.name, currency: r.currency })),
     // نقاط استوديو الذكاء الاصطناعي (الصفحات بتعرضها من هنا بدل رقم ثابت)
     aiCredits: { monthly: config.aiMonthlyCredits, yearly: config.aiYearlyCredits, trial: config.defaultTrialCredits },
+    // أيام التجربة المجانية للشركات الجديدة (السوبر أدمن بيغيّرها) - الموقع بيكتبها تحت "ابدأ الآن"
+    trialDays: config.defaultTrialDays,
   });
 });
 app.use("/api/super-admin/exchange-rates", adminExchangeRatesRouter);
