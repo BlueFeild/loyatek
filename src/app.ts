@@ -45,6 +45,7 @@ import { budgetRouter } from "./modules/budget/budget.routes";
 import { fleetRouter } from "./modules/fleet/fleet.routes";
 import { manufacturingRouter } from "./modules/manufacturing/manufacturing.routes";
 import { supportRouter } from "./modules/support/support.routes";
+import { adminHelpRouter, helpRouter } from "./modules/help-desk/help-desk.routes";
 import { automationRouter } from "./modules/automation/automation.routes";
 import { linktreeRouter } from "./modules/linktree/linktree.routes";
 import { publicLinktreeRouter } from "./modules/linktree/public-linktree.routes";
@@ -189,6 +190,9 @@ app.use("/api/budget", budgetRouter);
 app.use("/api/fleet", fleetRouter);
 app.use("/api/manufacturing", manufacturingRouter);
 app.use("/api/support", supportRouter);
+// "محتاج مساعدة؟" - رسايل التجار لفريق المنصة (مختلفة عن /api/support بتاع تذاكر عملاء الـ ERP)
+app.use("/api/help", helpRouter);
+app.use("/api/super-admin/support", adminHelpRouter);
 app.use("/api/automation", automationRouter);
 app.use("/api/linktree", linktreeRouter);
 app.use("/api/public/linktree", publicLinktreeRouter);

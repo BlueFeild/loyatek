@@ -2123,6 +2123,38 @@ model SupportTicketReply {
   @@map("support_ticket_replies")
 }
 
+// صندوق "محتاج مساعدة؟" - رسايل التجار لفريق المنصة (مش تذاكر دعم عملاء الـ ERP اللي فوق)
+model HelpTicket {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  userId             String
+  subject            String   @db.VarChar(120)
+  message            String   @db.Text
+  category           String   @default("question") // question | problem | billing | idea
+  status             String   @default("OPEN") // OPEN | ANSWERED | CLOSED
+  pageUrl            String?  @db.VarChar(300)
+  lastActivityAt     DateTime @default(now())
+  lastFromSuperAdmin Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([tenantId, lastActivityAt])
+  @@index([status, lastActivityAt])
+  @@map("help_tickets")
+}
+
+model HelpReply {
+  id             String   @id @default(uuid())
+  ticketId       String
+  fromSuperAdmin Boolean  @default(false)
+  authorUserId   String
+  message        String   @db.Text
+  createdAt      DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+  @@map("help_replies")
+}
+
 // ------------------------------------------------------------
 // IFTTT Automation Builder - قواعد أتمتة حقيقية بتتحفظ، مفيهاش
 // محرّك تنفيذ فعلي لسه (زي واتساب بالظبط - تعريف صريح بالحدود)
@@ -2274,6 +2306,7 @@ enum NotificationType {
   BOOKING_CONFIRMED
   CATALOG_ORDER
   SUBSCRIPTION_ACTIVATED
+  SUPPORT_REPLY
 }
 
 model Notification {

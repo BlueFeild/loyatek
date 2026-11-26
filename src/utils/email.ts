@@ -19,11 +19,18 @@ function escapeHtml(s: string) {
 
 // النص بيتبعت زي ما هو (text) + نسخة HTML بسيطة بنفس الكلام (من غير أي
 // HTML من المستخدم - كله escaped)
-export async function sendEmail(to: string, subject: string, text: string): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {
+// opts.replyTo = لما حد يرد على الإيميل يروح للعنوان ده (مثلًا إيميل التاجر في رسايل الدعم)
+export async function sendEmail(
+  to: string,
+  subject: string,
+  text: string,
+  opts: { replyTo?: string } = {}
+): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {
+  const replyTo = isValidEmail(opts.replyTo) ? opts.replyTo.trim() : undefined;
   // للاختبار المحلي بس: الإيميلات بتتكتب في ملف بدل ما تتبعت (مش متظبط على Railway)
   if (process.env.EMAIL_OUTBOX_FILE) {
     const { appendFileSync } = await import("fs");
-    appendFileSync(process.env.EMAIL_OUTBOX_FILE, JSON.stringify({ to, subject, text }) + "\n");
+    appendFileSync(process.env.EMAIL_OUTBOX_FILE, JSON.stringify({ to, subject, text, ...(replyTo ? { replyTo } : {}) }) + "\n");
     return { ok: true };
   }
   if (!isEmailConfigured()) return { ok: false, skipped: true };
@@ -33,7 +40,7 @@ export async function sendEmail(to: string, subject: string, text: string): Prom
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: process.env.EMAIL_FROM, to: [to.trim()], subject, text, html }),
+      body: JSON.stringify({ from: process.env.EMAIL_FROM, to: [to.trim()], subject, text, html, ...(replyTo ? { reply_to: replyTo } : {}) }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");

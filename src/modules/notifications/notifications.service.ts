@@ -1,6 +1,6 @@
 import { prisma } from "../../config/db";
 
-type NotificationType = "BOOKING_CONFIRMED" | "CATALOG_ORDER" | "SUBSCRIPTION_ACTIVATED";
+type NotificationType = "BOOKING_CONFIRMED" | "CATALOG_ORDER" | "SUBSCRIPTION_ACTIVATED" | "SUPPORT_REPLY";
 
 interface CreateNotificationInput {
   tenantId: string;
